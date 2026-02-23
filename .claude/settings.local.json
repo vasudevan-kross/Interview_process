@@ -3,7 +3,32 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(timeout /t 5)",
+      "Bash(docker ps:*)",
+      "Bash(docker start:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(curl:*)",
+      "Bash(ollama list:*)",
+      "Bash(ollama pull:*)",
+      "Bash(pip:*)",
+      "Bash(gh:*)",
+      "Bash(timeout 5 bash -c 'while ! curl -s http://localhost:8000/api/v1/health > /dev/null 2>&1; do sleep 0.5; done')",
+      "Bash(python -m app.main:*)",
+      "Bash(python -m pip:*)",
+      "Bash(python:*)",
+      "Bash(git config user.name)",
+      "Bash(git config user.email)",
+      "Bash(git fetch:*)",
+      "Bash(git restore:*)",
+      "Bash(git push:*)",
+      "Bash(npm audit fix:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }
