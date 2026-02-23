@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # Ollama LLM Server (local)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: interview-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # For GPU support (NVIDIA), uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Redis (optional - for caching and background jobs)
+  redis:
+    image: redis:7-alpine
+    container_name: interview-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  ollama_data:
+  redis_data:
