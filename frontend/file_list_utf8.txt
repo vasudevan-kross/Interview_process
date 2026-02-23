@@ -1,0 +1,6 @@
+﻿d:\Projects\AI driven\Interview\frontend\src\app
+d:\Projects\AI driven\Interview\frontend\src\components
+d:\Projects\AI driven\Interview\frontend\src\hooks
+d:\Projects\AI driven\Interview\frontend\src\lib
+d:\Projects\AI driven\Interview\frontend\src\store
+d:\Projects\AI driven\Interview\frontend\src\types

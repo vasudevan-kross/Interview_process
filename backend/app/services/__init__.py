@@ -5,6 +5,7 @@ from app.services.document_processor import get_document_processor, DocumentProc
 from app.services.vector_store import get_vector_store, VectorStore
 from app.services.llm_orchestrator import get_llm_orchestrator, LLMOrchestrator
 from app.services.resume_matching import get_resume_matching_service, ResumeMatchingService
+from app.services.test_evaluation import get_test_evaluation_service, TestEvaluationService
 
 __all__ = [
     "get_storage_service",
@@ -17,4 +18,6 @@ __all__ = [
     "LLMOrchestrator",
     "get_resume_matching_service",
     "ResumeMatchingService",
+    "get_test_evaluation_service",
+    "TestEvaluationService",
 ]

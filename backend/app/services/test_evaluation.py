@@ -1,0 +1,605 @@
+"""
+Test evaluation service for Round 2 - written test evaluation.
+Handles question paper parsing, answer sheet processing, and automated grading.
+"""
+from typing import List, Dict, Optional, Any, Tuple
+import logging
+from datetime import datetime
+from uuid import uuid4
+import re
+
+from app.services.storage_service import get_storage_service
+from app.services.document_processor import get_document_processor
+from app.services.llm_orchestrator import get_llm_orchestrator
+from app.db.supabase_client import get_supabase
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class TestEvaluationService:
+    """Service for automated test evaluation."""
+
+    def __init__(self):
+        """Initialize the test evaluation service."""
+        self.storage = get_storage_service()
+        self.doc_processor = get_document_processor()
+        self.llm = get_llm_orchestrator()
+        self.client = get_supabase()
+
+    async def process_question_paper(
+        self,
+        file_data: bytes,
+        filename: str,
+        user_id: str,
+        test_title: str,
+        test_type: str,
+        total_marks: float,
+        duration_minutes: Optional[int] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process a question paper and extract questions.
+
+        Args:
+            file_data: File content as bytes
+            filename: Original filename
+            user_id: User ID who uploaded the file
+            test_title: Title of the test
+            test_type: Type (development, testing, devops, etc.)
+            total_marks: Total marks for the test
+            duration_minutes: Test duration in minutes
+            model: Optional LLM model override
+
+        Returns:
+            dict with test_id, questions, and metadata
+        """
+        try:
+            # Validate file
+            validation = await self.doc_processor.validate_file(
+                file_data,
+                filename,
+                max_size=settings.MAX_UPLOAD_SIZE
+            )
+
+            if not validation['is_valid']:
+                raise ValueError(f"File validation failed: {validation['errors']}")
+
+            # Extract text from document
+            extraction = await self.doc_processor.extract_text(
+                file_data,
+                filename,
+                validation['file_type']
+            )
+
+            extracted_text = extraction['extracted_text']
+
+            if not extracted_text or len(extracted_text.strip()) < 50:
+                raise ValueError("Insufficient text content in question paper")
+
+            # Upload file to storage
+            storage_result = await self.storage.upload_file(
+                file_data=file_data,
+                filename=filename,
+                bucket_type="test_papers",
+                user_id=user_id,
+                content_type=f"application/{validation['file_type']}"
+            )
+
+            # Parse questions using LLM
+            questions_result = await self._parse_questions(
+                extracted_text,
+                total_marks,
+                model=model
+            )
+
+            # Create test record
+            test_data = {
+                "id": str(uuid4()),
+                "title": test_title,
+                "test_type": test_type,
+                "total_marks": total_marks,
+                "duration_minutes": duration_minutes,
+                "question_paper_path": storage_result['file_path'],
+                "question_paper_name": filename,
+                "created_by": user_id,
+                "metadata": {
+                    "file_type": validation['file_type'],
+                    "file_size": validation['file_size'],
+                    "extraction_metadata": extraction,
+                    "total_questions": len(questions_result['questions']),
+                    "model_used": questions_result.get('model_used')
+                }
+            }
+
+            # Insert test into database
+            self.client.table("tests").insert(test_data).execute()
+
+            test_id = test_data['id']
+
+            # Insert questions into database
+            for idx, question in enumerate(questions_result['questions'], 1):
+                question_data = {
+                    "id": str(uuid4()),
+                    "test_id": test_id,
+                    "question_number": idx,
+                    "question_text": question['question'],
+                    "correct_answer": question.get('answer', ''),
+                    "marks": question.get('marks', 0),
+                    "question_type": question.get('type', 'descriptive'),
+                    "metadata": {
+                        "difficulty": question.get('difficulty', 'medium'),
+                        "topics": question.get('topics', [])
+                    }
+                }
+                self.client.table("questions").insert(question_data).execute()
+
+            logger.info(f"Processed question paper: {test_id} with {len(questions_result['questions'])} questions")
+
+            return {
+                "test_id": test_id,
+                "title": test_title,
+                "extracted_text": extracted_text,
+                "questions": questions_result['questions'],
+                "total_questions": len(questions_result['questions']),
+                "total_marks": total_marks,
+                "file_info": storage_result,
+                "metadata": test_data['metadata']
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing question paper: {e}")
+            raise
+
+    async def _parse_questions(
+        self,
+        text: str,
+        total_marks: float,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Parse questions from extracted text using LLM.
+
+        Args:
+            text: Extracted question paper text
+            total_marks: Total marks for the test
+            model: Optional LLM model override
+
+        Returns:
+            dict with parsed questions and metadata
+        """
+        try:
+            system_prompt = """You are an expert at parsing test question papers.
+Extract all questions from the given text and format them as a structured JSON array.
+For each question, identify:
+- question: The question text
+- answer: Expected answer or answer key (if provided)
+- marks: Marks allocated (if mentioned, otherwise estimate based on total marks)
+- type: Question type (mcq, short_answer, descriptive, coding, etc.)
+- difficulty: Estimated difficulty (easy, medium, hard)
+- topics: Relevant topics/skills being tested
+
+Return only a JSON object with this structure:
+{
+  "questions": [
+    {
+      "question": "question text",
+      "answer": "expected answer or key points",
+      "marks": <number>,
+      "type": "descriptive",
+      "difficulty": "medium",
+      "topics": ["topic1", "topic2"]
+    }
+  ]
+}
+Only return the JSON object, no additional text."""
+
+            user_prompt = f"""Parse all questions from this test paper (Total marks: {total_marks}):
+
+{text[:4000]}
+
+Extract each question with its answer key, marks, type, and other details.
+If marks are not specified, distribute the {total_marks} marks proportionally across questions.
+Return the result as JSON."""
+
+            result = await self.llm.generate_completion(
+                prompt=user_prompt,
+                model=model,
+                system_prompt=system_prompt,
+                temperature=0.2
+            )
+
+            # Parse JSON response
+            response_text = result['response'].strip()
+
+            # Try to extract JSON from markdown code blocks
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+
+            import json
+            parsed_data = json.loads(response_text)
+
+            questions = parsed_data.get('questions', [])
+
+            # Validate and adjust marks if needed
+            total_assigned_marks = sum(q.get('marks', 0) for q in questions)
+            if total_assigned_marks != total_marks and questions:
+                # Proportionally adjust marks
+                scale_factor = total_marks / total_assigned_marks if total_assigned_marks > 0 else 1
+                for q in questions:
+                    q['marks'] = round(q.get('marks', 0) * scale_factor, 2)
+
+            return {
+                "questions": questions,
+                "model_used": result['model'],
+                "parsing_metadata": {
+                    "total_questions": len(questions),
+                    "total_marks": sum(q.get('marks', 0) for q in questions)
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error parsing questions: {e}")
+            # Return empty structure on error
+            return {
+                "questions": [],
+                "error": f"Failed to parse questions: {str(e)}"
+            }
+
+    async def process_answer_sheet(
+        self,
+        file_data: bytes,
+        filename: str,
+        test_id: str,
+        candidate_name: str,
+        candidate_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process an answer sheet and evaluate answers.
+
+        Args:
+            file_data: File content as bytes
+            filename: Original filename
+            test_id: Test ID
+            candidate_name: Candidate name
+            candidate_email: Candidate email
+            user_id: User ID who uploaded the file
+            model: Optional LLM model override
+
+        Returns:
+            dict with answer_sheet_id, evaluations, and scores
+        """
+        try:
+            # Validate file
+            validation = await self.doc_processor.validate_file(
+                file_data,
+                filename,
+                max_size=settings.MAX_UPLOAD_SIZE
+            )
+
+            if not validation['is_valid']:
+                raise ValueError(f"File validation failed: {validation['errors']}")
+
+            # Extract text from document
+            extraction = await self.doc_processor.extract_text(
+                file_data,
+                filename,
+                validation['file_type']
+            )
+
+            extracted_text = extraction['extracted_text']
+
+            if not extracted_text or len(extracted_text.strip()) < 20:
+                raise ValueError("Insufficient text content in answer sheet")
+
+            # Upload file to storage
+            storage_result = await self.storage.upload_file(
+                file_data=file_data,
+                filename=filename,
+                bucket_type="answer_sheets",
+                user_id=user_id or "system",
+                content_type=f"application/{validation['file_type']}"
+            )
+
+            # Get test questions
+            questions_result = self.client.table("questions").select(
+                "*"
+            ).eq("test_id", test_id).order("question_number").execute()
+
+            if not questions_result.data:
+                raise ValueError(f"No questions found for test {test_id}")
+
+            questions = questions_result.data
+
+            # Parse candidate answers
+            parsed_answers = await self._parse_candidate_answers(
+                extracted_text,
+                questions,
+                model=model
+            )
+
+            # Create answer sheet record
+            answer_sheet_data = {
+                "id": str(uuid4()),
+                "test_id": test_id,
+                "candidate_name": candidate_name,
+                "candidate_email": candidate_email,
+                "answer_sheet_path": storage_result['file_path'],
+                "answer_sheet_name": filename,
+                "submitted_by": user_id,
+                "status": "evaluated",
+                "metadata": {
+                    "file_type": validation['file_type'],
+                    "file_size": validation['file_size'],
+                    "extraction_metadata": extraction
+                }
+            }
+
+            self.client.table("answer_sheets").insert(answer_sheet_data).execute()
+
+            answer_sheet_id = answer_sheet_data['id']
+
+            # Evaluate each answer
+            evaluations = []
+            total_marks_obtained = 0
+
+            for question, candidate_answer in zip(questions, parsed_answers['answers']):
+                evaluation = await self.llm.evaluate_answer(
+                    question=question['question_text'],
+                    correct_answer=question['correct_answer'],
+                    candidate_answer=candidate_answer['answer'],
+                    max_marks=question['marks'],
+                    model=model
+                )
+
+                marks_awarded = evaluation.get('marks_awarded', 0)
+                total_marks_obtained += marks_awarded
+
+                # Store evaluation
+                evaluation_data = {
+                    "id": str(uuid4()),
+                    "answer_sheet_id": answer_sheet_id,
+                    "question_id": question['id'],
+                    "candidate_answer": candidate_answer['answer'],
+                    "marks_awarded": marks_awarded,
+                    "feedback": evaluation.get('feedback', ''),
+                    "key_points_covered": evaluation.get('key_points_covered', []),
+                    "key_points_missed": evaluation.get('key_points_missed', []),
+                    "evaluated_by_model": evaluation.get('model_used'),
+                    "metadata": {
+                        "max_marks": question['marks'],
+                        "question_number": question['question_number'],
+                        "reasoning": evaluation.get('reasoning', '')
+                    }
+                }
+
+                self.client.table("answer_evaluations").insert(evaluation_data).execute()
+
+                evaluations.append({
+                    "question_number": question['question_number'],
+                    "question": question['question_text'],
+                    "candidate_answer": candidate_answer['answer'],
+                    "marks_awarded": marks_awarded,
+                    "max_marks": question['marks'],
+                    "feedback": evaluation.get('feedback', ''),
+                    "percentage": (marks_awarded / question['marks'] * 100) if question['marks'] > 0 else 0
+                })
+
+            # Get test total marks
+            test_result = self.client.table("tests").select(
+                "total_marks"
+            ).eq("id", test_id).single().execute()
+
+            total_marks = test_result.data['total_marks'] if test_result.data else 100
+
+            # Update answer sheet with scores
+            self.client.table("answer_sheets").update({
+                "total_marks_obtained": total_marks_obtained,
+                "percentage": (total_marks_obtained / total_marks * 100) if total_marks > 0 else 0
+            }).eq("id", answer_sheet_id).execute()
+
+            logger.info(f"Evaluated answer sheet: {answer_sheet_id} - Score: {total_marks_obtained}/{total_marks}")
+
+            return {
+                "answer_sheet_id": answer_sheet_id,
+                "candidate_name": candidate_name,
+                "test_id": test_id,
+                "total_marks_obtained": total_marks_obtained,
+                "total_marks": total_marks,
+                "percentage": (total_marks_obtained / total_marks * 100) if total_marks > 0 else 0,
+                "evaluations": evaluations,
+                "file_info": storage_result,
+                "summary": {
+                    "questions_attempted": len([e for e in evaluations if e['candidate_answer'].strip()]),
+                    "questions_total": len(evaluations),
+                    "average_score_per_question": total_marks_obtained / len(evaluations) if evaluations else 0
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing answer sheet: {e}")
+            raise
+
+    async def _parse_candidate_answers(
+        self,
+        text: str,
+        questions: List[Dict],
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Parse candidate answers from answer sheet text.
+
+        Args:
+            text: Extracted answer sheet text
+            questions: List of question objects
+            model: Optional LLM model override
+
+        Returns:
+            dict with parsed answers
+        """
+        try:
+            # Format questions for the prompt
+            questions_text = "\n".join([
+                f"Q{q['question_number']}: {q['question_text'][:200]}"
+                for q in questions
+            ])
+
+            system_prompt = """You are an expert at parsing student answer sheets.
+Extract the candidate's answers for each question from the given answer sheet text.
+Match each answer to its corresponding question number.
+
+Return only a JSON object with this structure:
+{
+  "answers": [
+    {
+      "question_number": 1,
+      "answer": "candidate's answer text"
+    }
+  ]
+}
+If an answer is not found, use empty string for that question.
+Only return the JSON object, no additional text."""
+
+            user_prompt = f"""Parse candidate answers from this answer sheet:
+
+QUESTIONS (for reference):
+{questions_text}
+
+ANSWER SHEET TEXT:
+{text[:3000]}
+
+Extract the candidate's answer for each question number.
+Return the result as JSON."""
+
+            result = await self.llm.generate_completion(
+                prompt=user_prompt,
+                model=model,
+                system_prompt=system_prompt,
+                temperature=0.1
+            )
+
+            # Parse JSON response
+            response_text = result['response'].strip()
+
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+
+            import json
+            parsed_data = json.loads(response_text)
+
+            answers = parsed_data.get('answers', [])
+
+            # Ensure we have an answer for each question (even if empty)
+            answer_dict = {a['question_number']: a['answer'] for a in answers}
+            complete_answers = []
+
+            for q in questions:
+                complete_answers.append({
+                    "question_number": q['question_number'],
+                    "answer": answer_dict.get(q['question_number'], '')
+                })
+
+            return {
+                "answers": complete_answers,
+                "model_used": result['model']
+            }
+
+        except Exception as e:
+            logger.error(f"Error parsing candidate answers: {e}")
+            # Return empty answers on error
+            return {
+                "answers": [
+                    {"question_number": q['question_number'], "answer": ""}
+                    for q in questions
+                ],
+                "error": f"Failed to parse answers: {str(e)}"
+            }
+
+    async def get_test_results(
+        self,
+        test_id: str,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all results for a test, ranked by score.
+
+        Args:
+            test_id: Test ID
+            limit: Maximum number of results
+
+        Returns:
+            List of answer sheets with scores
+        """
+        try:
+            result = self.client.table("answer_sheets").select(
+                "id, candidate_name, candidate_email, total_marks_obtained, percentage, status, submitted_at"
+            ).eq("test_id", test_id).order(
+                "percentage", desc=True
+            ).limit(limit).execute()
+
+            return result.data if result.data else []
+
+        except Exception as e:
+            logger.error(f"Error getting test results: {e}")
+            raise
+
+    async def get_test_statistics(self, test_id: str) -> Dict[str, Any]:
+        """
+        Get statistics for a test.
+
+        Args:
+            test_id: Test ID
+
+        Returns:
+            dict with statistics
+        """
+        try:
+            # Get all answer sheets
+            results = await self.get_test_results(test_id, limit=1000)
+
+            if not results:
+                return {
+                    "total_submissions": 0,
+                    "average_percentage": 0,
+                    "highest_score": 0,
+                    "lowest_score": 0,
+                    "pass_rate": 0
+                }
+
+            percentages = [r['percentage'] for r in results if r.get('percentage') is not None]
+
+            # Calculate pass rate (assuming 40% is passing)
+            passing_threshold = 40
+            passed = len([p for p in percentages if p >= passing_threshold])
+
+            return {
+                "total_submissions": len(results),
+                "average_percentage": sum(percentages) / len(percentages) if percentages else 0,
+                "highest_score": max(percentages) if percentages else 0,
+                "lowest_score": min(percentages) if percentages else 0,
+                "pass_rate": (passed / len(results) * 100) if results else 0,
+                "passed_count": passed,
+                "failed_count": len(results) - passed
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting test statistics: {e}")
+            raise
+
+
+# Singleton instance
+_test_evaluation_service: Optional[TestEvaluationService] = None
+
+
+def get_test_evaluation_service() -> TestEvaluationService:
+    """Get the test evaluation service singleton."""
+    global _test_evaluation_service
+    if _test_evaluation_service is None:
+        _test_evaluation_service = TestEvaluationService()
+    return _test_evaluation_service
