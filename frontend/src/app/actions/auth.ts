@@ -87,5 +87,7 @@ export async function getUserRole() {
     .select('roles(name)')
     .eq('user_id', user.id)
 
-  return userRoles?.[0]?.roles?.name || 'user'
+  // Type assertion for Supabase response
+  const roleData = userRoles as any
+  return roleData?.[0]?.roles?.name || 'user'
 }
