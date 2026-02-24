@@ -102,7 +102,20 @@ class APIClient {
   }
 
   async listModels() {
-    const response = await this.client.get('/api/v1/resume-matching/models')
+    // Fetch models from local Ollama instance via common API endpoint
+    const response = await this.client.get('/api/v1/common/models')
+    return response.data
+  }
+
+  async getAvailableModels() {
+    // Returns list of models available in local Ollama installation
+    return this.listModels()
+  }
+
+  async deleteResumes(resumeIds: string[]) {
+    const response = await this.client.delete('/api/v1/resume-matching/resumes', {
+      data: { resume_ids: resumeIds }
+    })
     return response.data
   }
 
@@ -148,6 +161,13 @@ class APIClient {
   async listTests(testType?: string, limit: number = 50, offset: number = 0) {
     const response = await this.client.get('/api/v1/test-evaluation/tests', {
       params: { test_type: testType, limit, offset },
+    })
+    return response.data
+  }
+
+  async deleteAnswerSheets(answerSheetIds: string[]) {
+    const response = await this.client.delete('/api/v1/test-evaluation/answer-sheets', {
+      data: { answer_sheet_ids: answerSheetIds }
     })
     return response.data
   }

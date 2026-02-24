@@ -13,6 +13,7 @@ except ImportError:
     ollama = None
 
 from app.config import settings
+from app.model_config import model_config
 from app.db.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -30,22 +31,63 @@ class LLMOrchestrator:
         if ollama is None:
             logger.warning("ollama package not installed. LLM operations will fail.")
 
+    def _format_size(self, size_bytes: int) -> str:
+        """
+        Format size in bytes to human-readable format.
+
+        Args:
+            size_bytes: Size in bytes
+
+        Returns:
+            Formatted size string (e.g., "3.8 GB")
+        """
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.1f} MB"
+        else:
+            return f"{size_bytes / (1024 ** 3):.1f} GB"
+
     async def list_available_models(self) -> List[Dict[str, Any]]:
         """
         List available Ollama models.
 
         Returns:
-            List of model information
+            List of model information with formatted sizes
         """
         try:
             if ollama is None:
+                logger.error("ollama package not installed")
                 raise RuntimeError("ollama package not installed")
 
-            models = ollama.list()
-            return models.get('models', []) if isinstance(models, dict) else []
+            logger.info("Fetching models from Ollama...")
+            models_response = ollama.list()
+            logger.info(f"Raw Ollama response type: {type(models_response)}")
+            logger.info(f"Raw Ollama response: {models_response}")
+
+            models = models_response.get('models', []) if isinstance(models_response, dict) else []
+            logger.info(f"Found {len(models)} models")
+
+            # Format the models to match frontend expectations
+            formatted_models = []
+            for model in models:
+                formatted_model = {
+                    "name": model.get('name', 'Unknown'),
+                    "size": self._format_size(model.get('size', 0)),
+                    "modified_at": model.get('modified_at'),
+                    "digest": model.get('digest', '')[:12] if model.get('digest') else 'N/A'
+                }
+                logger.info(f"Formatted model: {formatted_model}")
+                formatted_models.append(formatted_model)
+
+            logger.info(f"Returning {len(formatted_models)} formatted models")
+            return formatted_models
 
         except Exception as e:
             logger.error(f"Error listing models: {e}")
+            logger.exception(e)  # Log full traceback
             raise
 
     async def check_model_availability(self, model_name: str) -> bool:
@@ -208,6 +250,82 @@ Return only a JSON object with the structure:
             logger.error(f"Error extracting skills: {e}")
             raise
 
+    async def extract_candidate_info(
+        self,
+        resume_text: str,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Extract candidate information from resume text.
+
+        Args:
+            resume_text: Resume text content
+            model: Optional model override
+
+        Returns:
+            dict with candidate_name, candidate_email, candidate_phone
+        """
+        try:
+            system_prompt = """You are an expert HR assistant that extracts candidate information from resumes.
+Extract the candidate's name, email, and phone number from the resume.
+Return the result as a valid JSON object.
+If any field is not found, use null.
+Only return the JSON object, no additional text."""
+
+            user_prompt = f"""Extract the candidate information from this resume:
+
+{resume_text[:2000]}
+
+Return only a JSON object with this structure:
+{{
+  "candidate_name": "<full name or null>",
+  "candidate_email": "<email or null>",
+  "candidate_phone": "<phone or null>"
+}}"""
+
+            result = await self.generate_completion(
+                prompt=user_prompt,
+                model=model,
+                system_prompt=system_prompt,
+                temperature=0.1
+            )
+
+            # Parse JSON response
+            response_text = result['response'].strip()
+
+            # Try to extract JSON from markdown code blocks
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+
+            candidate_info = json.loads(response_text)
+
+            return {
+                "candidate_name": candidate_info.get("candidate_name"),
+                "candidate_email": candidate_info.get("candidate_email"),
+                "candidate_phone": candidate_info.get("candidate_phone"),
+                "model_used": result['model'],
+                "extraction_metadata": {
+                    "eval_count": result.get('eval_count'),
+                    "total_duration": result.get('total_duration')
+                }
+            }
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse candidate info JSON: {e}")
+            logger.error(f"Response was: {result.get('response', '')}")
+            # Return null values on parse failure
+            return {
+                "candidate_name": None,
+                "candidate_email": None,
+                "candidate_phone": None,
+                "error": f"JSON parse error: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Error extracting candidate info: {e}")
+            raise
+
     async def calculate_match_score(
         self,
         job_description: str,
@@ -300,10 +418,12 @@ Provide a detailed match analysis as JSON."""
         correct_answer: str,
         candidate_answer: str,
         max_marks: float,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        domain: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Evaluate a candidate's answer against the correct answer.
+        Uses more capable models (llama2:13b, codellama:7b) for better reasoning.
 
         Args:
             question: The question text
@@ -311,6 +431,7 @@ Provide a detailed match analysis as JSON."""
             candidate_answer: Candidate's answer
             max_marks: Maximum marks for this question
             model: Optional model override
+            domain: Optional domain (coding, sql, general) for model selection
 
         Returns:
             dict with marks_awarded, feedback, and key_points
@@ -344,11 +465,12 @@ CANDIDATE'S ANSWER:
 
 Provide evaluation as JSON."""
 
-            result = await self.generate_completion(
+            # Use capable model for evaluation (llama2:13b or codellama:7b for code)
+            result = await self.evaluate_with_capable_model(
                 prompt=user_prompt,
-                model=model,
+                domain=domain,
                 system_prompt=system_prompt,
-                temperature=0.2
+                override_model=model  # Allow user override
             )
 
             # Parse JSON response
@@ -390,6 +512,80 @@ Provide evaluation as JSON."""
         except Exception as e:
             logger.error(f"Error evaluating answer: {e}")
             raise
+
+    def get_model_for_task(self, task: str, domain: Optional[str] = None, override: Optional[str] = None) -> str:
+        """
+        Get the appropriate model for a specific task with optional override.
+
+        Args:
+            task: Task name (e.g., "answer_evaluation", "question_parsing")
+            domain: Optional domain for context-aware model selection
+            override: Optional model override (takes precedence)
+
+        Returns:
+            Model identifier to use
+        """
+        # User override takes precedence
+        if override:
+            logger.info(f"Using override model '{override}' for task '{task}'")
+            return override
+
+        # Get task-appropriate model from configuration
+        model = model_config.get_model_for_task(task, domain)
+        logger.info(f"Selected model '{model}' for task '{task}' (domain: {domain})")
+        return model
+
+    async def parse_with_fast_model(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        override_model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Use a fast model for parsing tasks (question parsing, resume parsing, etc.).
+
+        Args:
+            prompt: The prompt to send
+            system_prompt: Optional system prompt
+            override_model: Optional model override
+
+        Returns:
+            Parsed result dictionary
+        """
+        model = self.get_model_for_task("question_parsing", override=override_model)
+        return await self.generate_completion(
+            prompt=prompt,
+            model=model,
+            system_prompt=system_prompt,
+            temperature=0.3  # Lower temperature for consistent parsing
+        )
+
+    async def evaluate_with_capable_model(
+        self,
+        prompt: str,
+        domain: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        override_model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Use a more capable model for evaluation tasks requiring reasoning.
+
+        Args:
+            prompt: The prompt to send
+            domain: Optional domain (coding, sql, general, etc.)
+            system_prompt: Optional system prompt
+            override_model: Optional model override
+
+        Returns:
+            Evaluation result dictionary
+        """
+        model = self.get_model_for_task("answer_evaluation", domain=domain, override=override_model)
+        return await self.generate_completion(
+            prompt=prompt,
+            model=model,
+            system_prompt=system_prompt,
+            temperature=0.2  # Lower temperature for consistent evaluation
+        )
 
 
 # Singleton instance

@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useUserRole } from '@/hooks/useUserRole'
 import { toast } from 'sonner'
-import { LogOut, User as UserIcon, Shield } from 'lucide-react'
+import { LogOut, Shield } from 'lucide-react'
 
 interface DashboardHeaderProps {
   user: User
@@ -29,16 +29,27 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
     if (!role) return null
 
     const roleConfig = {
-      admin: { variant: 'default' as const, label: 'Admin' },
-      hr: { variant: 'secondary' as const, label: 'HR' },
-      interviewer: { variant: 'outline' as const, label: 'Interviewer' },
-      user: { variant: 'outline' as const, label: 'User' },
+      admin: {
+        variant: 'default' as const,
+        label: 'Admin',
+        color: 'bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0'
+      },
+      hr: {
+        variant: 'secondary' as const,
+        label: 'HR',
+        color: 'bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0'
+      },
+      interviewer: {
+        variant: 'outline' as const,
+        label: 'Interviewer',
+        color: 'bg-gradient-to-r from-orange-500 to-red-500 text-white border-0'
+      },
     }
 
-    const config = roleConfig[role] || roleConfig.user
+    const config = roleConfig[role] || roleConfig.hr
 
     return (
-      <Badge variant={config.variant} className="flex items-center gap-1">
+      <Badge className={`flex items-center gap-1.5 px-3 py-1 ${config.color}`}>
         <Shield className="h-3 w-3" />
         {config.label}
       </Badge>
@@ -46,19 +57,17 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   }
 
   return (
-    <header className="h-16 border-b">
+    <header className="h-16 border-b bg-white/50 backdrop-blur-sm sticky top-0 z-10">
       <div className="flex h-full items-center justify-between px-6">
         <div>
-          <h2 className="text-lg font-semibold">
-            Welcome back, {user.user_metadata?.full_name || user.email}
+          <p className="text-sm text-muted-foreground">Welcome back,</p>
+          <h2 className="text-base font-semibold">
+            {user.user_metadata?.full_name || user.email}
           </h2>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {getRoleBadge()}
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <UserIcon className="h-4 w-4" />
-            {user.email}
-          </div>
+          <div className="h-8 w-px bg-border"></div>
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="mr-2 h-4 w-4" />
             Logout

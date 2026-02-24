@@ -28,7 +28,12 @@
       "Bash(git push:*)",
       "Bash(npm audit fix:*)",
       "Bash(npm install:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(printf:*)",
+      "Bash(ls -la \"d:\\\\Projects\\\\AI driven\\\\Interview\\\\backend\\\\app\\\\api\\\\v1\"\" 2>&1 || dir \"d:ProjectsAI drivenInterviewbackendappapiv1\"\")",
+      "Bash(tesseract:*)",
+      "Bash(ver)"
     ]
   }
 }

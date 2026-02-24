@@ -86,10 +86,11 @@ class TestEvaluationService:
                 content_type=f"application/{validation['file_type']}"
             )
 
-            # Parse questions using LLM
+            # Parse questions using LLM (uses fast model - mistral:7b)
             questions_result = await self._parse_questions(
                 extracted_text,
                 total_marks,
+                test_type=test_type,
                 model=model
             )
 
@@ -155,6 +156,7 @@ class TestEvaluationService:
         self,
         text: str,
         total_marks: float,
+        test_type: Optional[str] = None,
         model: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -202,11 +204,11 @@ Extract each question with its answer key, marks, type, and other details.
 If marks are not specified, distribute the {total_marks} marks proportionally across questions.
 Return the result as JSON."""
 
-            result = await self.llm.generate_completion(
+            # Use fast model for parsing (mistral:7b or llama2:7b)
+            result = await self.llm.parse_with_fast_model(
                 prompt=user_prompt,
-                model=model,
                 system_prompt=system_prompt,
-                temperature=0.2
+                override_model=model  # Allow user override
             )
 
             # Parse JSON response
@@ -293,8 +295,19 @@ Return the result as JSON."""
 
             extracted_text = extraction['extracted_text']
 
+            # Log extraction details for debugging
+            logger.info(f"Extracted text length: {len(extracted_text) if extracted_text else 0} chars")
+            logger.info(f"File type: {validation['file_type']}, OCR used: {extraction.get('ocr_used', False)}")
+            if extracted_text:
+                logger.info(f"First 200 chars: {extracted_text[:200]}")
+
             if not extracted_text or len(extracted_text.strip()) < 20:
-                raise ValueError("Insufficient text content in answer sheet")
+                error_msg = f"Insufficient text content in answer sheet. "
+                error_msg += f"Extracted {len(extracted_text.strip()) if extracted_text else 0} characters. "
+                error_msg += f"File type: {validation['file_type']}. "
+                if validation['file_type'] in ['jpg', 'jpeg', 'png']:
+                    error_msg += "For image files, ensure they are clear and readable for OCR processing."
+                raise ValueError(error_msg)
 
             # Upload file to storage
             storage_result = await self.storage.upload_file(
@@ -304,6 +317,10 @@ Return the result as JSON."""
                 user_id=user_id or "system",
                 content_type=f"application/{validation['file_type']}"
             )
+
+            # Get test details (including test_type for model selection)
+            test_result = self.client.table("tests").select("test_type").eq("id", test_id).single().execute()
+            test_type = test_result.data.get('test_type') if test_result.data else None
 
             # Get test questions
             questions_result = self.client.table("questions").select(
@@ -348,16 +365,24 @@ Return the result as JSON."""
             total_marks_obtained = 0
 
             for question, candidate_answer in zip(questions, parsed_answers['answers']):
+                # Use capable model for evaluation (llama2:13b or codellama:7b for coding)
                 evaluation = await self.llm.evaluate_answer(
                     question=question['question_text'],
                     correct_answer=question['correct_answer'],
                     candidate_answer=candidate_answer['answer'],
                     max_marks=question['marks'],
-                    model=model
+                    model=model,
+                    domain=test_type  # Pass test_type to select appropriate model
                 )
 
                 marks_awarded = evaluation.get('marks_awarded', 0)
                 total_marks_obtained += marks_awarded
+
+                # Calculate is_correct and similarity_score
+                max_marks = question['marks']
+                percentage = (marks_awarded / max_marks * 100) if max_marks > 0 else 0
+                is_correct = percentage >= 80  # Consider 80%+ as correct
+                similarity_score = marks_awarded / max_marks if max_marks > 0 else 0
 
                 # Store evaluation
                 evaluation_data = {
@@ -366,6 +391,8 @@ Return the result as JSON."""
                     "question_id": question['id'],
                     "candidate_answer": candidate_answer['answer'],
                     "marks_awarded": marks_awarded,
+                    "is_correct": is_correct,
+                    "similarity_score": similarity_score,
                     "feedback": evaluation.get('feedback', ''),
                     "key_points_covered": evaluation.get('key_points_covered', []),
                     "key_points_missed": evaluation.get('key_points_missed', []),
@@ -569,7 +596,9 @@ Return the result as JSON."""
                     "average_percentage": 0,
                     "highest_score": 0,
                     "lowest_score": 0,
-                    "pass_rate": 0
+                    "pass_rate": 0,
+                    "passed_count": 0,
+                    "failed_count": 0
                 }
 
             percentages = [r['percentage'] for r in results if r.get('percentage') is not None]
@@ -590,6 +619,74 @@ Return the result as JSON."""
 
         except Exception as e:
             logger.error(f"Error getting test statistics: {e}")
+            raise
+
+    async def delete_answer_sheets(self, answer_sheet_ids: List[str]) -> Dict[str, Any]:
+        """
+        Delete multiple answer sheets by their IDs.
+
+        Args:
+            answer_sheet_ids: List of answer sheet IDs to delete
+
+        Returns:
+            dict with deleted_count and failed_ids
+        """
+        try:
+            logger.info(f"Attempting to delete {len(answer_sheet_ids)} answer sheet(s): {answer_sheet_ids}")
+            deleted_count = 0
+            failed_ids = []
+
+            for answer_sheet_id in answer_sheet_ids:
+                try:
+                    logger.info(f"Processing deletion for answer sheet: {answer_sheet_id}")
+
+                    # Get answer sheet data before deletion
+                    answer_sheet_result = self.client.table("answer_sheets").select(
+                        "answer_sheet_path"
+                    ).eq("id", answer_sheet_id).execute()
+
+                    if answer_sheet_result.data and len(answer_sheet_result.data) > 0:
+                        file_path = answer_sheet_result.data[0].get('answer_sheet_path')
+                        logger.info(f"Found answer sheet {answer_sheet_id}, file_path: {file_path}")
+
+                        # Delete evaluations first (foreign key constraint)
+                        eval_result = self.client.table("answer_evaluations").delete().eq(
+                            "answer_sheet_id", answer_sheet_id
+                        ).execute()
+                        logger.info(f"Deleted evaluations for answer sheet {answer_sheet_id}")
+
+                        # Delete answer sheet from database
+                        delete_result = self.client.table("answer_sheets").delete().eq(
+                            "id", answer_sheet_id
+                        ).execute()
+                        logger.info(f"Deleted answer sheet from database: {answer_sheet_id}")
+
+                        # Delete file from storage
+                        if file_path:
+                            try:
+                                await self.storage.delete_file(file_path)
+                                logger.info(f"Deleted file: {file_path}")
+                            except Exception as e:
+                                logger.warning(f"Failed to delete file for answer sheet {answer_sheet_id}: {e}")
+
+                        deleted_count += 1
+                        logger.info(f"Successfully deleted answer sheet: {answer_sheet_id}")
+                    else:
+                        logger.warning(f"Answer sheet not found in database: {answer_sheet_id}")
+                        failed_ids.append(answer_sheet_id)
+
+                except Exception as e:
+                    logger.error(f"Error deleting answer sheet {answer_sheet_id}: {e}", exc_info=True)
+                    failed_ids.append(answer_sheet_id)
+
+            logger.info(f"Delete operation completed. Deleted: {deleted_count}, Failed: {len(failed_ids)}")
+            return {
+                "deleted_count": deleted_count,
+                "failed_ids": failed_ids
+            }
+
+        except Exception as e:
+            logger.error(f"Error in delete_answer_sheets: {e}", exc_info=True)
             raise
 
 

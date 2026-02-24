@@ -109,7 +109,7 @@ class DocumentProcessor:
             raise
 
     async def _extract_from_pdf(self, file_data: bytes) -> Dict[str, any]:
-        """Extract text from PDF using pdfplumber."""
+        """Extract text from PDF using pdfplumber, with OCR fallback for scanned PDFs."""
         if pdfplumber is None:
             raise RuntimeError("pdfplumber is not installed")
 
@@ -127,16 +127,83 @@ class DocumentProcessor:
 
             extracted_text = "\n\n".join(text_content)
 
+            # If no text was extracted, the PDF might be scanned (image-based)
+            # Fall back to OCR
+            if len(extracted_text.strip()) < 50:
+                logger.warning(f"PDF appears to be scanned (extracted only {len(extracted_text)} chars). Attempting OCR...")
+                return await self._extract_from_pdf_with_ocr(file_data)
+
             return {
                 "extracted_text": extracted_text,
                 "page_count": page_count,
                 "char_count": len(extracted_text),
                 "word_count": len(extracted_text.split()),
-                "format": "pdf"
+                "format": "pdf",
+                "ocr_used": False
             }
 
         except Exception as e:
             logger.error(f"Error extracting PDF: {e}")
+            raise
+
+    async def _extract_from_pdf_with_ocr(self, file_data: bytes) -> Dict[str, any]:
+        """Extract text from scanned PDF using OCR."""
+        if Image is None or pytesseract is None:
+            raise RuntimeError(
+                "PIL and pytesseract are required for OCR. "
+                "Install with: pip install Pillow pytesseract"
+            )
+
+        try:
+            import pdf2image
+        except ImportError:
+            raise RuntimeError(
+                "pdf2image is required for PDF OCR. "
+                "Install with: pip install pdf2image"
+            )
+
+        try:
+            logger.info("Converting PDF to images for OCR...")
+
+            # Convert PDF pages to images
+            images = pdf2image.convert_from_bytes(file_data)
+
+            text_content = []
+            for i, image in enumerate(images):
+                logger.info(f"Processing page {i + 1}/{len(images)} with OCR...")
+
+                # Convert to RGB if necessary
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+
+                # Perform OCR on the page
+                try:
+                    page_text = pytesseract.image_to_string(image)
+                    if page_text.strip():
+                        text_content.append(page_text)
+                except Exception as e:
+                    logger.warning(f"OCR failed for page {i + 1}: {e}")
+                    continue
+
+            extracted_text = "\n\n".join(text_content)
+
+            logger.info(f"OCR completed. Extracted {len(extracted_text)} characters from {len(images)} pages")
+
+            return {
+                "extracted_text": extracted_text,
+                "page_count": len(images),
+                "char_count": len(extracted_text),
+                "word_count": len(extracted_text.split()),
+                "format": "pdf",
+                "ocr_used": True,
+                "metadata": {
+                    "pages_processed": len(images),
+                    "method": "OCR (scanned PDF)"
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error extracting PDF with OCR: {e}")
             raise
 
     async def _extract_from_docx(self, file_data: bytes) -> Dict[str, any]:
@@ -206,7 +273,7 @@ class DocumentProcessor:
     async def _extract_from_image(self, file_data: bytes) -> Dict[str, any]:
         """Extract text from image using OCR (pytesseract)."""
         if Image is None or pytesseract is None:
-            raise RuntimeError("PIL or pytesseract is not installed")
+            raise RuntimeError("PIL or pytesseract is not installed. Install with: pip install Pillow pytesseract")
 
         try:
             # Open image
@@ -217,7 +284,16 @@ class DocumentProcessor:
                 image = image.convert('RGB')
 
             # Perform OCR
-            extracted_text = pytesseract.image_to_string(image)
+            try:
+                extracted_text = pytesseract.image_to_string(image)
+            except pytesseract.TesseractNotFoundError:
+                raise RuntimeError(
+                    "Tesseract OCR is not installed. "
+                    "Please install Tesseract OCR binary:\n"
+                    "Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki\n"
+                    "Linux: sudo apt-get install tesseract-ocr\n"
+                    "Mac: brew install tesseract"
+                )
 
             return {
                 "extracted_text": extracted_text,
@@ -225,6 +301,7 @@ class DocumentProcessor:
                 "char_count": len(extracted_text),
                 "word_count": len(extracted_text.split()),
                 "format": "image",
+                "ocr_used": True,
                 "metadata": {
                     "image_size": image.size,
                     "image_mode": image.mode

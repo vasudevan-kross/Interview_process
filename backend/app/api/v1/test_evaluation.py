@@ -1,9 +1,10 @@
 """
 API endpoints for test evaluation functionality.
 """
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
-from typing import Optional
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body
+from typing import Optional, List
 import logging
+from pydantic import BaseModel
 
 from app.schemas.test_evaluation import (
     QuestionPaperResponse,
@@ -16,6 +17,12 @@ from app.schemas.test_evaluation import (
     TestResultSchema,
     ErrorResponse
 )
+
+
+class DeleteAnswerSheetsRequest(BaseModel):
+    answer_sheet_ids: List[str]
+
+
 from app.services.test_evaluation import get_test_evaluation_service
 from app.db.supabase_client import get_supabase
 
@@ -274,6 +281,10 @@ async def get_answer_sheet_evaluation(answer_sheet_id: str):
 
         sheet_data = sheet_result.data
 
+        # Get test details for test title
+        test_result = client.table("tests").select("title").eq("id", sheet_data['test_id']).single().execute()
+        test_title = test_result.data.get('title', 'Unknown Test') if test_result.data else 'Unknown Test'
+
         # Get evaluations
         eval_result = client.table("answer_evaluations").select(
             "*, questions(*)"
@@ -286,12 +297,16 @@ async def get_answer_sheet_evaluation(answer_sheet_id: str):
         for eval_item in evaluations:
             question = eval_item.get('questions', {})
             formatted_evaluations.append({
+                "id": eval_item.get('id'),
+                "question_id": eval_item.get('question_id'),
                 "question_number": question.get('question_number'),
                 "question_text": question.get('question_text'),
                 "candidate_answer": eval_item.get('candidate_answer'),
-                "marks_awarded": eval_item.get('marks_awarded'),
-                "max_marks": question.get('marks'),
+                "marks_awarded": eval_item.get('marks_awarded', 0),
+                "max_marks": question.get('marks', 0),
                 "feedback": eval_item.get('feedback'),
+                "is_correct": eval_item.get('is_correct'),
+                "similarity_score": eval_item.get('similarity_score'),
                 "key_points_covered": eval_item.get('key_points_covered', []),
                 "key_points_missed": eval_item.get('key_points_missed', [])
             })
@@ -299,8 +314,10 @@ async def get_answer_sheet_evaluation(answer_sheet_id: str):
         return EvaluationDetailResponse(
             answer_sheet_id=sheet_data['id'],
             test_id=sheet_data['test_id'],
+            test_title=test_title,
             candidate_name=sheet_data['candidate_name'],
             candidate_email=sheet_data.get('candidate_email'),
+            candidate_id=sheet_data.get('candidate_id'),
             total_marks_obtained=sheet_data.get('total_marks_obtained', 0),
             total_marks=0,  # Will be populated from test data
             percentage=sheet_data.get('percentage', 0),
@@ -352,3 +369,36 @@ async def list_tests(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list tests"
         )
+
+
+@router.delete(
+    "/answer-sheets",
+    summary="Delete multiple answer sheets"
+)
+async def delete_answer_sheets(
+    request: DeleteAnswerSheetsRequest = Body(...)
+):
+    """
+    Delete multiple answer sheets by their IDs.
+
+    This endpoint:
+    - Deletes answer sheet records from the database
+    - Removes associated evaluations
+    - Deletes uploaded answer sheet files from storage
+    """
+    try:
+        service = get_test_evaluation_service()
+
+        result = await service.delete_answer_sheets(answer_sheet_ids=request.answer_sheet_ids)
+
+        return {
+            "message": f"Successfully deleted {result['deleted_count']} answer sheet(s)",
+            "deleted_count": result['deleted_count'],
+            "failed_ids": result.get('failed_ids', [])
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting answer sheets: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete answer sheets")

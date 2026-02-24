@@ -4,13 +4,22 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
 import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
-import { Loader2, Search, TrendingUp, Users, Award, ChevronUp, ChevronDown } from 'lucide-react'
+import { Loader2, Search, TrendingUp, Users, Award, ChevronUp, ChevronDown, Trash2 } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface Candidate {
   id: string
@@ -42,6 +51,14 @@ export default function CandidatesPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [sortField, setSortField] = useState<'match_score' | 'candidate_name'>('match_score')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+  const [selectedCandidates, setSelectedCandidates] = useState<Set<string>>(new Set())
+  const [deleting, setDeleting] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteAction, setDeleteAction] = useState<{
+    type: 'single' | 'bulk'
+    candidateId?: string
+    candidateName?: string
+  } | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -77,18 +94,66 @@ export default function CandidatesPage() {
       return a.candidate_name.localeCompare(b.candidate_name) * modifier
     })
 
-  const getScoreBadge = (score: number) => {
-    if (score >= 80) return <Badge variant="success">{score.toFixed(1)}%</Badge>
-    if (score >= 60) return <Badge variant="warning">{score.toFixed(1)}%</Badge>
-    return <Badge variant="destructive">{score.toFixed(1)}%</Badge>
-  }
-
   const toggleSort = (field: 'match_score' | 'candidate_name') => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
     } else {
       setSortField(field)
       setSortDirection('desc')
+    }
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedCandidates.size === filteredCandidates.length) {
+      setSelectedCandidates(new Set())
+    } else {
+      setSelectedCandidates(new Set(filteredCandidates.map(c => c.id)))
+    }
+  }
+
+  const toggleSelectCandidate = (candidateId: string) => {
+    const newSelected = new Set(selectedCandidates)
+    if (newSelected.has(candidateId)) {
+      newSelected.delete(candidateId)
+    } else {
+      newSelected.add(candidateId)
+    }
+    setSelectedCandidates(newSelected)
+  }
+
+  const handleDeleteSelected = () => {
+    if (selectedCandidates.size === 0) return
+    setDeleteAction({ type: 'bulk' })
+    setDeleteDialogOpen(true)
+  }
+
+  const handleDeleteSingle = (candidateId: string, candidateName: string, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent row click
+    setDeleteAction({ type: 'single', candidateId, candidateName })
+    setDeleteDialogOpen(true)
+  }
+
+  const executeDelete = async () => {
+    if (!deleteAction) return
+
+    setDeleting(true)
+    setDeleteDialogOpen(false)
+
+    try {
+      if (deleteAction.type === 'bulk') {
+        await apiClient.deleteResumes(Array.from(selectedCandidates))
+        toast.success(`Successfully deleted ${selectedCandidates.size} candidate${selectedCandidates.size > 1 ? 's' : ''}`)
+        setSelectedCandidates(new Set())
+      } else if (deleteAction.type === 'single' && deleteAction.candidateId) {
+        await apiClient.deleteResumes([deleteAction.candidateId])
+        toast.success(`Successfully deleted ${deleteAction.candidateName}`)
+      }
+      await fetchData() // Refresh data
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to delete candidate(s)')
+    } finally {
+      setDeleting(false)
+      setDeleteAction(null)
     }
   }
 
@@ -101,67 +166,105 @@ export default function CandidatesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Candidate Rankings</h1>
-          <p className="text-muted-foreground">
-            AI-matched candidates sorted by compatibility score
-          </p>
+    <div className="max-w-7xl mx-auto space-y-6">
+      {/* Gradient Header */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-500/90 to-pink-600 p-8 text-white shadow-xl">
+        <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
+        <div className="relative z-10">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Award className="h-6 w-6" />
+                <span className="text-sm font-medium opacity-90">Ranked Results</span>
+              </div>
+              <h1 className="text-4xl font-bold mb-2">Candidate Rankings</h1>
+              <p className="text-lg opacity-90">
+                AI-matched candidates sorted by compatibility score
+              </p>
+            </div>
+            <Button
+              onClick={() => router.push(`/dashboard/resume-matching/${jobId}/upload-resumes`)}
+              className="bg-white text-purple-600 hover:bg-purple-50 shadow-lg hover:shadow-xl transition-all"
+            >
+              Upload More Resumes
+            </Button>
+          </div>
         </div>
-        <Button onClick={() => router.push(`/dashboard/resume-matching/${jobId}/upload-resumes`)}>
-          Upload More Resumes
-        </Button>
       </div>
 
       {/* Statistics Cards */}
       {statistics && (
         <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Users className="h-4 w-4 text-blue-600" />
-                Total Candidates
-              </CardTitle>
+          <Card className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent"></div>
+            <CardHeader className="pb-2 relative">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 shadow-md">
+                  <Users className="h-4 w-4 text-white" />
+                </div>
+                <CardTitle className="text-sm font-medium">Total Candidates</CardTitle>
+              </div>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{statistics.total_resumes}</div>
+            <CardContent className="relative">
+              <div className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
+                {statistics.total_resumes}
+              </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-green-600" />
-                Average Score
-              </CardTitle>
+          <Card className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent"></div>
+            <CardHeader className="pb-2 relative">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-gradient-to-br from-green-500 to-emerald-500 shadow-md">
+                  <TrendingUp className="h-4 w-4 text-white" />
+                </div>
+                <CardTitle className="text-sm font-medium">Average Score</CardTitle>
+              </div>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{statistics.average_score.toFixed(1)}%</div>
+            <CardContent className="relative">
+              <div className="text-3xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                {statistics.average_score.toFixed(1)}%
+              </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Award className="h-4 w-4 text-purple-600" />
-                Top Score
-              </CardTitle>
+          <Card className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent"></div>
+            <CardHeader className="pb-2 relative">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 shadow-md">
+                  <Award className="h-4 w-4 text-white" />
+                </div>
+                <CardTitle className="text-sm font-medium">Top Score</CardTitle>
+              </div>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{statistics.top_score.toFixed(1)}%</div>
+            <CardContent className="relative">
+              <div className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                {statistics.top_score.toFixed(1)}%
+              </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
+          <Card className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all">
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-500/10 to-transparent"></div>
+            <CardHeader className="pb-2 relative">
               <CardTitle className="text-sm font-medium">Score Distribution</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-xs space-y-1">
-                <div>90-100%: {statistics.score_distribution?.['90-100'] || 0}</div>
-                <div>80-89%: {statistics.score_distribution?.['80-89'] || 0}</div>
-                <div>70-79%: {statistics.score_distribution?.['70-79'] || 0}</div>
+            <CardContent className="relative">
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">90-100%</span>
+                  <span className="font-semibold text-green-600">{statistics.score_distribution?.['90-100'] || 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">80-89%</span>
+                  <span className="font-semibold text-blue-600">{statistics.score_distribution?.['80-89'] || 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-600">70-79%</span>
+                  <span className="font-semibold text-orange-600">{statistics.score_distribution?.['70-79'] || 0}</span>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -169,37 +272,75 @@ export default function CandidatesPage() {
       )}
 
       {/* Search */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Search Candidates</CardTitle>
+      <Card className="border-0 shadow-lg overflow-hidden relative">
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent"></div>
+        <CardHeader className="relative">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 shadow-md">
+              <Search className="h-4 w-4 text-white" />
+            </div>
+            <CardTitle className="text-lg">Search Candidates</CardTitle>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="relative">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-purple-400" />
             <Input
               placeholder="Search by name or email..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
+              className="pl-10 border-slate-200 focus:border-purple-500 focus:ring-purple-500"
             />
           </div>
         </CardContent>
       </Card>
 
       {/* Candidates Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>All Candidates ({filteredCandidates.length})</CardTitle>
-          <CardDescription>
-            Click on a candidate to view detailed analysis
-          </CardDescription>
+      <Card className="border-0 shadow-lg overflow-hidden relative">
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent"></div>
+        <CardHeader className="relative">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 shadow-md">
+                <Users className="h-4 w-4 text-white" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">All Candidates ({filteredCandidates.length})</CardTitle>
+                <CardDescription>Click on a candidate to view detailed analysis</CardDescription>
+              </div>
+            </div>
+            {selectedCandidates.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeleteSelected}
+                disabled={deleting}
+                className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600"
+              >
+                {deleting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Delete {selectedCandidates.size} Selected
+              </Button>
+            )}
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="relative">
           <div className="space-y-2">
             {/* Table Header */}
-            <div className="grid grid-cols-12 gap-4 p-3 bg-muted rounded-lg font-medium text-sm">
+            <div className="grid grid-cols-12 gap-4 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl font-semibold text-sm border border-purple-100">
+              <div className="col-span-1 flex items-center gap-2">
+                <Checkbox
+                  checked={filteredCandidates.length > 0 && selectedCandidates.size === filteredCandidates.length}
+                  onCheckedChange={toggleSelectAll}
+                  className="border-purple-400 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                />
+                <span className="text-purple-900">Select</span>
+              </div>
               <div
-                className="col-span-1 cursor-pointer flex items-center gap-1"
+                className="col-span-1 cursor-pointer flex items-center gap-1 text-purple-900"
                 onClick={() => toggleSort('match_score')}
               >
                 Rank
@@ -211,7 +352,7 @@ export default function CandidatesPage() {
                   ))}
               </div>
               <div
-                className="col-span-3 cursor-pointer flex items-center gap-1"
+                className="col-span-2 cursor-pointer flex items-center gap-1 text-purple-900"
                 onClick={() => toggleSort('candidate_name')}
               >
                 Candidate
@@ -222,56 +363,90 @@ export default function CandidatesPage() {
                     <ChevronUp className="h-4 w-4" />
                   ))}
               </div>
-              <div className="col-span-2">Match Score</div>
-              <div className="col-span-4">Key Skills</div>
-              <div className="col-span-2">Submitted</div>
+              <div className="col-span-2 text-purple-900">Match Score</div>
+              <div className="col-span-3 text-purple-900">Key Skills</div>
+              <div className="col-span-2 text-purple-900">Submitted</div>
+              <div className="col-span-1 text-purple-900 text-center">Actions</div>
             </div>
 
             {/* Table Rows */}
             {filteredCandidates.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                No candidates found. Upload resumes to get started.
+              <div className="text-center py-16">
+                <div className="p-6 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 mb-4 inline-block shadow-lg">
+                  <Users className="h-12 w-12 text-white" />
+                </div>
+                <p className="text-lg font-medium text-slate-900 mb-2">No candidates found</p>
+                <p className="text-slate-600">Upload resumes to get started with AI matching</p>
               </div>
             ) : (
               filteredCandidates.map((candidate, index) => (
                 <div
                   key={candidate.id}
-                  className="grid grid-cols-12 gap-4 p-3 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                  className="grid grid-cols-12 gap-4 p-4 border border-slate-200 rounded-xl hover:border-purple-300 hover:bg-purple-50/50 transition-all cursor-pointer group"
                   onClick={() =>
                     router.push(`/dashboard/resume-matching/${jobId}/candidates/${candidate.id}`)
                   }
                 >
-                  <div className="col-span-1 font-bold text-lg text-muted-foreground">
-                    #{index + 1}
+                  <div className="col-span-1 flex items-center" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedCandidates.has(candidate.id)}
+                      onCheckedChange={() => toggleSelectCandidate(candidate.id)}
+                      className="border-purple-400 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                    />
                   </div>
-                  <div className="col-span-3">
-                    <p className="font-medium">{candidate.candidate_name}</p>
+                  <div className="col-span-1 flex items-center">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-sm shadow-md">
+                      {index + 1}
+                    </div>
+                  </div>
+                  <div className="col-span-2 flex flex-col justify-center">
+                    <p className="font-semibold text-slate-900 group-hover:text-purple-700 transition-colors">
+                      {candidate.candidate_name}
+                    </p>
                     {candidate.candidate_email && (
                       <p className="text-xs text-muted-foreground">{candidate.candidate_email}</p>
                     )}
                   </div>
                   <div className="col-span-2 flex items-center gap-2">
-                    {getScoreBadge(candidate.match_score)}
-                    <Progress value={candidate.match_score} className="flex-1" />
+                    <span className="px-3 py-1 rounded-full text-sm font-bold bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md">
+                      {candidate.match_score.toFixed(1)}%
+                    </span>
+                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                        style={{ width: `${candidate.match_score}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="col-span-4">
+                  <div className="col-span-3 flex items-center">
                     <div className="flex flex-wrap gap-1">
                       {candidate.skills_extracted.technical_skills
                         ?.slice(0, 3)
                         .map((skill, i) => (
-                          <Badge key={i} variant="secondary" className="text-xs">
+                          <span key={i} className="px-2 py-1 rounded-md bg-purple-100 text-purple-700 text-xs font-medium border border-purple-200">
                             {skill}
-                          </Badge>
+                          </span>
                         ))}
                       {candidate.skills_extracted.technical_skills?.length > 3 && (
-                        <Badge variant="outline" className="text-xs">
-                          +{candidate.skills_extracted.technical_skills.length - 3}
-                        </Badge>
+                        <span className="px-2 py-1 rounded-md bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200">
+                          +{candidate.skills_extracted.technical_skills.length - 3} more
+                        </span>
                       )}
                     </div>
                   </div>
-                  <div className="col-span-2 text-sm text-muted-foreground">
+                  <div className="col-span-2 flex items-center text-sm text-slate-600">
                     {formatDateTime(candidate.created_at)}
+                  </div>
+                  <div className="col-span-1 flex items-center justify-center">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => handleDeleteSingle(candidate.id, candidate.candidate_name, e)}
+                      disabled={deleting}
+                      className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               ))
@@ -279,6 +454,47 @@ export default function CandidatesPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="border-2 border-purple-200">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+              {deleteAction?.type === 'bulk'
+                ? `Delete ${selectedCandidates.size} Candidate${selectedCandidates.size > 1 ? 's' : ''}?`
+                : `Delete ${deleteAction?.candidateName}?`
+              }
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-base text-slate-600">
+              {deleteAction?.type === 'bulk'
+                ? `This will permanently delete ${selectedCandidates.size} selected candidate${selectedCandidates.size > 1 ? 's' : ''} and their resume data. This action cannot be undone.`
+                : `This will permanently delete this candidate and their resume data. This action cannot be undone.`
+              }
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300 hover:bg-slate-100">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={executeDelete}
+              className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white shadow-md"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

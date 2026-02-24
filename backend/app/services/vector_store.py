@@ -15,12 +15,13 @@ logger = logging.getLogger(__name__)
 class VectorStore:
     """Service for vector embeddings and similarity search using pgvector."""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "all-mpnet-base-v2"):
         """
         Initialize the vector store.
 
         Args:
             model_name: Name of the sentence-transformers model to use
+                       (default: all-mpnet-base-v2 with 768 dimensions)
         """
         self.client = get_supabase()
         self.model_name = model_name
@@ -116,8 +117,7 @@ class VectorStore:
 
             # Update the job_descriptions table with the embedding
             result = self.client.table("job_descriptions").update({
-                "embedding": embedding,
-                "metadata": metadata or {}
+                "embedding": embedding
             }).eq("id", job_id).execute()
 
             logger.info(f"Stored embedding for job description: {job_id}")
@@ -150,8 +150,7 @@ class VectorStore:
 
             # Update the resumes table with the embedding
             result = self.client.table("resumes").update({
-                "embedding": embedding,
-                "metadata": metadata or {}
+                "embedding": embedding
             }).eq("id", resume_id).execute()
 
             logger.info(f"Stored embedding for resume: {resume_id}")
@@ -318,6 +317,52 @@ class VectorStore:
 
         except Exception as e:
             logger.error(f"Error batch processing resumes: {e}")
+            raise
+
+    async def delete_resume_embedding(self, resume_id: str) -> bool:
+        """
+        Delete embedding for a resume by setting it to NULL.
+
+        Args:
+            resume_id: UUID of the resume
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Set embedding to NULL in the database
+            result = self.client.table("resumes").update({
+                "embedding": None
+            }).eq("id", resume_id).execute()
+
+            logger.info(f"Deleted embedding for resume: {resume_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting resume embedding: {e}")
+            raise
+
+    async def delete_job_description_embedding(self, job_id: str) -> bool:
+        """
+        Delete embedding for a job description by setting it to NULL.
+
+        Args:
+            job_id: UUID of the job description
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Set embedding to NULL in the database
+            result = self.client.table("job_descriptions").update({
+                "embedding": None
+            }).eq("id", job_id).execute()
+
+            logger.info(f"Deleted embedding for job description: {job_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting job description embedding: {e}")
             raise
 
 

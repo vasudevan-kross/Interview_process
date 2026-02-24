@@ -94,14 +94,14 @@ class ResumeMatchingService:
                 "id": str(uuid4()),
                 "title": title,
                 "department": department,
-                "description": extracted_text,
+                "raw_text": extracted_text,
                 "file_path": storage_result['file_path'],
-                "file_name": filename,
+                "file_type": validation['file_type'],
+                "file_size": validation['file_size'],
                 "created_by": user_id,
-                "skills_required": skills_result['skills'],
-                "metadata": {
-                    "file_type": validation['file_type'],
-                    "file_size": validation['file_size'],
+                "parsed_data": {
+                    "skills_required": skills_result['skills'],
+                    "file_name": filename,
                     "extraction_metadata": extraction,
                     "model_used": skills_result.get('model_used')
                 }
@@ -127,7 +127,7 @@ class ResumeMatchingService:
                 "extracted_text": extracted_text,
                 "skills": skills_result['skills'],
                 "file_info": storage_result,
-                "metadata": job_data['metadata']
+                "metadata": job_data['parsed_data']
             }
 
         except Exception as e:
@@ -191,6 +191,25 @@ class ResumeMatchingService:
                 content_type=f"application/{validation['file_type']}"
             )
 
+            # Extract candidate info if not provided
+            if not candidate_name or not candidate_email:
+                logger.info("Extracting candidate information from resume text")
+                candidate_info_result = await self.llm.extract_candidate_info(
+                    extracted_text,
+                    model=model
+                )
+
+                # Use extracted info if original values are not provided
+                if not candidate_name:
+                    candidate_name = candidate_info_result.get('candidate_name')
+                if not candidate_email:
+                    candidate_email = candidate_info_result.get('candidate_email')
+
+                # Store phone if extracted
+                candidate_phone = candidate_info_result.get('candidate_phone')
+            else:
+                candidate_phone = None
+
             # Extract skills using LLM
             skills_result = await self.llm.extract_skills_from_text(
                 extracted_text,
@@ -200,17 +219,18 @@ class ResumeMatchingService:
             # Create resume record
             resume_data = {
                 "id": str(uuid4()),
-                "job_id": job_id,
+                "job_description_id": job_id,
                 "candidate_name": candidate_name or "Unknown",
                 "candidate_email": candidate_email,
-                "resume_text": extracted_text,
+                "candidate_phone": candidate_phone,
+                "raw_text": extracted_text,
                 "file_path": storage_result['file_path'],
-                "file_name": filename,
+                "file_type": validation['file_type'],
+                "file_size": validation['file_size'],
                 "uploaded_by": user_id,
-                "skills_extracted": skills_result['skills'],
-                "metadata": {
-                    "file_type": validation['file_type'],
-                    "file_size": validation['file_size'],
+                "parsed_data": {
+                    "skills_extracted": skills_result['skills'],
+                    "file_name": filename,
                     "extraction_metadata": extraction,
                     "model_used": skills_result.get('model_used')
                 }
@@ -230,20 +250,20 @@ class ResumeMatchingService:
 
             # Calculate match score with job description
             job_result = self.client.table("job_descriptions").select(
-                "description"
+                "raw_text"
             ).eq("id", job_id).single().execute()
 
             if job_result.data:
                 match_result = await self.llm.calculate_match_score(
-                    job_description=job_result.data['description'],
+                    job_description=job_result.data['raw_text'],
                     resume=extracted_text,
                     model=model
                 )
 
                 # Update resume with match score
                 self.client.table("resumes").update({
-                    "match_score": match_result['match_score'],
-                    "match_details": {
+                    "match_score": float(match_result['match_score']) if match_result.get('match_score') is not None else 0,
+                    "skill_match": {
                         "key_matches": match_result.get('key_matches', []),
                         "missing_requirements": match_result.get('missing_requirements', []),
                         "reasoning": match_result.get('reasoning', '')
@@ -260,14 +280,14 @@ class ResumeMatchingService:
                 "candidate_name": candidate_name,
                 "extracted_text": extracted_text,
                 "skills": skills_result['skills'],
-                "match_score": match_result.get('match_score', 0),
+                "match_score": float(match_result.get('match_score', 0)) if match_result.get('match_score') is not None else 0.0,
                 "match_details": {
                     "key_matches": match_result.get('key_matches', []),
                     "missing_requirements": match_result.get('missing_requirements', []),
                     "reasoning": match_result.get('reasoning', '')
                 },
                 "file_info": storage_result,
-                "metadata": resume_data['metadata']
+                "metadata": resume_data['parsed_data']
             }
 
         except Exception as e:
@@ -354,12 +374,25 @@ class ResumeMatchingService:
         """
         try:
             result = self.client.table("resumes").select(
-                "id, candidate_name, candidate_email, match_score, match_details, skills_extracted, created_at"
-            ).eq("job_id", job_id).order(
+                "id, candidate_name, candidate_email, match_score, skill_match, parsed_data, created_at"
+            ).eq("job_description_id", job_id).order(
                 "match_score", desc=True
             ).limit(limit).execute()
 
-            return result.data if result.data else []
+            # Transform data to match CandidateInfo schema
+            candidates = []
+            for resume in (result.data or []):
+                candidates.append({
+                    "id": resume["id"],
+                    "candidate_name": resume["candidate_name"],
+                    "candidate_email": resume.get("candidate_email"),
+                    "match_score": resume.get("match_score"),
+                    "match_details": resume.get("skill_match"),  # Map skill_match to match_details
+                    "skills_extracted": resume.get("parsed_data", {}).get("skills_extracted", {}),  # Extract from parsed_data
+                    "created_at": resume["created_at"]
+                })
+
+            return candidates
 
         except Exception as e:
             logger.error(f"Error getting ranked candidates: {e}")
@@ -384,6 +417,7 @@ class ResumeMatchingService:
                     "total_resumes": 0,
                     "average_score": 0,
                     "top_score": 0,
+                    "lowest_score": 0,
                     "score_distribution": {}
                 }
 
@@ -420,6 +454,65 @@ class ResumeMatchingService:
 
         except Exception as e:
             logger.error(f"Error getting job statistics: {e}")
+            raise
+
+    async def delete_resumes(self, resume_ids: List[str]) -> Dict[str, Any]:
+        """
+        Delete multiple resumes by their IDs.
+
+        Args:
+            resume_ids: List of resume IDs to delete
+
+        Returns:
+            dict with deleted_count and failed_ids
+        """
+        try:
+            deleted_count = 0
+            failed_ids = []
+
+            for resume_id in resume_ids:
+                try:
+                    # Get resume data before deletion
+                    resume_result = self.client.table("resumes").select(
+                        "file_path"
+                    ).eq("id", resume_id).single().execute()
+
+                    if resume_result.data:
+                        file_path = resume_result.data.get('file_path')
+
+                        # Delete from database
+                        self.client.table("resumes").delete().eq("id", resume_id).execute()
+
+                        # Delete vector embedding
+                        try:
+                            await self.vector_store.delete_resume_embedding(resume_id)
+                        except Exception as e:
+                            logger.warning(f"Failed to delete embedding for resume {resume_id}: {e}")
+
+                        # Delete file from storage
+                        if file_path:
+                            try:
+                                await self.storage.delete_file(file_path)
+                            except Exception as e:
+                                logger.warning(f"Failed to delete file for resume {resume_id}: {e}")
+
+                        deleted_count += 1
+                        logger.info(f"Deleted resume: {resume_id}")
+                    else:
+                        logger.warning(f"Resume not found: {resume_id}")
+                        failed_ids.append(resume_id)
+
+                except Exception as e:
+                    logger.error(f"Error deleting resume {resume_id}: {e}")
+                    failed_ids.append(resume_id)
+
+            return {
+                "deleted_count": deleted_count,
+                "failed_ids": failed_ids
+            }
+
+        except Exception as e:
+            logger.error(f"Error in delete_resumes: {e}")
             raise
 
 

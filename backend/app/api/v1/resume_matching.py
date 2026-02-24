@@ -1,9 +1,10 @@
 """
 API endpoints for resume matching functionality.
 """
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, status
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, status, Body
 from typing import List, Optional
 import logging
+from pydantic import BaseModel
 
 from app.schemas.resume_matching import (
     JobDescriptionResponse,
@@ -18,6 +19,10 @@ from app.schemas.resume_matching import (
     ErrorResponse,
     CandidateInfo
 )
+
+
+class DeleteResumesRequest(BaseModel):
+    resume_ids: List[str]
 from app.services import get_resume_matching_service, get_llm_orchestrator
 
 logger = logging.getLogger(__name__)
@@ -311,3 +316,36 @@ async def list_models():
     except Exception as e:
         logger.error(f"Error listing models: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list models")
+
+
+@router.delete(
+    "/resumes",
+    summary="Delete multiple resumes"
+)
+async def delete_resumes(
+    request: DeleteResumesRequest = Body(...)
+):
+    """
+    Delete multiple resumes by their IDs.
+
+    This endpoint:
+    - Deletes resume records from the database
+    - Removes associated vector embeddings
+    - Deletes uploaded resume files from storage
+    """
+    try:
+        service = get_resume_matching_service()
+
+        result = await service.delete_resumes(resume_ids=request.resume_ids)
+
+        return {
+            "message": f"Successfully deleted {result['deleted_count']} resume(s)",
+            "deleted_count": result['deleted_count'],
+            "failed_ids": result.get('failed_ids', [])
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting resumes: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete resumes")

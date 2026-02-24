@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, X, FileText, Loader2 } from 'lucide-react'
+import { Upload, X, FileText } from 'lucide-react'
 import { cn, formatFileSize } from '@/lib/utils'
 import { Button } from './button'
 
@@ -33,14 +33,12 @@ export function FileUpload({
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      setSelectedFiles((prev) => {
-        const newFiles = multiple ? [...prev, ...acceptedFiles] : acceptedFiles
-        const limitedFiles = newFiles.slice(0, maxFiles)
-        onFilesSelected(limitedFiles)
-        return limitedFiles
-      })
+      const newFiles = multiple ? [...selectedFiles, ...acceptedFiles] : acceptedFiles
+      const limitedFiles = newFiles.slice(0, maxFiles)
+      setSelectedFiles(limitedFiles)
+      onFilesSelected(limitedFiles)
     },
-    [onFilesSelected, multiple, maxFiles]
+    [onFilesSelected, multiple, maxFiles, selectedFiles]
   )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({

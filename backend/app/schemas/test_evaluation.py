@@ -130,8 +130,10 @@ class EvaluationDetailResponse(BaseModel):
     """Schema for detailed evaluation of a single answer sheet."""
     answer_sheet_id: str
     test_id: str
+    test_title: str
     candidate_name: str
     candidate_email: Optional[str]
+    candidate_id: Optional[str] = None
     total_marks_obtained: float
     total_marks: float
     percentage: float

@@ -1,105 +1,341 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users, FileText, TrendingUp, Clock } from 'lucide-react'
+'use client'
 
-export default async function DashboardPage() {
-  // TODO: Fetch real data from backend
-  const stats = [
+import { useEffect, useState } from 'react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Users, FileText, TrendingUp, Briefcase, ArrowRight, Sparkles, Clock, Award } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import Link from 'next/link'
+import { Button } from '@/components/ui/button'
+
+interface DashboardStats {
+  jobsCount: number
+  resumesCount: number
+  avgScore: string
+  testsCount: number
+  recentJobs: Array<{
+    id: string
+    title: string
+    created_at: string
+  }>
+}
+
+export default function DashboardPage() {
+  const [stats, setStats] = useState<DashboardStats>({
+    jobsCount: 0,
+    resumesCount: 0,
+    avgScore: '0',
+    testsCount: 0,
+    recentJobs: [],
+  })
+  const [loading, setLoading] = useState(true)
+  const [userName, setUserName] = useState('')
+
+  useEffect(() => {
+    fetchDashboardData()
+  }, [])
+
+  const fetchDashboardData = async () => {
+    try {
+      const supabase = createClient()
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      setUserName(user.user_metadata?.full_name || user.email || '')
+
+      const { data: userRecord } = await supabase
+        .from('users')
+        .select('id')
+        .eq('auth_user_id', user.id)
+        .single()
+
+      if (!userRecord) return
+
+      const { data: roleData } = await supabase
+        .from('user_roles')
+        .select('roles(name)')
+        .eq('user_id', userRecord.id)
+        .single()
+
+      const isAdmin = (roleData as any)?.roles?.name === 'admin'
+
+      let jobsQuery = supabase
+        .from('job_descriptions')
+        .select('id', { count: 'exact', head: true })
+
+      if (!isAdmin) {
+        jobsQuery = jobsQuery.eq('created_by', userRecord.id)
+      }
+
+      const { count: jobsCount } = await jobsQuery
+
+      let resumesQuery = supabase
+        .from('resumes')
+        .select('id, match_score', { count: 'exact' })
+
+      if (!isAdmin) {
+        const { data: userJobs } = await supabase
+          .from('job_descriptions')
+          .select('id')
+          .eq('created_by', userRecord.id)
+
+        const jobIds = userJobs?.map(j => j.id) || []
+        if (jobIds.length > 0) {
+          resumesQuery = resumesQuery.in('job_description_id', jobIds)
+        }
+      }
+
+      const { data: resumesData, count: resumesCount } = await resumesQuery
+
+      const scores = resumesData?.map(r => r.match_score).filter(s => s !== null && s !== undefined) || []
+      const avgScore = scores.length > 0
+        ? (scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1)
+        : '0'
+
+      let testsQuery = supabase
+        .from('tests')
+        .select('id', { count: 'exact', head: true })
+
+      if (!isAdmin) {
+        testsQuery = testsQuery.eq('created_by', userRecord.id)
+      }
+
+      const { count: testsCount } = await testsQuery
+
+      const { data: recentJobs } = await supabase
+        .from('job_descriptions')
+        .select('id, title, created_at')
+        .eq('created_by', userRecord.id)
+        .order('created_at', { ascending: false })
+        .limit(3)
+
+      setStats({
+        jobsCount: jobsCount || 0,
+        resumesCount: resumesCount || 0,
+        avgScore,
+        testsCount: testsCount || 0,
+        recentJobs: recentJobs || [],
+      })
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const statCards = [
+    {
+      title: 'Active Jobs',
+      value: stats.jobsCount.toString(),
+      description: 'Job descriptions posted',
+      icon: Briefcase,
+      gradient: 'from-blue-500 to-cyan-500',
+      href: '/dashboard/resume-matching/jobs',
+    },
     {
       title: 'Total Candidates',
-      value: '0',
+      value: stats.resumesCount.toString(),
       description: 'Resumes processed',
       icon: Users,
-      color: 'text-blue-600',
+      gradient: 'from-purple-500 to-pink-500',
+      href: '/dashboard/resume-matching/jobs',
+    },
+    {
+      title: 'Avg Match Score',
+      value: `${stats.avgScore}%`,
+      description: 'Resume matching',
+      icon: Award,
+      gradient: 'from-green-500 to-emerald-500',
+      href: '/dashboard/analytics',
     },
     {
       title: 'Active Tests',
-      value: '0',
-      description: 'Tests in progress',
+      value: stats.testsCount.toString(),
+      description: 'Tests created',
       icon: FileText,
-      color: 'text-green-600',
-    },
-    {
-      title: 'Average Match Score',
-      value: '0%',
-      description: 'Resume matching',
-      icon: TrendingUp,
-      color: 'text-purple-600',
-    },
-    {
-      title: 'Pending Evaluations',
-      value: '0',
-      description: 'Awaiting review',
-      icon: Clock,
-      color: 'text-orange-600',
+      gradient: 'from-orange-500 to-red-500',
+      href: '/dashboard/test-evaluation/tests',
     },
   ]
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mx-auto"></div>
+          <p className="text-muted-foreground">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Welcome to your interview management dashboard
-        </p>
+    <div className="space-y-8">
+      {/* Header with gradient */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/90 to-primary p-8 text-white shadow-xl">
+        <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-20"></div>
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="h-5 w-5 animate-pulse" />
+            <span className="text-sm font-medium opacity-90">Welcome back</span>
+          </div>
+          <h1 className="text-4xl font-bold mb-2">{userName}</h1>
+          <p className="text-lg opacity-90">
+            Here's what's happening with your hiring process today
+          </p>
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => {
+      {/* Stats Grid */}
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        {statCards.map((stat, index) => {
           const Icon = stat.icon
           return (
-            <Card key={stat.title}>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  {stat.title}
-                </CardTitle>
-                <Icon className={`h-4 w-4 ${stat.color}`} />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stat.value}</div>
-                <p className="text-xs text-muted-foreground">
-                  {stat.description}
-                </p>
-              </CardContent>
-            </Card>
+            <Link
+              key={stat.title}
+              href={stat.href}
+              className="group"
+              style={{ animationDelay: `${index * 100}ms` }}
+            >
+              <Card className="relative overflow-hidden transition-all duration-300 hover:scale-105 hover:shadow-2xl border-0">
+                <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} opacity-5 group-hover:opacity-10 transition-opacity`}></div>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    {stat.title}
+                  </CardTitle>
+                  <div className={`p-2 rounded-lg bg-gradient-to-br ${stat.gradient}`}>
+                    <Icon className="h-4 w-4 text-white" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent">
+                    {stat.value}
+                  </div>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                    {stat.description}
+                    <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
           )
         })}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Quick Actions */}
+        <Card className="border-0 shadow-lg">
           <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Quick Actions
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <a
+          <CardContent className="space-y-3">
+            <Link
               href="/dashboard/resume-matching"
-              className="block p-4 border rounded-lg hover:bg-muted transition-colors"
+              className="flex items-center justify-between p-4 rounded-xl border-2 border-dashed border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all group"
             >
-              <h3 className="font-semibold mb-1">Upload Job Description</h3>
-              <p className="text-sm text-muted-foreground">
-                Start a new resume matching round
-              </p>
-            </a>
-            <a
+              <div>
+                <h3 className="font-semibold mb-1 flex items-center gap-2">
+                  <Briefcase className="h-4 w-4 text-primary" />
+                  Upload Job Description
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Start a new resume matching round
+                </p>
+              </div>
+              <ArrowRight className="h-5 w-5 text-primary opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+            </Link>
+
+            <Link
               href="/dashboard/test-evaluation"
-              className="block p-4 border rounded-lg hover:bg-muted transition-colors"
+              className="flex items-center justify-between p-4 rounded-xl border-2 border-dashed border-orange-500/20 hover:border-orange-500/40 hover:bg-orange-500/5 transition-all group"
             >
-              <h3 className="font-semibold mb-1">Create Test</h3>
-              <p className="text-sm text-muted-foreground">
-                Upload a question paper for evaluation
-              </p>
-            </a>
+              <div>
+                <h3 className="font-semibold mb-1 flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-orange-500" />
+                  Create Test
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Upload a question paper for evaluation
+                </p>
+              </div>
+              <ArrowRight className="h-5 w-5 text-orange-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+            </Link>
+
+            <Link
+              href="/dashboard/analytics"
+              className="flex items-center justify-between p-4 rounded-xl border-2 border-dashed border-green-500/20 hover:border-green-500/40 hover:bg-green-500/5 transition-all group"
+            >
+              <div>
+                <h3 className="font-semibold mb-1 flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-green-500" />
+                  View Analytics
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  See detailed insights and statistics
+                </p>
+              </div>
+              <ArrowRight className="h-5 w-5 text-green-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+            </Link>
           </CardContent>
         </Card>
 
-        <Card>
+        {/* Recent Activity */}
+        <Card className="border-0 shadow-lg">
           <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              Recent Activity
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-sm text-muted-foreground">
-              No recent activity yet. Start by uploading a job description or creating a test.
-            </div>
+            {stats.recentJobs && stats.recentJobs.length > 0 ? (
+              <div className="space-y-3">
+                {stats.recentJobs.map((job, index) => (
+                  <Link
+                    key={job.id}
+                    href={`/dashboard/resume-matching/${job.id}/candidates`}
+                    className="flex items-center justify-between p-4 rounded-xl border hover:border-primary/40 hover:bg-primary/5 transition-all group"
+                    style={{ animationDelay: `${index * 100}ms` }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-gradient-to-br from-primary/10 to-primary/5">
+                        <Briefcase className="h-4 w-4 text-primary" />
+                      </div>
+                      <div>
+                        <div className="font-medium text-sm group-hover:text-primary transition-colors">
+                          {job.title}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {new Date(job.created_at).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-primary opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <div className="mb-3 inline-flex p-4 rounded-full bg-muted">
+                  <Clock className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  No recent activity yet. Start by uploading a job description!
+                </p>
+                <Button asChild className="mt-4" variant="outline">
+                  <Link href="/dashboard/resume-matching">
+                    Get Started
+                  </Link>
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
