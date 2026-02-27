@@ -64,6 +64,7 @@ export interface Interview {
   programming_language: string;
   allowed_languages?: string[];  // Languages candidates can choose from. undefined/[] = ANY language
   total_marks: number;
+  duration_minutes?: number;
   resume_required: 'mandatory' | 'optional' | 'disabled';
   created_at: string;
   questions?: Question[];

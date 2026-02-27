@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     QUESTION_GENERATION_MODEL: str = "codellama:7b"
     QUESTION_GENERATION_TEMPERATURE: float = 0.7
 
+    # Vapi Voice Screening
+    VAPI_PRIVATE_KEY: Optional[str] = None
+    VAPI_ASSISTANT_ID: Optional[str] = None
+
     @property
     def allowed_extensions_list(self) -> List[str]:
         """Get allowed extensions as a list."""

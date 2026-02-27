@@ -52,6 +52,10 @@ aiofiles==23.2.1
 redis==5.0.1
 celery==5.3.4
 
+# Excel Export (for Voice Screening)
+pandas>=2.0.0
+openpyxl>=3.1.0
+
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.3

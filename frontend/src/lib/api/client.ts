@@ -172,6 +172,41 @@ class APIClient {
     return response.data
   }
 
+  // Voice Screening APIs
+  async createVoiceCandidate(data: { name: string; email?: string; phone?: string; is_fresher: boolean }) {
+    const response = await this.client.post('/api/v1/voice-screening/candidates', data)
+    return response.data
+  }
+
+  async bulkCreateVoiceCandidates(candidates: { name: string; email?: string; phone?: string; is_fresher: boolean }[]) {
+    const response = await this.client.post('/api/v1/voice-screening/candidates/bulk', { candidates })
+    return response.data
+  }
+
+  async uploadVoiceCandidatesFile(formData: FormData) {
+    const response = await this.client.post('/api/v1/voice-screening/candidates/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  }
+
+  async listVoiceCandidates(params?: { limit?: number; offset?: number; status_filter?: string }) {
+    const response = await this.client.get('/api/v1/voice-screening/candidates', { params })
+    return response.data
+  }
+
+  async deleteVoiceCandidate(candidateId: string) {
+    const response = await this.client.delete(`/api/v1/voice-screening/candidates/${candidateId}`)
+    return response.data
+  }
+
+  async exportVoiceScreeningExcel() {
+    const response = await this.client.get('/api/v1/voice-screening/export', {
+      responseType: 'blob',
+    })
+    return response.data
+  }
+
   // Health check
   async healthCheck() {
     const response = await this.client.get('/api/v1/health')

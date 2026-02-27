@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { FileCheck, Home, Users, FileText, BarChart3, Settings, ChevronLeft, ChevronRight, Menu, X, Video, Code } from 'lucide-react'
+import { FileCheck, Home, Users, FileText, BarChart3, Settings, ChevronLeft, ChevronRight, Menu, X, Video, Code, Phone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const navItems = [
@@ -37,6 +37,12 @@ const navItems = [
     href: '/dashboard/coding-interviews',
     icon: Code,
     gradient: 'from-indigo-500 to-purple-500',
+  },
+  {
+    title: 'Voice Screening',
+    href: '/dashboard/voice-screening',
+    icon: Phone,
+    gradient: 'from-teal-500 to-green-500',
   },
   {
     title: 'Analytics',
@@ -112,66 +118,66 @@ export function DashboardNav() {
         // Mobile: always full width when open
         'w-72'
       )}>
-      {/* Logo */}
-      <div className="flex h-16 items-center border-b border-slate-200 px-4 justify-between shrink-0">
-        {!collapsed && (
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary">
+        {/* Logo */}
+        <div className="flex h-16 items-center border-b border-slate-200 px-4 justify-between shrink-0">
+          {!collapsed && (
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-primary">
+                <FileCheck className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h1 className="font-bold text-base text-slate-900">Interview AI</h1>
+                <p className="text-xs text-muted-foreground">Smart Hiring Platform</p>
+              </div>
+            </div>
+          )}
+          {collapsed && (
+            <div className="p-2 rounded-lg bg-primary mx-auto">
               <FileCheck className="h-5 w-5 text-white" />
             </div>
-            <div>
-              <h1 className="font-bold text-base text-slate-900">Interview AI</h1>
-              <p className="text-xs text-muted-foreground">Smart Hiring Platform</p>
-            </div>
-          </div>
-        )}
-        {collapsed && (
-          <div className="p-2 rounded-lg bg-primary mx-auto">
-            <FileCheck className="h-5 w-5 text-white" />
-          </div>
-        )}
-
-        {/* Toggle Button - Desktop Only */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setCollapsed(!collapsed)}
-          className="hidden md:flex h-8 w-8 p-0 hover:bg-slate-100"
-        >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <ChevronLeft className="h-4 w-4" />
           )}
-        </Button>
-      </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
-        {navItems.map((item) => {
-          const Icon = item.icon
-          const active = isActive(item.href)
+          {/* Toggle Button - Desktop Only */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCollapsed(!collapsed)}
+            className="hidden md:flex h-8 w-8 p-0 hover:bg-slate-100"
+          >
+            {collapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <ChevronLeft className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all duration-200',
-                active
-                  ? 'bg-primary text-white'
-                  : 'text-slate-700 hover:bg-slate-100',
-                collapsed && 'justify-center'
-              )}
-              title={collapsed ? item.title : undefined}
-            >
-              <Icon className="h-4 w-4" />
-              {!collapsed && <span>{item.title}</span>}
-            </Link>
-          )
-        })}
-      </nav>
-    </aside>
+        {/* Navigation */}
+        <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            const active = isActive(item.href)
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  'group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all duration-200',
+                  active
+                    ? 'bg-primary text-white'
+                    : 'text-slate-700 hover:bg-slate-100',
+                  collapsed && 'justify-center'
+                )}
+                title={collapsed ? item.title : undefined}
+              >
+                <Icon className="h-4 w-4" />
+                {!collapsed && <span>{item.title}</span>}
+              </Link>
+            )
+          })}
+        </nav>
+      </aside>
     </>
   )
 }
