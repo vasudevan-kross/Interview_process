@@ -12,19 +12,31 @@ sqlalchemy==2.0.25
 psycopg2-binary>=2.9.11
 alembic==1.13.1
 
-# LLM & AI
+# LLM & AI (Coding Interviews - Ollama only, no PyTorch!)
 langchain>=0.3.0
 langchain-community>=0.3.0
 ollama>=0.4.7
-sentence-transformers==2.3.1
 
-# Document Processing
+# Document Processing (for Resume Matching & Test Evaluation)
 PyPDF2==3.0.1
 pdfplumber==0.10.3
 python-docx==1.1.0
-pytesseract==0.3.10
 Pillow>=11.0.0
 pdf2image==1.16.3
+
+# ============================================================================
+# OCR & ML Dependencies - REMOVED (Not needed for Coding Interviews)
+# ============================================================================
+# If you need Test Evaluation (handwritten answer sheets) or Resume Matching,
+# uncomment these lines and run be.bat to install PyTorch:
+#
+# paddleocr>=2.7.0
+# paddlepaddle>=2.5.0
+# sentence-transformers==2.3.1
+# transformers>=4.30.0
+# torch - Installed by be.bat with CUDA support if needed
+# torchvision - Installed by be.bat with CUDA support if needed
+# ============================================================================
 
 # Security & Auth
 python-jose[cryptography]==3.3.0

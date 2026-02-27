@@ -22,7 +22,7 @@ if !errorlevel! neq 0 (
     exit /b !errorlevel!
 )
 
-echo Checking/Installing dependencies...
+echo Installing/Updating dependencies...
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 if !errorlevel! neq 0 (
@@ -31,8 +31,12 @@ if !errorlevel! neq 0 (
     exit /b !errorlevel!
 )
 
+echo.
+echo [INFO] Using Ollama for LLM (no PyTorch needed for Coding Interviews)
+echo.
+
 echo Starting Backend Server...
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 if !errorlevel! neq 0 (
     echo Error: Backend server crashed or failed to start.
     pause

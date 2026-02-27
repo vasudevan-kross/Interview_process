@@ -149,11 +149,11 @@ export default function CandidateDetailPage() {
               </div>
             </div>
             <div className="text-right">
-              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg ${getScoreColor(candidate.match_score)}`}>
+              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg ${getScoreColor(candidate.match_score || 0)}`}>
                 <Award className="h-5 w-5" />
                 <div>
-                  <div className="text-2xl font-bold">{candidate.match_score.toFixed(1)}%</div>
-                  <div className="text-xs">{getScoreLabel(candidate.match_score)}</div>
+                  <div className="text-2xl font-bold">{candidate.match_score != null ? candidate.match_score.toFixed(1) : '0.0'}%</div>
+                  <div className="text-xs">{getScoreLabel(candidate.match_score || 0)}</div>
                 </div>
               </div>
             </div>

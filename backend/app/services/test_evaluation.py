@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from uuid import uuid4
 import re
+import json
 
 from app.services.storage_service import get_storage_service
 from app.services.document_processor import get_document_processor
@@ -15,6 +16,132 @@ from app.db.supabase_client import get_supabase
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def repair_json(text: str) -> str:
+    """
+    Repair common JSON formatting errors.
+
+    Enhanced to handle:
+    - Trailing commas in all positions
+    - Multiple consecutive commas
+    - Commas before closing with any whitespace combination
+
+    Args:
+        text: Potentially malformed JSON text
+
+    Returns:
+        Repaired JSON text
+    """
+    # Remove any leading/trailing whitespace
+    text = text.strip()
+
+    # Remove markdown code blocks if present
+    if text.startswith('```'):
+        if text.startswith('```json'):
+            text = text[7:]
+        else:
+            text = text[3:]
+        end_marker = text.find('```')
+        if end_marker != -1:
+            text = text[:end_marker]
+        text = text.strip()
+
+    # Fix common issues
+    # 1. Remove ALL trailing commas before closing brackets/braces
+    # This handles commas with any amount/type of whitespace
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+
+    # 2. Remove multiple consecutive commas
+    text = re.sub(r',\s*,+', ',', text)
+
+    # 3. Fix missing commas between array elements (when there's a newline)
+    text = re.sub(r'"\s*\n\s*"', '",\n"', text)
+    text = re.sub(r'}\s*\n\s*{', '},\n{', text)
+
+    # 4. Remove trailing commas at end of objects/arrays (catch-all)
+    # This catches edge cases where comma is right before bracket
+    text = re.sub(r',\s*([\]}])', r'\1', text)
+
+    # 5. Ensure proper quote escaping in strings (simplified approach)
+    # This is a basic safety net for simple cases
+
+    return text
+
+
+def extract_json_from_text(text: str) -> Optional[Dict]:
+    """
+    Extract and parse JSON from text, with multiple fallback strategies.
+
+    Args:
+        text: Text potentially containing JSON
+
+    Returns:
+        Parsed JSON dict or None if all attempts fail
+    """
+    # Strategy 1: Direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: Remove markdown code blocks and try again
+    try:
+        cleaned = repair_json(text)
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 3: Find JSON object boundaries
+    # Look for the first { and last }
+    try:
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            json_text = text[start:end+1]
+            cleaned = repair_json(json_text)
+            return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 4: Try to find JSON array boundaries
+    try:
+        start = text.find('[')
+        end = text.rfind(']')
+        if start != -1 and end != -1 and end > start:
+            json_text = text[start:end+1]
+            cleaned = repair_json(json_text)
+            # Wrap in object if it's just an array
+            if isinstance(json.loads(cleaned), list):
+                return {"answers": json.loads(cleaned)}
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 5: Look for "answers" key and extract from there
+    try:
+        # Find the "answers" array
+        answers_match = re.search(r'"answers"\s*:\s*\[', text)
+        if answers_match:
+            start = answers_match.start()
+            # Find the matching closing bracket
+            bracket_count = 0
+            array_start = text.find('[', answers_match.end() - 1)
+            i = array_start
+            while i < len(text):
+                if text[i] == '[':
+                    bracket_count += 1
+                elif text[i] == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        json_text = '{' + text[start:i+1] + '}'
+                        cleaned = repair_json(json_text)
+                        return json.loads(cleaned)
+                i += 1
+    except (json.JSONDecodeError, AttributeError):
+        pass
+
+    logger.error(f"All JSON extraction strategies failed. Text preview: {text[:500]}")
+    return None
 
 
 class TestEvaluationService:
@@ -181,28 +308,35 @@ For each question, identify:
 - difficulty: Estimated difficulty (easy, medium, hard)
 - topics: Relevant topics/skills being tested
 
-Return only a JSON object with this structure:
+IMPORTANT: Return ONLY valid JSON. No additional text, no explanations.
+
+Required JSON structure:
 {
   "questions": [
     {
-      "question": "question text",
+      "question": "question text here",
       "answer": "expected answer or key points",
-      "marks": <number>,
+      "marks": 10,
       "type": "descriptive",
       "difficulty": "medium",
       "topics": ["topic1", "topic2"]
     }
   ]
 }
-Only return the JSON object, no additional text."""
+
+Rules:
+1. Use double quotes for all strings
+2. Escape any quotes in the text with backslash
+3. No trailing commas
+4. Return pure JSON only - no markdown, no code blocks, no extra text"""
 
             user_prompt = f"""Parse all questions from this test paper (Total marks: {total_marks}):
 
-{text[:4000]}
+{text[:10000]}
 
 Extract each question with its answer key, marks, type, and other details.
 If marks are not specified, distribute the {total_marks} marks proportionally across questions.
-Return the result as JSON."""
+Return ONLY the JSON object, nothing else."""
 
             # Use fast model for parsing (mistral:7b or llama2:7b)
             result = await self.llm.parse_with_fast_model(
@@ -211,19 +345,26 @@ Return the result as JSON."""
                 override_model=model  # Allow user override
             )
 
-            # Parse JSON response
+            # Parse JSON response with robust error handling
             response_text = result['response'].strip()
 
-            # Try to extract JSON from markdown code blocks
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
+            # Log the raw response for debugging
+            logger.info(f"LLM response for question parsing (first 500 chars): {response_text[:500]}")
 
-            import json
-            parsed_data = json.loads(response_text)
+            # Use robust JSON extraction
+            parsed_data = extract_json_from_text(response_text)
+
+            if parsed_data is None:
+                raise ValueError("Failed to extract valid JSON from LLM response")
 
             questions = parsed_data.get('questions', [])
+
+            # Validate question format
+            for question in questions:
+                if not isinstance(question, dict):
+                    raise ValueError(f"Invalid question format: {question}")
+                if 'question' not in question:
+                    raise ValueError(f"Missing 'question' field in: {question}")
 
             # Validate and adjust marks if needed
             total_assigned_marks = sum(q.get('marks', 0) for q in questions)
@@ -232,6 +373,8 @@ Return the result as JSON."""
                 scale_factor = total_marks / total_assigned_marks if total_assigned_marks > 0 else 1
                 for q in questions:
                     q['marks'] = round(q.get('marks', 0) * scale_factor, 2)
+
+            logger.info(f"Successfully parsed {len(questions)} questions")
 
             return {
                 "questions": questions,
@@ -244,6 +387,7 @@ Return the result as JSON."""
 
         except Exception as e:
             logger.error(f"Error parsing questions: {e}")
+            logger.error(f"Response text that failed: {response_text if 'response_text' in locals() else 'N/A'}")
             # Return empty structure on error
             return {
                 "questions": [],
@@ -365,14 +509,18 @@ Return the result as JSON."""
             total_marks_obtained = 0
 
             for question, candidate_answer in zip(questions, parsed_answers['answers']):
-                # Use capable model for evaluation (llama2:13b or codellama:7b for coding)
-                evaluation = await self.llm.evaluate_answer(
+                # Use HYBRID evaluation for maximum consistency:
+                # - Deterministic scoring (keyword/pattern matching)
+                # - Multi-run LLM evaluation (3 runs averaged)
+                # - Weighted combination (30% deterministic + 70% LLM)
+                evaluation = await self.llm.evaluate_answer_hybrid(
                     question=question['question_text'],
                     correct_answer=question['correct_answer'],
                     candidate_answer=candidate_answer['answer'],
                     max_marks=question['marks'],
                     model=model,
-                    domain=test_type  # Pass test_type to select appropriate model
+                    domain=test_type,  # Pass test_type to select appropriate model
+                    num_runs=3  # Run LLM evaluation 3 times and average
                 )
 
                 marks_awarded = evaluation.get('marks_awarded', 0)
@@ -479,17 +627,28 @@ Return the result as JSON."""
 Extract the candidate's answers for each question from the given answer sheet text.
 Match each answer to its corresponding question number.
 
-Return only a JSON object with this structure:
+IMPORTANT: Return ONLY valid JSON. No additional text, no explanations.
+
+Required JSON structure:
 {
   "answers": [
     {
       "question_number": 1,
-      "answer": "candidate's answer text"
+      "answer": "candidate's answer text here"
+    },
+    {
+      "question_number": 2,
+      "answer": "candidate's answer text here"
     }
   ]
 }
-If an answer is not found, use empty string for that question.
-Only return the JSON object, no additional text."""
+
+Rules:
+1. Use double quotes for all strings
+2. Escape any quotes in the answer text with backslash
+3. No trailing commas
+4. If an answer is not found, use empty string ""
+5. Return pure JSON only - no markdown, no code blocks, no extra text"""
 
             user_prompt = f"""Parse candidate answers from this answer sheet:
 
@@ -497,10 +656,10 @@ QUESTIONS (for reference):
 {questions_text}
 
 ANSWER SHEET TEXT:
-{text[:3000]}
+{text[:10000]}
 
 Extract the candidate's answer for each question number.
-Return the result as JSON."""
+Return ONLY the JSON object, nothing else."""
 
             result = await self.llm.generate_completion(
                 prompt=user_prompt,
@@ -509,18 +668,26 @@ Return the result as JSON."""
                 temperature=0.1
             )
 
-            # Parse JSON response
+            # Parse JSON response with robust error handling
             response_text = result['response'].strip()
 
-            if '```json' in response_text:
-                response_text = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                response_text = response_text.split('```')[1].split('```')[0].strip()
+            # Log the raw response for debugging
+            logger.info(f"LLM response for answer parsing (first 500 chars): {response_text[:500]}")
 
-            import json
-            parsed_data = json.loads(response_text)
+            # Use robust JSON extraction
+            parsed_data = extract_json_from_text(response_text)
+
+            if parsed_data is None:
+                raise ValueError("Failed to extract valid JSON from LLM response")
 
             answers = parsed_data.get('answers', [])
+
+            # Validate answer format
+            for answer in answers:
+                if not isinstance(answer, dict):
+                    raise ValueError(f"Invalid answer format: {answer}")
+                if 'question_number' not in answer or 'answer' not in answer:
+                    raise ValueError(f"Missing required fields in answer: {answer}")
 
             # Ensure we have an answer for each question (even if empty)
             answer_dict = {a['question_number']: a['answer'] for a in answers}
@@ -532,6 +699,8 @@ Return the result as JSON."""
                     "answer": answer_dict.get(q['question_number'], '')
                 })
 
+            logger.info(f"Successfully parsed {len(complete_answers)} answers")
+
             return {
                 "answers": complete_answers,
                 "model_used": result['model']
@@ -539,6 +708,8 @@ Return the result as JSON."""
 
         except Exception as e:
             logger.error(f"Error parsing candidate answers: {e}")
+            logger.error(f"Response text that failed: {response_text if 'response_text' in locals() else 'N/A'}")
+
             # Return empty answers on error
             return {
                 "answers": [
@@ -664,7 +835,7 @@ Return the result as JSON."""
                         # Delete file from storage
                         if file_path:
                             try:
-                                await self.storage.delete_file(file_path)
+                                await self.storage.delete_file("answer_sheets", file_path)
                                 logger.info(f"Deleted file: {file_path}")
                             except Exception as e:
                                 logger.warning(f"Failed to delete file for answer sheet {answer_sheet_id}: {e}")

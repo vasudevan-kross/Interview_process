@@ -98,37 +98,39 @@ export default function TestEvaluationPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Gradient Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-orange-500/90 to-red-600 p-8 text-white shadow-xl">
-        <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
-        <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-2">
-            <ClipboardCheck className="h-6 w-6" />
-            <span className="text-sm font-medium opacity-90">AI-Powered Assessment</span>
+      {/* Clean Header */}
+      <div className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-8 shadow-sm">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500">
+                <ClipboardCheck className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-sm font-medium text-muted-foreground">AI-Powered Assessment</span>
+            </div>
+            <h1 className="text-4xl font-bold text-slate-900 mb-2">Test Evaluation</h1>
+            <p className="text-lg text-slate-600">
+              Upload a question paper and evaluate candidate answer sheets using advanced AI grading
+            </p>
           </div>
-          <h1 className="text-4xl font-bold mb-2">Test Evaluation</h1>
-          <p className="text-lg opacity-90">
-            Upload a question paper and evaluate candidate answer sheets using advanced AI grading
-          </p>
         </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Upload Form Card */}
-        <Card className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all">
-          <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent"></div>
-          <CardHeader className="relative">
+        <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-all">
+          <CardHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 shadow-md">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500">
                 <FileText className="h-5 w-5 text-white" />
               </div>
-              <CardTitle className="text-xl">Upload Question Paper</CardTitle>
+              <CardTitle className="text-xl text-slate-900">Upload Question Paper</CardTitle>
             </div>
             <CardDescription>
               Start the AI evaluation process by uploading your test questions
             </CardDescription>
           </CardHeader>
-          <CardContent className="relative">
+          <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="testTitle" className="text-sm font-semibold">Test Title *</Label>
@@ -139,7 +141,6 @@ export default function TestEvaluationPage() {
                   placeholder="e.g., Backend Developer Assessment"
                   required
                   disabled={loading}
-                  className="border-slate-200 focus:border-orange-500 focus:ring-orange-500"
                 />
               </div>
 
@@ -153,7 +154,6 @@ export default function TestEvaluationPage() {
                     placeholder="e.g., Development"
                     required
                     disabled={loading}
-                    className="border-slate-200 focus:border-orange-500 focus:ring-orange-500"
                   />
                 </div>
 
@@ -166,7 +166,6 @@ export default function TestEvaluationPage() {
                     onChange={(e) => setDuration(e.target.value)}
                     placeholder="60"
                     disabled={loading}
-                    className="border-slate-200 focus:border-orange-500 focus:ring-orange-500"
                   />
                 </div>
               </div>
@@ -182,7 +181,6 @@ export default function TestEvaluationPage() {
                   placeholder="100"
                   required
                   disabled={loading}
-                  className="border-slate-200 focus:border-orange-500 focus:ring-orange-500"
                 />
               </div>
 
@@ -195,8 +193,8 @@ export default function TestEvaluationPage() {
                   disabled={loading}
                 />
                 {questionFile && (
-                  <div className="text-xs text-slate-600 flex items-center gap-1 bg-orange-50 px-3 py-2 rounded-md">
-                    <FileText className="h-3 w-3" />
+                  <div className="text-xs text-slate-600 flex items-center gap-1 bg-orange-50 px-3 py-2 rounded-md border border-orange-100">
+                    <FileText className="h-3 w-3 text-orange-600" />
                     {questionFile.name}
                   </div>
                 )}
@@ -204,7 +202,7 @@ export default function TestEvaluationPage() {
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-md hover:shadow-lg transition-all"
+                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white"
                 disabled={loading || !questionFile}
               >
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -215,22 +213,21 @@ export default function TestEvaluationPage() {
         </Card>
 
         {/* How It Works Card */}
-        <Card className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all">
-          <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent"></div>
-          <CardHeader className="relative">
+        <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-all">
+          <CardHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-red-500 to-orange-500 shadow-md">
-                <ClipboardCheck className="h-5 w-5 text-white" />
+              <div className="p-2 rounded-lg bg-slate-100">
+                <ClipboardCheck className="h-5 w-5 text-orange-600" />
               </div>
-              <CardTitle className="text-xl">How It Works</CardTitle>
+              <CardTitle className="text-xl text-slate-900">How It Works</CardTitle>
             </div>
             <CardDescription>
               AI-powered test evaluation in 3 simple steps
             </CardDescription>
           </CardHeader>
-          <CardContent className="relative space-y-4">
+          <CardContent className="space-y-4">
             <div className="flex gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-red-500 text-white text-sm font-bold shadow-md flex-shrink-0">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-600 text-white text-sm font-bold flex-shrink-0">
                 1
               </div>
               <div>
@@ -242,7 +239,7 @@ export default function TestEvaluationPage() {
             </div>
 
             <div className="flex gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-red-500 text-white text-sm font-bold shadow-md flex-shrink-0">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-600 text-white text-sm font-bold flex-shrink-0">
                 2
               </div>
               <div>
@@ -254,7 +251,7 @@ export default function TestEvaluationPage() {
             </div>
 
             <div className="flex gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-red-500 text-white text-sm font-bold shadow-md flex-shrink-0">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-600 text-white text-sm font-bold flex-shrink-0">
                 3
               </div>
               <div>
@@ -268,7 +265,7 @@ export default function TestEvaluationPage() {
             <div className="pt-4 border-t border-slate-200">
               <Button
                 variant="outline"
-                className="w-full border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300 transition-all"
+                className="w-full"
                 onClick={() => router.push('/dashboard/test-evaluation/tests')}
               >
                 <FileText className="mr-2 h-4 w-4" />

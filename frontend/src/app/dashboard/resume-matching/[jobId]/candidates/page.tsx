@@ -89,7 +89,9 @@ export default function CandidatesPage() {
     .sort((a, b) => {
       const modifier = sortDirection === 'asc' ? 1 : -1
       if (sortField === 'match_score') {
-        return (a.match_score - b.match_score) * modifier
+        const aScore = a.match_score || 0;
+        const bScore = b.match_score || 0;
+        return (aScore - bScore) * modifier
       }
       return a.candidate_name.localeCompare(b.candidate_name) * modifier
     })
@@ -141,12 +143,20 @@ export default function CandidatesPage() {
 
     try {
       if (deleteAction.type === 'bulk') {
-        await apiClient.deleteResumes(Array.from(selectedCandidates))
-        toast.success(`Successfully deleted ${selectedCandidates.size} candidate${selectedCandidates.size > 1 ? 's' : ''}`)
+        const result = await apiClient.deleteResumes(Array.from(selectedCandidates))
+        if (result.deleted_count > 0) {
+          toast.success(`Successfully deleted ${result.deleted_count} candidate${result.deleted_count > 1 ? 's' : ''}`)
+        } else {
+          toast.error('Failed to delete candidates')
+        }
         setSelectedCandidates(new Set())
       } else if (deleteAction.type === 'single' && deleteAction.candidateId) {
-        await apiClient.deleteResumes([deleteAction.candidateId])
-        toast.success(`Successfully deleted ${deleteAction.candidateName}`)
+        const result = await apiClient.deleteResumes([deleteAction.candidateId])
+        if (result.deleted_count > 0) {
+          toast.success(`Successfully deleted ${deleteAction.candidateName}`)
+        } else {
+          toast.error(`Failed to delete ${deleteAction.candidateName}`)
+        }
       }
       await fetchData() // Refresh data
     } catch (error: any) {
@@ -224,7 +234,7 @@ export default function CandidatesPage() {
             </CardHeader>
             <CardContent className="relative">
               <div className="text-3xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-                {statistics.average_score.toFixed(1)}%
+                {(statistics.average_score || 0).toFixed(1)}%
               </div>
             </CardContent>
           </Card>
@@ -241,7 +251,7 @@ export default function CandidatesPage() {
             </CardHeader>
             <CardContent className="relative">
               <div className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                {statistics.top_score.toFixed(1)}%
+                {(statistics.top_score || 0).toFixed(1)}%
               </div>
             </CardContent>
           </Card>
@@ -409,12 +419,12 @@ export default function CandidatesPage() {
                   </div>
                   <div className="col-span-2 flex items-center gap-2">
                     <span className="px-3 py-1 rounded-full text-sm font-bold bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-md">
-                      {candidate.match_score.toFixed(1)}%
+                      {candidate.match_score != null ? candidate.match_score.toFixed(1) : '0.0'}%
                     </span>
                     <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
-                        style={{ width: `${candidate.match_score}%` }}
+                        style={{ width: `${Math.max(0, candidate.match_score || 0)}%` }}
                       />
                     </div>
                   </div>

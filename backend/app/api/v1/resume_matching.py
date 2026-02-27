@@ -19,6 +19,7 @@ from app.schemas.resume_matching import (
     ErrorResponse,
     CandidateInfo
 )
+from app.auth.dependencies import get_current_user_id
 
 
 class DeleteResumesRequest(BaseModel):
@@ -40,8 +41,8 @@ async def upload_job_description(
     file: UploadFile = File(..., description="Job description file (PDF, DOCX, TXT)"),
     title: str = Form(..., description="Job title"),
     department: Optional[str] = Form(None, description="Department name"),
-    user_id: str = Form(..., description="User ID"),
-    model: Optional[str] = Form(None, description="LLM model to use")
+    model: Optional[str] = Form(None, description="LLM model to use"),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Upload and process a job description file.
@@ -62,7 +63,7 @@ async def upload_job_description(
         result = await service.process_job_description(
             file_data=file_data,
             filename=file.filename,
-            user_id=user_id,
+            user_id=current_user_id,
             title=title,
             department=department,
             model=model
@@ -86,10 +87,10 @@ async def upload_job_description(
 async def upload_resume(
     file: UploadFile = File(..., description="Resume file (PDF, DOCX, TXT, images)"),
     job_id: str = Form(..., description="Job description ID"),
-    user_id: str = Form(..., description="User ID"),
     candidate_name: Optional[str] = Form(None, description="Candidate name"),
     candidate_email: Optional[str] = Form(None, description="Candidate email"),
-    model: Optional[str] = Form(None, description="LLM model to use")
+    model: Optional[str] = Form(None, description="LLM model to use"),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Upload and process a single resume.
@@ -111,7 +112,7 @@ async def upload_resume(
         result = await service.process_resume(
             file_data=file_data,
             filename=file.filename,
-            user_id=user_id,
+            user_id=current_user_id,
             job_id=job_id,
             candidate_name=candidate_name,
             candidate_email=candidate_email,
@@ -136,8 +137,8 @@ async def upload_resume(
 async def upload_multiple_resumes(
     files: List[UploadFile] = File(..., description="Multiple resume files"),
     job_id: str = Form(..., description="Job description ID"),
-    user_id: str = Form(..., description="User ID"),
-    model: Optional[str] = Form(None, description="LLM model to use")
+    model: Optional[str] = Form(None, description="LLM model to use"),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Upload and process multiple resumes for a job.
@@ -166,7 +167,7 @@ async def upload_multiple_resumes(
         result = await service.process_multiple_resumes(
             resumes=resumes,
             job_id=job_id,
-            user_id=user_id,
+            user_id=current_user_id,
             model=model
         )
 
@@ -323,7 +324,8 @@ async def list_models():
     summary="Delete multiple resumes"
 )
 async def delete_resumes(
-    request: DeleteResumesRequest = Body(...)
+    request: DeleteResumesRequest = Body(...),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Delete multiple resumes by their IDs.
@@ -336,7 +338,10 @@ async def delete_resumes(
     try:
         service = get_resume_matching_service()
 
-        result = await service.delete_resumes(resume_ids=request.resume_ids)
+        result = await service.delete_resumes(
+            resume_ids=request.resume_ids,
+            user_id=current_user_id
+        )
 
         return {
             "message": f"Successfully deleted {result['deleted_count']} resume(s)",

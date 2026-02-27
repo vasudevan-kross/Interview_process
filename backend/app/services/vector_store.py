@@ -5,7 +5,12 @@ Handles embedding generation and vector operations.
 from typing import List, Dict, Optional, Tuple
 import logging
 import numpy as np
-from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+import httpx
 from app.db.supabase_client import get_supabase
 from app.config import settings
 
@@ -30,10 +35,12 @@ class VectorStore:
 
     def _load_embedding_model(self):
         """Lazy load the embedding model."""
-        if self.embedding_model is None:
+        if self.embedding_model is None and SENTENCE_TRANSFORMERS_AVAILABLE:
             logger.info(f"Loading embedding model: {self.model_name}")
             self.embedding_model = SentenceTransformer(self.model_name)
             logger.info(f"Embedding model loaded. Dimension: {self.embedding_model.get_sentence_embedding_dimension()}")
+        elif not SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.info(f"SentenceTransformers not available. Will use Ollama for model: nomic-embed-text")
 
     async def generate_embedding(self, text: str) -> List[float]:
         """
@@ -53,11 +60,32 @@ class VectorStore:
             if not text:
                 raise ValueError("Cannot generate embedding for empty text")
 
-            # Generate embedding
-            embedding = self.embedding_model.encode(text, normalize_embeddings=True)
-
             # Convert to list
-            return embedding.tolist()
+            if SENTENCE_TRANSFORMERS_AVAILABLE:
+                embedding = self.embedding_model.encode(text, normalize_embeddings=True)
+                return embedding.tolist()
+            else:
+                # Fallback to Ollama embedding API
+                ollama_url = f"{settings.OLLAMA_BASE_URL}/api/embeddings"
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        ollama_url,
+                        json={"model": "nomic-embed-text", "prompt": text},
+                        timeout=30.0
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    embedding = data.get("embedding")
+                    
+                    if not embedding:
+                        raise ValueError("No embedding returned from Ollama")
+                        
+                    # Normalize the embedding
+                    vec = np.array(embedding)
+                    norm = np.linalg.norm(vec)
+                    if norm > 0:
+                        vec = vec / norm
+                    return vec.tolist()
 
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
@@ -82,13 +110,20 @@ class VectorStore:
                 raise ValueError("Cannot generate embeddings for empty text list")
 
             # Generate embeddings in batch (more efficient)
-            embeddings = self.embedding_model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=len(texts) > 10
-            )
-
-            return embeddings.tolist()
+            if SENTENCE_TRANSFORMERS_AVAILABLE:
+                embeddings = self.embedding_model.encode(
+                    texts,
+                    normalize_embeddings=True,
+                    show_progress_bar=len(texts) > 10
+                )
+                return embeddings.tolist()
+            else:
+                # Fallback sequence using Ollama (since Ollama API currently doesn't do batch embeddings in one call easily)
+                results = []
+                for t in texts:
+                    emb = await self.generate_embedding(t)
+                    results.append(emb)
+                return results
 
         except Exception as e:
             logger.error(f"Error generating batch embeddings: {e}")

@@ -32,17 +32,17 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
       admin: {
         variant: 'default' as const,
         label: 'Admin',
-        color: 'bg-gradient-to-r from-blue-500 to-blue-600 text-white border-0'
+        color: 'bg-blue-600 text-white border-0'
       },
       hr: {
         variant: 'secondary' as const,
         label: 'HR',
-        color: 'bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0'
+        color: 'bg-purple-600 text-white border-0'
       },
       interviewer: {
         variant: 'outline' as const,
         label: 'Interviewer',
-        color: 'bg-gradient-to-r from-orange-500 to-red-500 text-white border-0'
+        color: 'bg-orange-600 text-white border-0'
       },
     }
 
@@ -57,8 +57,8 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   }
 
   return (
-    <header className="h-16 border-b bg-white/50 backdrop-blur-sm sticky top-0 z-10">
-      <div className="flex h-full items-center justify-between px-6">
+    <header className="h-16 border-b bg-white border-slate-200 sticky top-0 z-30">
+      <div className="flex h-full items-center justify-between pl-16 pr-4 md:pl-6 md:pr-6">
         <div>
           <p className="text-sm text-muted-foreground">Welcome back,</p>
           <h2 className="text-base font-semibold">

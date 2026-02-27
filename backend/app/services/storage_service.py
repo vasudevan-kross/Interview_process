@@ -20,7 +20,8 @@ class StorageService:
             "resumes": "resumes",
             "job_descriptions": "job-descriptions",
             "test_papers": "test-papers",
-            "answer_sheets": "answer-sheets"
+            "answer_sheets": "answer-sheets",
+            "interview_recordings": "interview-recordings"  # Video recordings
         }
 
     async def ensure_buckets_exist(self):

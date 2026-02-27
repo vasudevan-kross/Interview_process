@@ -19,11 +19,14 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="min-h-screen bg-slate-50">
       <DashboardNav />
-      <div className="flex-1">
+      {/* Main content area - adjust padding for fixed sidebar */}
+      <div className="transition-all duration-300 md:pl-72">
         <DashboardHeader user={user} />
-        <main className="p-6">{children}</main>
+        <main className="min-h-[calc(100vh-4rem)] p-4 md:p-6 max-w-full overflow-x-hidden">
+          {children}
+        </main>
       </div>
     </div>
   )

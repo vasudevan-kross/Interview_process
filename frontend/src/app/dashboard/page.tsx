@@ -171,18 +171,21 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header with gradient */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/90 to-primary p-8 text-white shadow-xl">
-        <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-20"></div>
-        <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles className="h-5 w-5 animate-pulse" />
-            <span className="text-sm font-medium opacity-90">Welcome back</span>
+      {/* Clean Header */}
+      <div className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-8 shadow-sm">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-primary to-primary/80">
+                <Sparkles className="h-4 w-4 text-white" />
+              </div>
+              <span className="text-sm font-medium text-muted-foreground">Welcome back</span>
+            </div>
+            <h1 className="text-4xl font-bold text-slate-900 mb-2">{userName}</h1>
+            <p className="text-lg text-slate-600">
+              Here's what's happening with your hiring process today
+            </p>
           </div>
-          <h1 className="text-4xl font-bold mb-2">{userName}</h1>
-          <p className="text-lg opacity-90">
-            Here's what's happening with your hiring process today
-          </p>
         </div>
       </div>
 
@@ -197,18 +200,17 @@ export default function DashboardPage() {
               className="group"
               style={{ animationDelay: `${index * 100}ms` }}
             >
-              <Card className="relative overflow-hidden transition-all duration-300 hover:scale-105 hover:shadow-2xl border-0">
-                <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} opacity-5 group-hover:opacity-10 transition-opacity`}></div>
+              <Card className="relative overflow-hidden transition-all duration-200 hover:shadow-lg border border-slate-200 bg-white">
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
                     {stat.title}
                   </CardTitle>
-                  <div className={`p-2 rounded-lg bg-gradient-to-br ${stat.gradient}`}>
+                  <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.gradient} shadow-sm`}>
                     <Icon className="h-4 w-4 text-white" />
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent">
+                  <div className="text-3xl font-bold text-slate-900">
                     {stat.value}
                   </div>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
@@ -224,9 +226,9 @@ export default function DashboardPage() {
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Quick Actions */}
-        <Card className="border-0 shadow-lg">
+        <Card className="border border-slate-200 shadow-sm bg-white">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-slate-900">
               <Sparkles className="h-5 w-5 text-primary" />
               Quick Actions
             </CardTitle>
@@ -234,10 +236,10 @@ export default function DashboardPage() {
           <CardContent className="space-y-3">
             <Link
               href="/dashboard/resume-matching"
-              className="flex items-center justify-between p-4 rounded-xl border-2 border-dashed border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all group"
+              className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-primary/40 hover:bg-slate-50 transition-all group"
             >
               <div>
-                <h3 className="font-semibold mb-1 flex items-center gap-2">
+                <h3 className="font-semibold mb-1 flex items-center gap-2 text-slate-900">
                   <Briefcase className="h-4 w-4 text-primary" />
                   Upload Job Description
                 </h3>
@@ -250,10 +252,10 @@ export default function DashboardPage() {
 
             <Link
               href="/dashboard/test-evaluation"
-              className="flex items-center justify-between p-4 rounded-xl border-2 border-dashed border-orange-500/20 hover:border-orange-500/40 hover:bg-orange-500/5 transition-all group"
+              className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-orange-500/40 hover:bg-slate-50 transition-all group"
             >
               <div>
-                <h3 className="font-semibold mb-1 flex items-center gap-2">
+                <h3 className="font-semibold mb-1 flex items-center gap-2 text-slate-900">
                   <FileText className="h-4 w-4 text-orange-500" />
                   Create Test
                 </h3>
@@ -266,10 +268,10 @@ export default function DashboardPage() {
 
             <Link
               href="/dashboard/analytics"
-              className="flex items-center justify-between p-4 rounded-xl border-2 border-dashed border-green-500/20 hover:border-green-500/40 hover:bg-green-500/5 transition-all group"
+              className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-green-500/40 hover:bg-slate-50 transition-all group"
             >
               <div>
-                <h3 className="font-semibold mb-1 flex items-center gap-2">
+                <h3 className="font-semibold mb-1 flex items-center gap-2 text-slate-900">
                   <TrendingUp className="h-4 w-4 text-green-500" />
                   View Analytics
                 </h3>
@@ -283,9 +285,9 @@ export default function DashboardPage() {
         </Card>
 
         {/* Recent Activity */}
-        <Card className="border-0 shadow-lg">
+        <Card className="border border-slate-200 shadow-sm bg-white">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-slate-900">
               <Clock className="h-5 w-5 text-primary" />
               Recent Activity
             </CardTitle>
@@ -297,15 +299,15 @@ export default function DashboardPage() {
                   <Link
                     key={job.id}
                     href={`/dashboard/resume-matching/${job.id}/candidates`}
-                    className="flex items-center justify-between p-4 rounded-xl border hover:border-primary/40 hover:bg-primary/5 transition-all group"
+                    className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-primary/40 hover:bg-slate-50 transition-all group"
                     style={{ animationDelay: `${index * 100}ms` }}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-gradient-to-br from-primary/10 to-primary/5">
+                      <div className="p-2 rounded-lg bg-primary/10">
                         <Briefcase className="h-4 w-4 text-primary" />
                       </div>
                       <div>
-                        <div className="font-medium text-sm group-hover:text-primary transition-colors">
+                        <div className="font-medium text-sm text-slate-900 group-hover:text-primary transition-colors">
                           {job.title}
                         </div>
                         <div className="text-xs text-muted-foreground">
@@ -323,8 +325,8 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="text-center py-8">
-                <div className="mb-3 inline-flex p-4 rounded-full bg-muted">
-                  <Clock className="h-8 w-8 text-muted-foreground" />
+                <div className="mb-3 inline-flex p-4 rounded-full bg-slate-100">
+                  <Clock className="h-8 w-8 text-slate-400" />
                 </div>
                 <p className="text-sm text-muted-foreground">
                   No recent activity yet. Start by uploading a job description!

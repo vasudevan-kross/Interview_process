@@ -33,7 +33,15 @@
       "Bash(printf:*)",
       "Bash(ls -la \"d:\\\\Projects\\\\AI driven\\\\Interview\\\\backend\\\\app\\\\api\\\\v1\"\" 2>&1 || dir \"d:ProjectsAI drivenInterviewbackendappapiv1\"\")",
       "Bash(tesseract:*)",
-      "Bash(ver)"
+      "Bash(ver)",
+      "Bash(tasklist:*)",
+      "Bash(npm view:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(pkill:*)",
+      "Bash(venvScriptspython.exe -c \"from app.services.trocr_service import get_trocr_service; print\\(''TrOCR import: SUCCESS''\\); service = get_trocr_service\\(\\); print\\(f''TrOCR enabled: {service.enabled}''\\)\")",
+      "Bash(venv/Scripts/python.exe:*)",
+      "Bash(venvScriptsactivate)"
     ]
   }
 }

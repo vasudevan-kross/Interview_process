@@ -1,0 +1,778 @@
+"""
+Coding Interviews API endpoints.
+
+Provides REST API for:
+- Creating and managing interviews
+- AI question generation
+- Candidate submission tracking
+- Code auto-save and evaluation
+- Anti-cheating monitoring
+"""
+
+import logging
+import json
+from fastapi import APIRouter, HTTPException, status, Request, Body, Depends, UploadFile, File, Form
+from typing import List, Optional
+
+from app.schemas.coding_interviews import (
+    InterviewCreate,
+    GenerateQuestionsRequest,
+    StartSubmissionRequest,
+    SaveCodeRequest,
+    SubmitInterviewRequest,
+    TrackActivityRequest
+)
+from app.services.coding_interview_service import get_coding_interview_service
+from app.services.question_generator import get_question_generator
+from app.services.document_processor import get_document_processor
+from app.services.llm_orchestrator import get_llm_orchestrator
+from app.db.supabase_client import get_supabase
+from app.auth.dependencies import get_current_user_id
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/coding-interviews", tags=["coding-interviews"])
+
+
+@router.post("", summary="Create coding interview")
+async def create_interview(
+    request: InterviewCreate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Create a new coding or testing interview with questions.
+
+    Returns:
+        - interview_id
+        - access_token (for shareable link)
+        - shareable_link
+        - questions
+    """
+    try:
+        service = get_coding_interview_service()
+
+        # Convert questions to dict
+        questions_data = [q.dict() for q in request.questions]
+
+        result = await service.create_interview(
+            title=request.title,
+            description=request.description or "",
+            scheduled_start_time=request.scheduled_start_time,
+            scheduled_end_time=request.scheduled_end_time,
+            programming_language=request.programming_language,
+            interview_type=request.interview_type,
+            questions_data=questions_data,
+            user_id=current_user_id,
+            grace_period_minutes=request.grace_period_minutes,
+            resume_required=request.resume_required,
+            allowed_languages=request.allowed_languages
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error creating interview: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create interview: {str(e)}"
+        )
+
+
+@router.post("/generate-questions", summary="Generate questions with AI")
+async def generate_questions(request: GenerateQuestionsRequest):
+    """
+    Generate interview questions using AI (Ollama codellama:7b).
+
+    Supports:
+    - Coding questions (algorithms, development)
+    - Testing questions (test cases, automation code)
+    """
+    try:
+        generator = get_question_generator()
+
+        if request.interview_type == 'testing' or request.test_framework:
+            # Generate testing questions
+            questions = await generator.generate_testing_questions(
+                job_description=request.job_description,
+                difficulty=request.difficulty,
+                num_questions=request.num_questions,
+                test_framework=request.test_framework or 'selenium-python'
+            )
+        else:
+            # Generate coding questions
+            questions = await generator.generate_coding_questions(
+                job_description=request.job_description,
+                difficulty=request.difficulty,
+                num_questions=request.num_questions,
+                programming_language=request.programming_language or 'python'
+            )
+
+        return {
+            'questions': questions,
+            'count': len(questions)
+        }
+
+    except Exception as e:
+        logger.error(f"Error generating questions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate questions: {str(e)}"
+        )
+
+
+@router.post("/extract-questions", summary="Extract questions from document")
+async def extract_questions_from_document(
+    file: UploadFile = File(...),
+    programming_language: str = Form('python'),
+    interview_type: str = Form('coding'),
+    difficulty: str = Form('medium')
+):
+    """
+    Extract interview questions from uploaded document.
+
+    Supports: PDF, Word (DOCX), Images (JPG, PNG), Excel (XLSX), CSV
+
+    Process:
+    1. Extract text using OCR/document processing
+    2. Parse questions using LLM
+    3. Return structured questions for review
+    """
+    try:
+        # Validate file type
+        allowed_extensions = ['pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png', 'xlsx', 'csv']
+        file_ext = file.filename.split('.')[-1].lower()
+
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
+            )
+
+        logger.info(f"Extracting questions from {file.filename} ({file_ext})")
+
+        # Read file content
+        content = await file.read()
+
+        # Extract text from document
+        doc_processor = get_document_processor()
+        extraction_result = await doc_processor.extract_text(
+            file_data=content,
+            filename=file.filename,
+            file_type=file_ext
+        )
+
+        extracted_text = extraction_result.get('extracted_text', '')
+
+        if not extracted_text or len(extracted_text.strip()) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not extract text from document. Please ensure document is readable."
+            )
+
+        logger.info(f"Extracted {len(extracted_text)} characters from document ({extraction_result.get('page_count', 0)} pages)")
+
+        # Parse questions using LLM
+        llm = get_llm_orchestrator()
+
+        prompt = f"""Extract coding interview questions from the following document text.
+
+Document Text:
+{extracted_text[:4000]}  # Limit to prevent token overflow
+
+Extract each question and structure them as JSON array with this format:
+[
+  {{
+    "question_text": "Full question text...",
+    "difficulty": "{difficulty}",
+    "marks": 10,
+    "topics": ["topic1", "topic2"],
+    "starter_code": "# Optional starter code if provided in document",
+    "solution_code": "# Optional solution if provided in document"
+  }}
+]
+
+Important:
+- Extract ALL questions found in the document
+- If marks are not specified, assign reasonable marks based on difficulty (easy: 5-10, medium: 10-20, hard: 20-30)
+- If no starter code is provided, leave it empty
+- Preserve the exact question wording from the document
+
+Return ONLY the JSON array, no additional text."""
+
+        result = await llm.generate_completion(prompt)
+
+        # Parse LLM response as JSON
+        try:
+            # Extract JSON from response (handle markdown code blocks)
+            json_text = result['response'].strip()
+            if json_text.startswith('```'):
+                json_text = json_text.split('```')[1]
+                if json_text.startswith('json'):
+                    json_text = json_text[4:]
+            json_text = json_text.strip()
+
+            questions = json.loads(json_text)
+
+            if not isinstance(questions, list):
+                raise ValueError("Expected array of questions")
+
+            logger.info(f"Successfully extracted {len(questions)} questions")
+
+            return {
+                'questions': questions,
+                'count': len(questions),
+                'extracted_text_length': len(extracted_text)
+            }
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"LLM Response: {result[:500]}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to parse questions from document. LLM response was not valid JSON."
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting questions from document: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to extract questions: {str(e)}"
+        )
+
+
+@router.get("", summary="List interviews")
+async def list_interviews(
+    current_user_id: str = Depends(get_current_user_id),
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """List all interviews created by the current user."""
+    try:
+        client = get_supabase()
+
+        # Filter by created_by to show only user's interviews
+        query = client.table('coding_interviews').select('*').eq('created_by', current_user_id).order('created_at', desc=True).limit(limit).offset(offset)
+
+        if status_filter:
+            query = query.eq('status', status_filter)
+
+        result = query.execute()
+
+        return {
+            'interviews': result.data or [],
+            'count': len(result.data) if result.data else 0
+        }
+
+    except Exception as e:
+        logger.error(f"Error listing interviews: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list interviews: {str(e)}"
+        )
+
+
+@router.get("/{interview_id}", summary="Get interview details")
+async def get_interview(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Get interview details with questions."""
+    try:
+        client = get_supabase()
+
+        # Get interview and verify ownership
+        interview_result = client.table('coding_interviews').select('*').eq(
+            'id', interview_id
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data or len(interview_result.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found"
+            )
+
+        interview = interview_result.data[0]
+
+        # Get questions
+        questions_result = client.table('coding_questions').select('*').eq(
+            'interview_id', interview_id
+        ).order('question_number').execute()
+
+        interview['questions'] = questions_result.data or []
+
+        return interview
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting interview: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get interview: {str(e)}"
+        )
+
+
+@router.delete("/{interview_id}", summary="Delete interview")
+async def delete_interview(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Delete an interview (cascade deletes questions, submissions)."""
+    try:
+        client = get_supabase()
+
+        # Delete and verify ownership (CASCADE will handle related records)
+        result = client.table('coding_interviews').delete().eq(
+            'id', interview_id
+        ).eq('created_by', current_user_id).execute()
+
+        if not result.data or len(result.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found"
+            )
+
+        return {'message': 'Interview deleted successfully'}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting interview: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete interview: {str(e)}"
+        )
+
+
+@router.get("/join/{access_token}", summary="Join interview (public)")
+async def join_interview(access_token: str):
+    """
+    Public endpoint for candidates to join interview.
+    Validates token and returns interview details (without solutions).
+    """
+    try:
+        service = get_coding_interview_service()
+
+        interview = await service.get_interview_by_token(access_token)
+
+        return interview
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error joining interview: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to join interview"
+        )
+
+
+@router.post("/start", summary="Start submission (public)")
+async def start_submission(
+    request: StartSubmissionRequest,
+    interview_id: str,
+    http_request: Request
+):
+    """
+    Public endpoint for candidates to start interview.
+    Creates submission record and validates time window.
+    """
+    try:
+        service = get_coding_interview_service()
+
+        # Get IP and user agent
+        ip_address = http_request.client.host
+        user_agent = http_request.headers.get('user-agent', '')
+
+        result = await service.start_submission(
+            interview_id=interview_id,
+            candidate_name=request.candidate_name,
+            candidate_email=request.candidate_email,
+            candidate_phone=request.candidate_phone,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            preferred_language=request.preferred_language
+        )
+
+        return result
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error starting submission: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start submission"
+        )
+
+
+@router.post("/save-code", summary="Auto-save code (public)")
+async def save_code(request: SaveCodeRequest):
+    """
+    Public endpoint for auto-saving code.
+    Called every 30 seconds from frontend.
+    """
+    try:
+        service = get_coding_interview_service()
+
+        result = await service.save_code(
+            submission_id=request.submission_id,
+            question_id=request.question_id,
+            code=request.code,
+            programming_language=request.programming_language
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error saving code: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save code"
+        )
+
+
+@router.post("/submit", summary="Submit interview (public)")
+async def submit_interview(request: SubmitInterviewRequest):
+    """
+    Public endpoint for submitting interview.
+    Finalizes submission and triggers evaluation.
+    """
+    try:
+        service = get_coding_interview_service()
+
+        result = await service.submit_interview(
+            submission_id=request.submission_id,
+            auto_submit=False
+        )
+
+        return result
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error submitting interview: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit interview"
+        )
+
+
+@router.post("/activity", summary="Track activity (public)")
+async def track_activity(request: TrackActivityRequest):
+    """
+    Public endpoint for tracking anti-cheating events.
+    Logs tab switches, copy/paste, etc.
+    """
+    try:
+        service = get_coding_interview_service()
+
+        await service.track_activity(
+            submission_id=request.submission_id,
+            activity_type=request.activity_type,
+            question_id=request.question_id,
+            metadata=request.metadata
+        )
+
+        return {'status': 'logged'}
+
+    except Exception as e:
+        logger.error(f"Error tracking activity: {e}")
+        # Don't fail the request if activity tracking fails
+        return {'status': 'failed', 'error': str(e)}
+
+
+@router.post("/upload-resume", summary="Upload resume (public)")
+async def upload_resume(
+    submission_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """
+    Public endpoint for candidates to upload their resume.
+    Stores file in Supabase Storage and updates submission record.
+    """
+    try:
+        # Validate file type
+        allowed_extensions = ['pdf', 'docx', 'doc']
+        file_ext = file.filename.split('.')[-1].lower() if file.filename else ''
+
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
+            )
+
+        # Read file content
+        content = await file.read()
+
+        if len(content) > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File too large. Maximum size is 10MB."
+            )
+
+        client = get_supabase()
+
+        # Verify submission exists
+        submission_result = client.table('coding_submissions').select('id, interview_id').eq(
+            'id', submission_id
+        ).execute()
+
+        if not submission_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Submission not found"
+            )
+
+        # Upload to Supabase Storage
+        import uuid
+        storage_path = f"coding-resumes/{submission_id}/{uuid.uuid4()}.{file_ext}"
+
+        try:
+            client.storage.from_('documents').upload(
+                storage_path,
+                content,
+                file_options={"content-type": file.content_type or "application/octet-stream"}
+            )
+        except Exception as storage_err:
+            # If bucket doesn't exist, try creating it
+            logger.warning(f"Storage upload failed, trying to create bucket: {storage_err}")
+            try:
+                client.storage.create_bucket('documents', options={"public": False})
+                client.storage.from_('documents').upload(
+                    storage_path,
+                    content,
+                    file_options={"content-type": file.content_type or "application/octet-stream"}
+                )
+            except Exception as retry_err:
+                logger.error(f"Storage upload retry failed: {retry_err}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to upload resume to storage"
+                )
+
+        # Update submission with resume path
+        from datetime import datetime
+        client.table('coding_submissions').update({
+            'resume_path': storage_path,
+            'resume_uploaded_at': datetime.now().isoformat()
+        }).eq('id', submission_id).execute()
+
+        logger.info(f"Resume uploaded for submission {submission_id}: {storage_path}")
+
+        return {
+            'status': 'uploaded',
+            'resume_path': storage_path,
+            'filename': file.filename
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading resume: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload resume: {str(e)}"
+        )
+
+
+@router.get("/submissions/{submission_id}/resume", summary="Download resume")
+async def get_submission_resume(
+    submission_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Get a signed URL for viewing the candidate's uploaded resume."""
+    try:
+        client = get_supabase()
+
+        # Get submission
+        submission_result = client.table('coding_submissions').select(
+            'resume_path, interview_id'
+        ).eq('id', submission_id).execute()
+
+        if not submission_result.data:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        submission = submission_result.data[0]
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', submission['interview_id']
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        resume_path = submission.get('resume_path')
+        if not resume_path:
+            raise HTTPException(status_code=404, detail="No resume uploaded for this submission")
+
+        # Generate signed URL (valid for 1 hour)
+        signed_url = client.storage.from_('documents').create_signed_url(
+            resume_path, 3600
+        )
+
+        return {
+            'resume_url': signed_url.get('signedURL') or signed_url.get('signedUrl', ''),
+            'resume_path': resume_path
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting resume: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get resume: {str(e)}"
+        )
+
+
+@router.get("/{interview_id}/submissions", summary="List submissions")
+async def list_submissions(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """List all submissions for an interview."""
+    try:
+        client = get_supabase()
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found"
+            )
+
+        # Get submissions
+        submissions_result = client.table('coding_submissions').select('*').eq(
+            'interview_id', interview_id
+        ).order('submitted_at', desc=True).execute()
+
+        return {
+            'submissions': submissions_result.data or [],
+            'count': len(submissions_result.data) if submissions_result.data else 0
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing submissions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list submissions"
+        )
+
+
+@router.get("/submissions/{submission_id}", summary="Get submission details")
+async def get_submission(
+    submission_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Get detailed submission with all answers and evaluations."""
+    try:
+        client = get_supabase()
+
+        # Get submission
+        submission_result = client.table('coding_submissions').select('*').eq(
+            'id', submission_id
+        ).execute()
+
+        if not submission_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Submission not found"
+            )
+
+        submission = submission_result.data[0]
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', submission['interview_id']
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this submission"
+            )
+
+        # Get answers with evaluations
+        answers_result = client.table('coding_answers').select('*').eq(
+            'submission_id', submission_id
+        ).execute()
+
+        submission['answers'] = answers_result.data or []
+
+        # Get activity log
+        activities_result = client.table('session_activities').select('*').eq(
+            'submission_id', submission_id
+        ).order('timestamp').execute()
+
+        submission['activities'] = activities_result.data or []
+
+        return submission
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting submission: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get submission"
+        )
+
+
+@router.post("/submissions/{submission_id}/evaluate", summary="Re-evaluate submission")
+async def reevaluate_submission(
+    submission_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Manually trigger re-evaluation of a submission."""
+    try:
+        service = get_coding_interview_service()
+
+        # Verify ownership (similar to get_submission)
+        client = get_supabase()
+        submission_result = client.table('coding_submissions').select('interview_id').eq(
+            'id', submission_id
+        ).execute()
+
+        if not submission_result.data:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', submission_result.data[0]['interview_id']
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        # Re-evaluate
+        result = await service.evaluate_submission(submission_id)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error re-evaluating submission: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to re-evaluate submission"
+        )
