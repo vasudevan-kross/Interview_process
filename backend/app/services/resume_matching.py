@@ -398,6 +398,25 @@ class ResumeMatchingService:
             logger.error(f"Error getting ranked candidates: {e}")
             raise
 
+    async def get_job_description(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get job description details by ID.
+
+        Args:
+            job_id: Job description ID
+
+        Returns:
+            dict with job description details including raw_text
+        """
+        try:
+            result = self.client.table("job_descriptions").select("*").eq("id", job_id).single().execute()
+            if not result.data:
+                raise ValueError(f"Job description with ID {job_id} not found")
+            return result.data
+        except Exception as e:
+            logger.error(f"Error getting job description: {e}")
+            raise
+
     async def get_job_statistics(self, job_id: str) -> Dict[str, Any]:
         """
         Get statistics for a job posting.

@@ -48,6 +48,7 @@ export default function VoiceInterviewPage() {
             const vapi = new Vapi(VAPI_PUBLIC_KEY)
             vapiRef.current = vapi
 
+            // Setup event handlers
             let callIdSent = false;
             vapi.on('message', (message: any) => {
                 if (message.type === 'call-update' && message.call?.id && !callIdSent) {
@@ -73,14 +74,25 @@ export default function VoiceInterviewPage() {
                 vapiRef.current = null
             })
 
-            if (VAPI_ASSISTANT_ID) {
+            // NEW WORKFLOW: Use dynamic campaign config if available
+            if (candidate.vapi_config) {
+                console.log('Using dynamic campaign configuration')
+                // Strip deprecated 'knowledgeBase' property (removed from Vapi API)
+                const { knowledgeBase, ...cleanConfig } = candidate.vapi_config as any
+                await vapi.start(cleanConfig)
+            }
+            // OLD WORKFLOW: Fall back to static assistant ID (BACKWARD COMPATIBLE)
+            else if (VAPI_ASSISTANT_ID) {
+                console.log('Using static assistant ID (backward compatible)')
                 await vapi.start(VAPI_ASSISTANT_ID, {
                     variableValues: {
                         candidate_name: candidate.name,
-                        is_fresher: String(candidate.is_fresher),
                     },
                 })
-            } else {
+            }
+            // FALLBACK: No campaign and no assistant ID
+            else {
+                console.log('Using inline configuration (fallback)')
                 await vapi.start({
                     model: {
                         provider: 'openai',
@@ -89,10 +101,7 @@ export default function VoiceInterviewPage() {
                             {
                                 role: 'system',
                                 content: `You are an HR screening assistant conducting a voice interview with ${candidate.name}.
-${candidate.is_fresher
-                                        ? 'This candidate is a fresher. Only ask basic questions: Name, Gender, Email, Current Location, Native.'
-                                        : 'This candidate has experience. Ask all screening questions about their employment history, CTC, notice period, etc.'
-                                    }
+Ask relevant screening questions about their experience, skills, and availability.
 Be conversational and professional.`,
                             },
                         ],

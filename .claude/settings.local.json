@@ -41,7 +41,11 @@
       "Bash(pkill:*)",
       "Bash(venvScriptspython.exe -c \"from app.services.trocr_service import get_trocr_service; print\\(''TrOCR import: SUCCESS''\\); service = get_trocr_service\\(\\); print\\(f''TrOCR enabled: {service.enabled}''\\)\")",
       "Bash(venv/Scripts/python.exe:*)",
-      "Bash(venvScriptsactivate)"
+      "Bash(venvScriptsactivate)",
+      "Bash(npx tsc:*)",
+      "mcp__plugin_vapi-voice-ai_vapi-docs__searchDocs",
+      "Bash(systeminfo:*)",
+      "Bash(winget install:*)"
     ]
   }
 }

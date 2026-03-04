@@ -65,7 +65,11 @@ async def create_interview(
             user_id=current_user_id,
             grace_period_minutes=request.grace_period_minutes,
             resume_required=request.resume_required,
-            allowed_languages=request.allowed_languages
+            allowed_languages=request.allowed_languages,
+            bond_terms=request.bond_terms,
+            bond_document_url=request.bond_document_url,
+            require_signature=request.require_signature,
+            bond_years=request.bond_years
         )
 
         return result
@@ -86,18 +90,53 @@ async def generate_questions(request: GenerateQuestionsRequest):
     Supports:
     - Coding questions (algorithms, development)
     - Testing questions (test cases, automation code)
+    - Auto-detects testing roles from job description
     """
     try:
         generator = get_question_generator()
 
-        if request.interview_type == 'testing' or request.test_framework:
+        # Auto-detect if the job description is for a testing/QA role
+        testing_keywords = [
+            'tester', 'testing', 'qa ', 'quality assurance', 'sdet',
+            'test engineer', 'test analyst', 'automation tester',
+            'manual tester', 'test lead', 'test case', 'test plan',
+            'selenium', 'playwright', 'cypress', 'appium', 'jmeter',
+            'bug', 'defect', 'regression', 'smoke test', 'sanity test',
+        ]
+        jd_lower = request.job_description.lower()
+        is_testing_role = any(kw in jd_lower for kw in testing_keywords)
+
+        # Determine effective interview type
+        effective_type = request.interview_type
+        if is_testing_role and effective_type == 'coding':
+            effective_type = 'testing'
+            logger.info(f"Auto-detected testing role from job description, switching to testing questions")
+
+        if effective_type == 'testing' or request.test_framework:
             # Generate testing questions
             questions = await generator.generate_testing_questions(
                 job_description=request.job_description,
                 difficulty=request.difficulty,
                 num_questions=request.num_questions,
-                test_framework=request.test_framework or 'selenium-python'
+                test_framework=request.test_framework or 'manual-test-cases'
             )
+        elif effective_type == 'both':
+            # Generate a mix: half coding, half testing
+            coding_count = request.num_questions // 2
+            testing_count = request.num_questions - coding_count
+            coding_qs = await generator.generate_coding_questions(
+                job_description=request.job_description,
+                difficulty=request.difficulty,
+                num_questions=coding_count,
+                programming_language=request.programming_language or 'python'
+            )
+            testing_qs = await generator.generate_testing_questions(
+                job_description=request.job_description,
+                difficulty=request.difficulty,
+                num_questions=testing_count,
+                test_framework=request.test_framework or 'manual-test-cases'
+            )
+            questions = coding_qs + testing_qs
         else:
             # Generate coding questions
             questions = await generator.generate_coding_questions(
@@ -109,7 +148,8 @@ async def generate_questions(request: GenerateQuestionsRequest):
 
         return {
             'questions': questions,
-            'count': len(questions)
+            'count': len(questions),
+            'detected_type': effective_type,
         }
 
     except Exception as e:
@@ -252,8 +292,48 @@ async def list_interviews(
     """List all interviews created by the current user."""
     try:
         client = get_supabase()
+        from datetime import datetime, timezone
 
-        # Filter by created_by to show only user's interviews
+        # Auto-update expired interviews before listing
+        # Find interviews that are still 'scheduled' or 'in_progress' but past their end time
+        active_result = client.table('coding_interviews').select(
+            'id, status, scheduled_end_time, grace_period_minutes'
+        ).eq('created_by', current_user_id).in_(
+            'status', ['scheduled', 'in_progress']
+        ).execute()
+
+        now = datetime.now(timezone.utc)
+        if active_result.data:
+            for interview in active_result.data:
+                end_time_str = interview.get('scheduled_end_time')
+                if not end_time_str:
+                    continue
+
+                # Parse end time
+                try:
+                    end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                    # Ensure timezone-aware (treat naive as UTC)
+                    if end_time.tzinfo is None:
+                        end_time = end_time.replace(tzinfo=timezone.utc)
+                except (ValueError, AttributeError):
+                    continue
+
+                grace_minutes = interview.get('grace_period_minutes', 0) or 0
+                from datetime import timedelta
+                effective_end = end_time + timedelta(minutes=grace_minutes)
+
+                if now > effective_end:
+                    # Time has expired — update status
+                    new_status = 'expired' if interview['status'] == 'scheduled' else 'completed'
+                    try:
+                        client.table('coding_interviews').update({
+                            'status': new_status
+                        }).eq('id', interview['id']).execute()
+                        logger.info(f"Auto-updated interview {interview['id']} to {new_status}")
+                    except Exception as update_err:
+                        logger.warning(f"Failed to auto-update interview status: {update_err}")
+
+        # Now fetch the list with updated statuses
         query = client.table('coding_interviews').select('*').eq('created_by', current_user_id).order('created_at', desc=True).limit(limit).offset(offset)
 
         if status_filter:
@@ -295,6 +375,30 @@ async def get_interview(
             )
 
         interview = interview_result.data[0]
+
+        # Auto-update status if end time has passed
+        from datetime import datetime, timezone, timedelta
+        if interview.get('status') in ('scheduled', 'in_progress'):
+            end_time_str = interview.get('scheduled_end_time')
+            if end_time_str:
+                try:
+                    end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                    # Ensure timezone-aware (treat naive as UTC)
+                    if end_time.tzinfo is None:
+                        end_time = end_time.replace(tzinfo=timezone.utc)
+                    grace_minutes = interview.get('grace_period_minutes', 0) or 0
+                    effective_end = end_time + timedelta(minutes=grace_minutes)
+                    now = datetime.now(timezone.utc)
+
+                    if now > effective_end:
+                        new_status = 'expired' if interview['status'] == 'scheduled' else 'completed'
+                        client.table('coding_interviews').update({
+                            'status': new_status
+                        }).eq('id', interview_id).execute()
+                        interview['status'] = new_status
+                        logger.info(f"Auto-updated interview {interview_id} to {new_status}")
+                except (ValueError, AttributeError):
+                    pass
 
         # Get questions
         questions_result = client.table('coding_questions').select('*').eq(
@@ -434,25 +538,32 @@ async def save_code(request: SaveCodeRequest):
         return result
 
     except Exception as e:
-        logger.error(f"Error saving code: {e}")
+        logger.error(f"Error saving code: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save code"
+            detail=f"Failed to save code: {type(e).__name__}: {str(e)}"
         )
 
 
 @router.post("/submit", summary="Submit interview (public)")
-async def submit_interview(request: SubmitInterviewRequest):
+async def submit_interview(request: SubmitInterviewRequest, req: Request):
     """
     Public endpoint for submitting interview.
     Finalizes submission and triggers evaluation.
+    Accepts optional signature data and terms acceptance.
     """
     try:
         service = get_coding_interview_service()
 
+        # Get IP address for audit trail
+        client_ip = req.client.host if req.client else None
+
         result = await service.submit_interview(
             submission_id=request.submission_id,
-            auto_submit=False
+            auto_submit=False,
+            signature_data=request.signature_data,
+            terms_accepted=request.terms_accepted,
+            client_ip=client_ip
         )
 
         return result
@@ -463,10 +574,10 @@ async def submit_interview(request: SubmitInterviewRequest):
             detail=str(e)
         )
     except Exception as e:
-        logger.error(f"Error submitting interview: {e}")
+        logger.error(f"Error submitting interview: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to submit interview"
+            detail=f"Failed to submit interview: {type(e).__name__}: {str(e)}"
         )
 
 
@@ -717,7 +828,27 @@ async def get_submission(
             'submission_id', submission_id
         ).execute()
 
-        submission['answers'] = answers_result.data or []
+        answers = answers_result.data or []
+
+        # Fetch questions to attach question_text to each answer
+        questions_result = client.table('coding_questions').select(
+            'id, question_text, difficulty, marks, topics'
+        ).eq('interview_id', submission['interview_id']).execute()
+
+        questions_map = {}
+        if questions_result.data:
+            for q in questions_result.data:
+                questions_map[q['id']] = q
+
+        # Attach question details to each answer
+        for answer in answers:
+            q_data = questions_map.get(answer.get('question_id'), {})
+            answer['question_text'] = q_data.get('question_text', '')
+            answer['question_marks'] = q_data.get('marks', 0)
+            answer['question_difficulty'] = q_data.get('difficulty', 'medium')
+            answer['question_topics'] = q_data.get('topics', [])
+
+        submission['answers'] = answers
 
         # Get activity log
         activities_result = client.table('session_activities').select('*').eq(
@@ -775,4 +906,85 @@ async def reevaluate_submission(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to re-evaluate submission"
+        )
+
+
+@router.post("/{interview_id}/evaluate-all", summary="Bulk evaluate all submissions")
+async def evaluate_all_submissions(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Evaluate all submitted submissions for an interview in bulk."""
+    try:
+        service = get_coding_interview_service()
+        client = get_supabase()
+
+        # Verify ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(status_code=403, detail="Not authorized to access this interview")
+
+        # Get all submitted submissions for this interview
+        submissions_result = client.table('coding_submissions').select('id, status').eq(
+            'interview_id', interview_id
+        ).in_('status', ['submitted', 'auto_submitted']).execute()
+
+        if not submissions_result.data:
+            return {
+                "message": "No submissions to evaluate",
+                "total": 0,
+                "evaluated": 0,
+                "failed": 0,
+                "results": []
+            }
+
+        total = len(submissions_result.data)
+        evaluated = 0
+        failed = 0
+        results = []
+
+        logger.info(f"Starting bulk evaluation for {total} submissions in interview {interview_id}")
+
+        # Evaluate each submission
+        for submission in submissions_result.data:
+            submission_id = submission['id']
+            try:
+                result = await service.evaluate_submission(submission_id)
+                evaluated += 1
+                results.append({
+                    "submission_id": submission_id,
+                    "status": "success",
+                    "total_marks": result.get('total_marks_awarded'),
+                    "percentage": result.get('percentage')
+                })
+                logger.info(f"✅ Evaluated submission {submission_id}: {result.get('percentage')}%")
+            except Exception as e:
+                failed += 1
+                results.append({
+                    "submission_id": submission_id,
+                    "status": "failed",
+                    "error": str(e)
+                })
+                logger.error(f"❌ Failed to evaluate submission {submission_id}: {e}")
+
+        logger.info(f"Bulk evaluation completed: {evaluated} successful, {failed} failed out of {total}")
+
+        return {
+            "message": f"Evaluated {evaluated} out of {total} submissions",
+            "total": total,
+            "evaluated": evaluated,
+            "failed": failed,
+            "results": results
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in bulk evaluation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to perform bulk evaluation"
         )

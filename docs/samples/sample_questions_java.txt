@@ -1,0 +1,32 @@
+# Java Interview Questions for Freshers
+# These questions focus on basic Java fundamentals and OOPs concepts
+
+# Introduction
+Can you introduce yourself? Tell me your name, college, degree, and graduation year
+
+# OOPs Fundamentals
+What is Object-Oriented Programming and why is it important?
+Can you explain the four pillars of OOPs?
+What is encapsulation? Can you give an example?
+What is inheritance in Java?
+What is polymorphism? Explain with an example
+What is abstraction and how is it different from encapsulation?
+
+# Java Basics
+What is the difference between JDK, JRE, and JVM?
+What are the basic data types in Java?
+What is the difference between an interface and an abstract class?
+What are Java collections? Can you name a few?
+What is the difference between ArrayList and LinkedList?
+
+# Exception Handling
+What is exception handling in Java?
+What is the difference between checked and unchecked exceptions?
+
+# Projects
+Have you worked on any Java projects during your college?
+What did you learn from your Java projects?
+
+# Learning & Goals
+Are you comfortable learning new Java frameworks like Spring Boot?
+What are your career goals as a Java developer?

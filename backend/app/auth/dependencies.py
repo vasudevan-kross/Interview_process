@@ -106,3 +106,15 @@ async def get_optional_user_id(
         return await get_current_user_id(authorization)
     except HTTPException:
         return None
+
+
+async def get_current_user(
+    authorization: Optional[str] = Header(None)
+) -> dict:
+    """
+    Get current user as a dict with 'id' key.
+    Used by endpoints that need current_user["id"].
+    """
+    user_id = await get_current_user_id(authorization)
+    return {"id": user_id}
+

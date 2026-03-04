@@ -28,9 +28,16 @@ class VoiceScreeningService:
         user_id: str,
         email: Optional[str] = None,
         phone: Optional[str] = None,
-        is_fresher: bool = False
+        is_fresher: bool = False,
+        campaign_id: Optional[str] = None
     ) -> dict:
-        """Create a single voice screening candidate."""
+        """
+        Create a single voice screening candidate.
+
+        BACKWARD COMPATIBLE: campaign_id is optional
+        - If campaign_id provided: Uses campaign's dynamic VAPI config
+        - If campaign_id is None: Uses static VAPI_ASSISTANT_ID (legacy workflow)
+        """
         token = self._generate_token()
 
         data = {
@@ -39,6 +46,7 @@ class VoiceScreeningService:
             "email": email,
             "phone": phone,
             "is_fresher": is_fresher,
+            "campaign_id": campaign_id,  # NEW: Optional campaign link
             "status": "pending",
             "created_by": user_id,
         }

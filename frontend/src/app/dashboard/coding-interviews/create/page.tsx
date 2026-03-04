@@ -53,11 +53,18 @@ export default function CreateInterviewPage() {
   const [testFramework, setTestFramework] = useState('selenium-python')
   const [resumeRequired, setResumeRequired] = useState<'mandatory' | 'optional' | 'disabled'>('mandatory')
 
+  // Bond/Terms fields
+  const [bondTerms, setBondTerms] = useState('')
+  const [bondDocumentUrl, setBondDocumentUrl] = useState('')
+  const [requireSignature, setRequireSignature] = useState(true)  // Default to checked
+  const [bondYears, setBondYears] = useState<string>('2')  // Use string to allow clearing
+  const [bondDocumentFile, setBondDocumentFile] = useState<File | null>(null)
+
   // AI Generation
   const [jobDescription, setJobDescription] = useState('')
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium')
-  const [numQuestions, setNumQuestions] = useState(3)
-  const [totalMarks, setTotalMarks] = useState(100)
+  const [numQuestions, setNumQuestions] = useState<string>('3')  // Use string to allow clearing
+  const [totalMarks, setTotalMarks] = useState<string>('100')  // Use string to allow clearing
 
   // Questions
   const [questions, setQuestions] = useState<Question[]>([])
@@ -76,8 +83,9 @@ export default function CreateInterviewPage() {
     if (qs.length === 0) return qs
     const availableMinutes = getAvailableMinutes()
     const timePerQ = availableMinutes > 0 ? Math.floor(availableMinutes / qs.length) : 15
-    const marksPerQ = Math.floor(totalMarks / qs.length)
-    const remainder = totalMarks - marksPerQ * qs.length
+    const totalMarksNum = parseInt(totalMarks) || 100
+    const marksPerQ = Math.floor(totalMarksNum / qs.length)
+    const remainder = totalMarksNum - marksPerQ * qs.length
     return qs.map((q, i) => ({
       ...q,
       time_estimate_minutes: timePerQ,
@@ -86,11 +94,12 @@ export default function CreateInterviewPage() {
   }
 
   // Redistribute marks when total marks changes
-  const handleTotalMarksChange = (newTotal: number) => {
+  const handleTotalMarksChange = (newTotal: string) => {
     setTotalMarks(newTotal)
-    if (questions.length > 0) {
-      const marksPerQ = Math.floor(newTotal / questions.length)
-      const remainder = newTotal - marksPerQ * questions.length
+    const totalNum = parseInt(newTotal) || 0
+    if (questions.length > 0 && totalNum > 0) {
+      const marksPerQ = Math.floor(totalNum / questions.length)
+      const remainder = totalNum - marksPerQ * questions.length
       setQuestions(questions.map((q, i) => ({
         ...q,
         marks: marksPerQ + (i < remainder ? 1 : 0),
@@ -109,11 +118,17 @@ export default function CreateInterviewPage() {
       const response = await generateQuestions({
         job_description: jobDescription,
         difficulty,
-        num_questions: numQuestions,
+        num_questions: parseInt(numQuestions) || 3,
         programming_language: interviewType === 'coding' ? programmingLanguage : undefined,
         test_framework: interviewType === 'testing' ? testFramework : undefined,
         interview_type: interviewType,
       })
+
+      // Auto-switch interview type if backend detected a testing role
+      if (response.detected_type && response.detected_type !== interviewType) {
+        setInterviewType(response.detected_type as 'coding' | 'testing' | 'both')
+        toast.info(`Detected a ${response.detected_type} role from your job description — generated ${response.detected_type} questions instead.`)
+      }
 
       setQuestions(distributeTimeAndMarks(response.questions))
       toast.success(`Generated ${response.count} questions successfully!`)
@@ -166,8 +181,9 @@ export default function CreateInterviewPage() {
     const newCount = questions.length + 1
     const availableMinutes = getAvailableMinutes()
     const timePerQ = availableMinutes > 0 ? Math.floor(availableMinutes / newCount) : 15
-    const marksPerQ = Math.floor(totalMarks / newCount)
-    const remainder = totalMarks - marksPerQ * newCount
+    const totalMarksNum = parseInt(totalMarks) || 100
+    const marksPerQ = Math.floor(totalMarksNum / newCount)
+    const remainder = totalMarksNum - marksPerQ * newCount
     const updatedQuestions = [
       ...questions.map((q, i) => ({
         ...q,
@@ -215,16 +231,25 @@ export default function CreateInterviewPage() {
 
     try {
       setLoading(true)
+      // Determine the correct language to send based on interview type
+      const effectiveLanguage = interviewType === 'testing'
+        ? testFramework
+        : (programmingLanguage === 'any' ? 'python' : programmingLanguage)
+
       const response = await createInterview({
         title,
         description,
         scheduled_start_time: scheduledStartTime,
         scheduled_end_time: scheduledEndTime,
-        programming_language: programmingLanguage === 'any' ? 'python' : programmingLanguage,
-        allowed_languages: programmingLanguage === 'any' ? [] : undefined,
+        programming_language: effectiveLanguage,
+        allowed_languages: interviewType !== 'testing' && programmingLanguage === 'any' ? [] : undefined,
         interview_type: interviewType,
         grace_period_minutes: gracePeriodMinutes,
         resume_required: resumeRequired,
+        bond_terms: bondTerms || undefined,
+        bond_document_url: bondDocumentUrl || undefined,
+        require_signature: requireSignature,
+        bond_years: parseInt(bondYears) || 2,
         questions,
       })
 
@@ -385,29 +410,31 @@ export default function CreateInterviewPage() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="language">Programming Language</Label>
-              <Select value={programmingLanguage} onValueChange={setProgrammingLanguage}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="any">Any Language (Candidate's Choice)</SelectItem>
-                  <SelectItem value="python">Python</SelectItem>
-                  <SelectItem value="javascript">JavaScript</SelectItem>
-                  <SelectItem value="java">Java</SelectItem>
-                  <SelectItem value="cpp">C++</SelectItem>
-                  <SelectItem value="go">Go</SelectItem>
-                  <SelectItem value="rust">Rust</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-gray-500">
-                {programmingLanguage === 'any'
-                  ? 'Candidates can write in any programming language'
-                  : `Interview will use ${programmingLanguage.toUpperCase()}`
-                }
-              </p>
-            </div>
+            {interviewType !== 'testing' && (
+              <div className="space-y-2">
+                <Label htmlFor="language">Programming Language</Label>
+                <Select value={programmingLanguage} onValueChange={setProgrammingLanguage}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any Language (Candidate's Choice)</SelectItem>
+                    <SelectItem value="python">Python</SelectItem>
+                    <SelectItem value="javascript">JavaScript</SelectItem>
+                    <SelectItem value="java">Java</SelectItem>
+                    <SelectItem value="cpp">C++</SelectItem>
+                    <SelectItem value="go">Go</SelectItem>
+                    <SelectItem value="rust">Rust</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500">
+                  {programmingLanguage === 'any'
+                    ? 'Candidates can write in any programming language'
+                    : `Interview will use ${programmingLanguage.toUpperCase()}`
+                  }
+                </p>
+              </div>
+            )}
 
             {interviewType === 'testing' && (
               <div className="space-y-2">
@@ -448,6 +475,109 @@ export default function CreateInterviewPage() {
               </p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Bond/Terms and Conditions */}
+      <Card className="border-amber-200 bg-amber-50/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-amber-600" />
+            Bond Agreement & Terms
+          </CardTitle>
+          <CardDescription>
+            Add terms and conditions that candidates must accept after submitting the interview
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="requireSignature"
+              checked={requireSignature}
+              onChange={(e) => setRequireSignature(e.target.checked)}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <Label htmlFor="requireSignature" className="cursor-pointer">
+              Require digital signature before submission
+            </Label>
+          </div>
+
+          {requireSignature && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="bondYears">Bond Period (Years)</Label>
+                <Input
+                  id="bondYears"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={bondYears}
+                  onChange={(e) => setBondYears(e.target.value)}
+                  onBlur={(e) => {
+                    const val = e.target.value
+                    if (val === '' || parseInt(val) < 1) {
+                      setBondYears('1')
+                    } else if (parseInt(val) > 10) {
+                      setBondYears('10')
+                    }
+                  }}
+                />
+                <p className="text-xs text-gray-500">
+                  Number of years for the bond agreement
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bondTerms">Terms and Conditions Text</Label>
+                <Textarea
+                  id="bondTerms"
+                  value={bondTerms}
+                  onChange={(e) => setBondTerms(e.target.value)}
+                  rows={8}
+                  placeholder="Enter the terms and conditions, bond details, certificate collection information, etc.&#10;&#10;Example:&#10;- Service bond: 2 years from joining date&#10;- Original certificates will be collected and returned after bond completion&#10;- Early exit penalty: Rs. 1,00,000&#10;- Non-compete clause for 6 months after exit"
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-gray-500">
+                  This text will be shown to candidates after they submit their interview
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bondDocument">Upload Bond Document (Optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="bondDocument"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) {
+                        setBondDocumentFile(file)
+                        // TODO: Upload to storage and get URL
+                        toast.info('File selected. Upload will be implemented.')
+                      }
+                    }}
+                  />
+                  {bondDocumentFile && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setBondDocumentFile(null)
+                        setBondDocumentUrl('')
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500">
+                  Upload a Word/PDF document with detailed terms (optional). Accepted formats: .pdf, .doc, .docx, .txt
+                </p>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -508,7 +638,15 @@ export default function CreateInterviewPage() {
                     id="numQuestions"
                     type="number"
                     value={numQuestions}
-                    onChange={(e) => setNumQuestions(parseInt(e.target.value) || 1)}
+                    onChange={(e) => setNumQuestions(e.target.value)}
+                    onBlur={(e) => {
+                      const val = e.target.value
+                      if (val === '' || parseInt(val) < 1) {
+                        setNumQuestions('1')
+                      } else if (parseInt(val) > 10) {
+                        setNumQuestions('10')
+                      }
+                    }}
                     min="1"
                     max="10"
                   />
@@ -637,7 +775,13 @@ export default function CreateInterviewPage() {
                     id="totalMarks"
                     type="number"
                     value={totalMarks}
-                    onChange={(e) => handleTotalMarksChange(parseInt(e.target.value) || 0)}
+                    onChange={(e) => handleTotalMarksChange(e.target.value)}
+                    onBlur={(e) => {
+                      const val = e.target.value
+                      if (val === '' || parseInt(val) < 1) {
+                        handleTotalMarksChange('1')
+                      }
+                    }}
                     min="1"
                     className="w-24 h-8"
                   />
@@ -716,26 +860,6 @@ export default function CreateInterviewPage() {
                           min="5"
                         />
                       </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Starter Code (optional)</Label>
-                      <Textarea
-                        value={question.starter_code || ''}
-                        onChange={(e) => handleUpdateQuestion(index, 'starter_code', e.target.value)}
-                        rows={4}
-                        className="font-mono text-sm"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Solution Code (for evaluation)</Label>
-                      <Textarea
-                        value={question.solution_code || ''}
-                        onChange={(e) => handleUpdateQuestion(index, 'solution_code', e.target.value)}
-                        rows={4}
-                        className="font-mono text-sm"
-                      />
                     </div>
                   </CardContent>
                 </Card>

@@ -23,8 +23,9 @@ import {
   Award,
   Users,
   ChevronLeft,
+  Zap,
 } from 'lucide-react'
-import { getInterview, listSubmissions, type Interview, type Submission } from '@/lib/api/coding-interviews'
+import { getInterview, listSubmissions, evaluateAllSubmissions, type Interview, type Submission } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 
@@ -36,6 +37,7 @@ export default function SubmissionsPage() {
   const [interview, setInterview] = useState<Interview | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [loading, setLoading] = useState(true)
+  const [evaluating, setEvaluating] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
@@ -56,6 +58,29 @@ export default function SubmissionsPage() {
       toast.error(error.message || 'Failed to load submissions')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleEvaluateAll = async () => {
+    try {
+      setEvaluating(true)
+      toast.loading('Evaluating all submissions...', { id: 'bulk-eval' })
+
+      const result = await evaluateAllSubmissions(interviewId)
+
+      toast.success(
+        `Successfully evaluated ${result.evaluated} out of ${result.total} submissions${
+          result.failed > 0 ? `. ${result.failed} failed.` : ''
+        }`,
+        { id: 'bulk-eval' }
+      )
+
+      // Refresh submissions to show updated scores
+      await fetchData()
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to evaluate submissions', { id: 'bulk-eval' })
+    } finally {
+      setEvaluating(false)
     }
   }
 
@@ -162,8 +187,29 @@ export default function SubmissionsPage() {
       {/* Submissions Table */}
       <Card>
         <CardHeader>
-          <CardTitle>All Submissions</CardTitle>
-          <CardDescription>Review candidate submissions and evaluations</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>All Submissions</CardTitle>
+              <CardDescription>Review candidate submissions and evaluations</CardDescription>
+            </div>
+            <Button
+              onClick={handleEvaluateAll}
+              disabled={evaluating || loading || completedCount === 0}
+              className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+            >
+              {evaluating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Evaluating...
+                </>
+              ) : (
+                <>
+                  <Zap className="h-4 w-4 mr-2" />
+                  Evaluate All
+                </>
+              )}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="relative">

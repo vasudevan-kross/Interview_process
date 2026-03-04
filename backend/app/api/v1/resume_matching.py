@@ -211,6 +211,24 @@ async def get_ranked_candidates(
 
 
 @router.get(
+    "/job/{job_id}",
+    summary="Get job description details"
+)
+async def get_job_description(job_id: str):
+    """
+    Get job description details by ID.
+    """
+    try:
+        service = get_resume_matching_service()
+        job = await service.get_job_description(job_id=job_id)
+        return job
+
+    except Exception as e:
+        logger.error(f"Error getting job description: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get job description")
+
+
+@router.get(
     "/job/{job_id}/statistics",
     response_model=JobStatistics,
     summary="Get statistics for a job"

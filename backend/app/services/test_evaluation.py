@@ -213,7 +213,7 @@ class TestEvaluationService:
                 content_type=f"application/{validation['file_type']}"
             )
 
-            # Parse questions using LLM (uses fast model - mistral:7b)
+            # Parse questions using LLM (uses fast model - llama3.1:8b)
             questions_result = await self._parse_questions(
                 extracted_text,
                 total_marks,
@@ -338,7 +338,7 @@ Extract each question with its answer key, marks, type, and other details.
 If marks are not specified, distribute the {total_marks} marks proportionally across questions.
 Return ONLY the JSON object, nothing else."""
 
-            # Use fast model for parsing (mistral:7b or llama2:7b)
+            # Use fast model for parsing (llama3.1:8b)
             result = await self.llm.parse_with_fast_model(
                 prompt=user_prompt,
                 system_prompt=system_prompt,

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { FileCheck, Home, Users, FileText, BarChart3, Settings, ChevronLeft, ChevronRight, Menu, X, Video, Code, Phone } from 'lucide-react'
+import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const navItems = [
@@ -26,12 +26,12 @@ const navItems = [
     icon: FileText,
     gradient: 'from-orange-500 to-red-500',
   },
-  {
-    title: 'Video Interviews',
-    href: '/dashboard/video-interviews',
-    icon: Video,
-    gradient: 'from-cyan-500 to-blue-500',
-  },
+  // {
+  //   title: 'Video Interviews',
+  //   href: '/dashboard/video-interviews',
+  //   icon: Video,
+  //   gradient: 'from-cyan-500 to-blue-500',
+  // },
   {
     title: 'Coding Interviews',
     href: '/dashboard/coding-interviews',
@@ -43,12 +43,6 @@ const navItems = [
     href: '/dashboard/voice-screening',
     icon: Phone,
     gradient: 'from-teal-500 to-green-500',
-  },
-  {
-    title: 'Analytics',
-    href: '/dashboard/analytics',
-    icon: BarChart3,
-    gradient: 'from-green-500 to-emerald-500',
   },
   {
     title: 'Settings',
@@ -162,6 +156,7 @@ export function DashboardNav() {
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch={true}
                 className={cn(
                   'group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all duration-200',
                   active

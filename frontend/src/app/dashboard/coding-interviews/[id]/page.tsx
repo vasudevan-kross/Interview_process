@@ -188,12 +188,14 @@ export default function InterviewDetailPage() {
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
                             <Code className="h-4 w-4" />
-                            Language
+                            {interview.interview_type === 'testing' ? 'Framework' : 'Language'}
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
                         <div className="text-lg font-bold">{interview.programming_language.toUpperCase()}</div>
-                        <p className="text-sm text-gray-500">Programming Language</p>
+                        <p className="text-sm text-gray-500">
+                            {interview.interview_type === 'testing' ? 'Test Framework' : 'Programming Language'}
+                        </p>
                     </CardContent>
                 </Card>
             </div>

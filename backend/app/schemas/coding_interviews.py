@@ -28,6 +28,10 @@ class InterviewCreate(BaseModel):
     interview_type: str = 'coding'
     grace_period_minutes: int = 15
     resume_required: str = 'mandatory'  # 'mandatory', 'optional', 'disabled'
+    bond_terms: Optional[str] = None  # Terms and conditions text
+    bond_document_url: Optional[str] = None  # URL to uploaded bond document
+    require_signature: bool = False  # Whether signature is required
+    bond_years: int = 2  # Number of years for bond
     questions: List[QuestionCreate]
 
 
@@ -60,6 +64,8 @@ class SaveCodeRequest(BaseModel):
 class SubmitInterviewRequest(BaseModel):
     """Schema for submitting interview."""
     submission_id: str
+    signature_data: Optional[str] = None  # Base64 encoded signature
+    terms_accepted: bool = False  # Whether terms were accepted
 
 
 class TrackActivityRequest(BaseModel):

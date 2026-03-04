@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    DEFAULT_OLLAMA_MODEL: str = "mistral:7b"
+    DEFAULT_OLLAMA_MODEL: str = "llama3.1:8b"
 
     # Ollama OCR Models (for fallback layers)
     OLLAMA_OCR_MODEL: str = "MedAIBase/PaddleOCR-VL:0.9b"
@@ -67,6 +67,9 @@ class Settings(BaseSettings):
 
     # Frontend URL (for generating join links)
     FRONTEND_URL: str = "http://localhost:3000"
+
+    # Backend URL (for webhooks - ngrok/cloudflare tunnel URL)
+    BACKEND_URL: Optional[str] = None
 
     # Coding Interview Settings
     CODING_INTERVIEW_DEFAULT_GRACE_PERIOD: int = 15  # minutes

@@ -21,8 +21,8 @@ api_router.include_router(voice_screening_router)
 try:
     from app.api.v1.resume_matching import router as resume_matching_router
     api_router.include_router(resume_matching_router)
-    print("✅ Resume Matching API enabled")
+    print("[OK] Resume Matching API enabled")
 except ImportError as e:
-    print(f"⚠️  Resume Matching API disabled (PyTorch not installed): {e}")
+    print(f"[WARNING] Resume Matching API disabled (PyTorch not installed): {e}")
 
 __all__ = ["api_router"]

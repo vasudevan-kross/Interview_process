@@ -6,9 +6,18 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  // Add ngrok-skip-browser-warning header to bypass ngrok interstitial page
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('ngrok-skip-browser-warning', 'true')
+
   let supabaseResponse = NextResponse.next({
-    request,
+    request: {
+      headers: requestHeaders,
+    },
   })
+
+  // Also set the header on the response for proxy requests
+  supabaseResponse.headers.set('ngrok-skip-browser-warning', 'true')
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,8 +32,11 @@ export async function middleware(request: NextRequest) {
             request.cookies.set(name, value)
           )
           supabaseResponse = NextResponse.next({
-            request,
+            request: {
+              headers: requestHeaders,
+            },
           })
+          supabaseResponse.headers.set('ngrok-skip-browser-warning', 'true')
           cookiesToSet.forEach(({ name, value, options }: any) =>
             supabaseResponse.cookies.set(name, value, options)
           )

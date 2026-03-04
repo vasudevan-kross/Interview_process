@@ -529,6 +529,83 @@ Return ONLY the JSON object."""
             logger.error(f"Error deleting resumes: {e}")
             raise
 
+    async def get_job_description(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get job description details by ID.
+
+        Args:
+            job_id: Job description ID
+
+        Returns:
+            dict with job description details including raw_text
+        """
+        try:
+            result = self.client.table("job_descriptions").select("*").eq("id", job_id).single().execute()
+            if not result.data:
+                raise ValueError(f"Job description with ID {job_id} not found")
+            return result.data
+        except Exception as e:
+            logger.error(f"Error getting job description: {e}")
+            raise
+
+    async def get_job_statistics(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get statistics for a job posting.
+
+        Args:
+            job_id: Job description ID
+
+        Returns:
+            dict with statistics
+        """
+        try:
+            # Get all resumes for this job
+            resumes = await self.get_ranked_candidates(job_id, limit=1000)
+
+            if not resumes:
+                return {
+                    "total_resumes": 0,
+                    "average_score": 0,
+                    "top_score": 0,
+                    "lowest_score": 0,
+                    "score_distribution": {}
+                }
+
+            scores = [r.get("match_score", 0) for r in resumes]
+
+            # Calculate score distribution
+            score_ranges = {
+                "90-100": 0,
+                "80-89": 0,
+                "70-79": 0,
+                "60-69": 0,
+                "0-59": 0,
+            }
+
+            for score in scores:
+                if score >= 90:
+                    score_ranges["90-100"] += 1
+                elif score >= 80:
+                    score_ranges["80-89"] += 1
+                elif score >= 70:
+                    score_ranges["70-79"] += 1
+                elif score >= 60:
+                    score_ranges["60-69"] += 1
+                else:
+                    score_ranges["0-59"] += 1
+
+            return {
+                "total_resumes": len(resumes),
+                "average_score": round(sum(scores) / len(scores), 2) if scores else 0,
+                "top_score": max(scores) if scores else 0,
+                "lowest_score": min(scores) if scores else 0,
+                "score_distribution": score_ranges
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting job statistics: {e}")
+            raise
+
 
 # Singleton instance
 _resume_matching_service_llm = None

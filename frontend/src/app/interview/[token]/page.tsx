@@ -184,15 +184,18 @@ export default function CandidateInterviewPage() {
     return () => clearInterval(interval)
   }, [hasStarted, currentQuestionIndex, codeAnswers, autoSaveCode, interview])
 
-  // Timer countdown
+  // Timer countdown - runs on both pre-start and interview screens
   useEffect(() => {
-    if (!hasStarted || timeRemaining <= 0) return
+    if (!interview || timeRemaining <= 0) return
 
     const interval = setInterval(() => {
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           setTimerExpired(true)
-          handleAutoSubmit()
+          // Only auto-submit if the interview has actually started
+          if (hasStarted) {
+            handleAutoSubmit()
+          }
           return 0
         }
         return prev - 1
@@ -200,7 +203,7 @@ export default function CandidateInterviewPage() {
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [hasStarted, timeRemaining])
+  }, [interview, hasStarted, timeRemaining])
 
   // Update anti-cheating tracker when question changes
   useEffect(() => {
@@ -268,14 +271,22 @@ export default function CandidateInterviewPage() {
         }
       }
 
-      // Submit interview
-      await submitInterview(submissionId)
+      // Check if signature is required
+      if (interview?.require_signature) {
+        // Redirect to signature page
+        antiCheatingRef.current?.cleanup()
+        toast.info('Please review and sign the bond agreement')
+        router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}`)
+      } else {
+        // Submit interview directly
+        await submitInterview(submissionId)
 
-      // Cleanup anti-cheating
-      antiCheatingRef.current?.cleanup()
+        // Cleanup anti-cheating
+        antiCheatingRef.current?.cleanup()
 
-      toast.success('Interview submitted successfully!')
-      router.push(`/interview/${accessToken}/thank-you`)
+        toast.success('Interview submitted successfully!')
+        router.push(`/interview/${accessToken}/thank-you`)
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to submit interview')
     } finally {
@@ -300,14 +311,20 @@ export default function CandidateInterviewPage() {
         }
       }
 
-      // Submit interview
-      await submitInterview(submissionId)
-
       // Cleanup anti-cheating
       antiCheatingRef.current?.cleanup()
 
-      toast.info("Time's up! Your interview has been auto-submitted.")
-      router.push(`/interview/${accessToken}/thank-you`)
+      // Check if signature is required
+      if (interview?.require_signature) {
+        // Redirect to signature page even on auto-submit
+        toast.info("Time's up! Please sign the bond agreement to complete your submission.")
+        router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}&auto=true`)
+      } else {
+        // Submit interview directly
+        await submitInterview(submissionId)
+        toast.info("Time's up! Your interview has been auto-submitted.")
+        router.push(`/interview/${accessToken}/thank-you`)
+      }
     } catch (error) {
       console.error('Auto-submit failed:', error)
     }
@@ -354,80 +371,129 @@ export default function CandidateInterviewPage() {
   // Pre-start screen
   if (!hasStarted && interview) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Card className="max-w-2xl w-full">
-          <CardHeader>
-            <div className="mx-auto w-12 h-12 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full flex items-center justify-center mb-4">
+      <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50">
+        <Card className="max-w-4xl w-full shadow-xl">
+          <CardHeader className="pb-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-lg">
+            <div className="mx-auto w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-3">
               <Code className="h-6 w-6 text-white" />
             </div>
             <CardTitle className="text-2xl text-center">{interview.title}</CardTitle>
             {interview.description && (
-              <CardDescription className="text-center">{interview.description}</CardDescription>
+              <CardDescription className="text-center text-indigo-100">{interview.description}</CardDescription>
             )}
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-5 p-6">
             {/* Interview Info */}
-            <div className="grid gap-4 md:grid-cols-2 p-4 bg-gray-50 rounded-lg">
+            <div className="grid gap-4 md:grid-cols-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border border-gray-200">
               <div>
-                <p className="text-sm text-gray-600">Interview Type</p>
-                <p className="font-semibold">{interview.interview_type.toUpperCase()}</p>
+                <p className="text-xs text-gray-500 mb-1">Interview Type</p>
+                <p className="font-semibold text-sm">{interview.interview_type.toUpperCase()}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-600">Programming Language</p>
-                <p className="font-semibold">{interview.programming_language.toUpperCase()}</p>
+                <p className="text-xs text-gray-500 mb-1">
+                  {interview.interview_type === 'testing' ? 'Test Framework' : 'Programming Language'}
+                </p>
+                <p className="font-semibold text-sm">{interview.programming_language.toUpperCase()}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-600">Total Questions</p>
-                <p className="font-semibold">{interview.questions?.length || 0}</p>
+                <p className="text-xs text-gray-500 mb-1">Total Questions</p>
+                <p className="font-semibold text-sm">{interview.questions?.length || 0}</p>
               </div>
               <div>
-                <p className="text-sm text-gray-600">Total Marks</p>
-                <p className="font-semibold">{interview.total_marks}</p>
+                <p className="text-xs text-gray-500 mb-1">Total Marks</p>
+                <p className="font-semibold text-sm">{interview.total_marks}</p>
               </div>
             </div>
 
-            {/* Candidate Details */}
-            <div className="space-y-4">
-              <h3 className="font-semibold">Your Details</h3>
-              <div className="space-y-2">
-                <Label htmlFor="name">Full Name *</Label>
-                <Input
-                  id="name"
-                  value={candidateName}
-                  onChange={(e) => setCandidateName(e.target.value)}
-                  placeholder="Enter your full name"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={candidateEmail}
-                  onChange={(e) => setCandidateEmail(e.target.value)}
-                  placeholder="Enter your email"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone (optional)</Label>
-                <Input
-                  id="phone"
-                  value={candidatePhone}
-                  onChange={(e) => setCandidatePhone(e.target.value)}
-                  placeholder="Enter your phone number"
-                />
+            {/* Important Information - Side by Side */}
+            <div className="grid md:grid-cols-2 gap-3">
+              {/* Test Instructions */}
+              <div className="p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
+                <p className="text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                  <span>📋</span> Instructions
+                </p>
+                <ul className="text-xs text-gray-700 space-y-1.5">
+                  <li>• Write code in any language</li>
+                  <li>• Auto-saved every 30 seconds</li>
+                  <li>• No tab switching or copy-paste</li>
+                  <li>• Submit before time expires</li>
+                  <li>• All activities are monitored</li>
+                </ul>
               </div>
 
-              {/* Resume Upload */}
-              {interview.resume_required !== 'disabled' && (
+              {/* Bond Agreement Notice (if signature is required) */}
+              {interview.require_signature && (
+                <div className="p-4 bg-amber-50 border-l-4 border-amber-500 rounded-lg">
+                  <p className="text-sm font-semibold text-amber-900 mb-2 flex items-center gap-2">
+                    <span>⚠️</span> Bond Agreement Required
+                  </p>
+                  <ul className="text-xs text-amber-800 space-y-1.5">
+                    <li>• Digital signature required</li>
+                    <li>• {interview.bond_years || 2} year bond period</li>
+                    <li>• Certificates collected until completion</li>
+                    {interview.bond_document_url && (
+                      <li>
+                        •{' '}
+                        <a
+                          href={interview.bond_document_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline font-medium"
+                        >
+                          View bond document
+                        </a>
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* Candidate Details */}
+            <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
+              <h3 className="font-semibold text-base mb-4 text-gray-800">Your Details</h3>
+              <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="resume">
-                    Resume {interview.resume_required === 'mandatory' ? '*' : '(optional)'}
-                  </Label>
-                  <div className="flex items-center gap-3">
+                  <Label htmlFor="name" className="text-sm">Full Name *</Label>
+                  <Input
+                    id="name"
+                    value={candidateName}
+                    onChange={(e) => setCandidateName(e.target.value)}
+                    placeholder="Enter your full name"
+                    className="h-10"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email" className="text-sm">Email *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={candidateEmail}
+                    onChange={(e) => setCandidateEmail(e.target.value)}
+                    placeholder="Enter your email"
+                    className="h-10"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phone" className="text-sm">Phone (optional)</Label>
+                  <Input
+                    id="phone"
+                    value={candidatePhone}
+                    onChange={(e) => setCandidatePhone(e.target.value)}
+                    placeholder="Enter your phone number"
+                    className="h-10"
+                  />
+                </div>
+
+                {/* Resume Upload */}
+                {interview.resume_required !== 'disabled' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="resume" className="text-sm">
+                      Resume {interview.resume_required === 'mandatory' ? '*' : '(optional)'}
+                    </Label>
                     <label
                       htmlFor="resume"
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg border border-dashed border-gray-300 hover:border-indigo-500 cursor-pointer transition-colors w-full"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-dashed border-gray-300 hover:border-indigo-500 cursor-pointer transition-colors w-full bg-white"
                     >
                       {resumeFile ? (
                         <>
@@ -449,28 +515,44 @@ export default function CandidateInterviewPage() {
                       onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
                     />
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             {/* Time Info */}
-            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-sm text-blue-800">
-                <Clock className="inline h-4 w-4 mr-1" />
-                Time Remaining: <strong>{formatTime(timeRemaining)}</strong>
+            <div className={`p-3 rounded-lg border-l-4 ${timerExpired
+              ? 'bg-red-50 border-red-500'
+              : timeRemaining < 300
+                ? 'bg-orange-50 border-orange-500'
+                : 'bg-blue-50 border-blue-500'
+              }`}>
+              <p className={`text-sm font-medium ${timerExpired
+                ? 'text-red-800'
+                : timeRemaining < 300
+                  ? 'text-orange-800'
+                  : 'text-blue-800'
+                }`}>
+                <Clock className="inline h-4 w-4 mr-2" />
+                {timerExpired ? (
+                  <strong>Time has expired. You can no longer start this interview.</strong>
+                ) : (
+                  <>Time Remaining: <strong>{formatTime(timeRemaining)}</strong></>
+                )}
               </p>
             </div>
 
             <Button
               onClick={handleStartSubmission}
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
+              disabled={loading || timerExpired}
+              className="w-full h-12 text-base font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all"
             >
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Starting...
                 </>
+              ) : timerExpired ? (
+                'Interview Expired'
               ) : (
                 'Start Interview'
               )}

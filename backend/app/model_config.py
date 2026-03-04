@@ -13,15 +13,15 @@ class ModelConfig:
 
     # Task-based model assignments
     TASK_MODELS: Dict[str, str] = {
-        # Fast parsing tasks - use lightweight models
-        "question_parsing": "mistral:7b",
-        "resume_parsing": "mistral:7b",
-        "jd_parsing": "mistral:7b",
-        "skill_extraction": "mistral:7b",
+        # Fast parsing tasks - upgraded to llama3.1:8b for better quality
+        "question_parsing": "llama3.1:8b",
+        "resume_parsing": "llama3.1:8b",
+        "jd_parsing": "llama3.1:8b",
+        "skill_extraction": "llama3.1:8b",
 
-        # Evaluation tasks - use more capable models for better reasoning
-        "answer_evaluation": "llama2:13b",
-        "resume_matching": "llama2:13b",
+        # Evaluation tasks - upgraded to mistral-nemo:12b for better reasoning + faster
+        "answer_evaluation": "mistral-nemo:12b",
+        "resume_matching": "mistral-nemo:12b",
 
         # Specialized tasks
         "code_evaluation": "codellama:7b",
@@ -33,13 +33,13 @@ class ModelConfig:
         "coding": "codellama:7b",
         "development": "codellama:7b",
         "sql": "codellama:7b",  # Can be changed to sqlcoder if available
-        "general": "llama2:13b",
-        "testing": "llama2:13b",
-        "devops": "llama2:13b",
+        "general": "mistral-nemo:12b",
+        "testing": "mistral-nemo:12b",
+        "devops": "mistral-nemo:12b",
     }
 
     # Fallback model if specified model is not available
-    DEFAULT_MODEL = "mistral:7b"
+    DEFAULT_MODEL = "llama3.1:8b"
 
     @classmethod
     def get_model_for_task(cls, task: str, domain: Optional[str] = None) -> str:

@@ -60,3 +60,8 @@ htmlcov/
 .env
 .env.local
 *.pem
+
+# Claude Code CLI temporary files
+tmpclaude-*-cwd
+NUL
+*.cmd.tmp

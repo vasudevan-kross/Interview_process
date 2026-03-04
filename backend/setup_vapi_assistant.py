@@ -291,6 +291,7 @@ def main():
     headers = {
         "Authorization": f"Bearer {VAPI_PRIVATE_KEY}",
         "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
     }
 
     response = httpx.patch(

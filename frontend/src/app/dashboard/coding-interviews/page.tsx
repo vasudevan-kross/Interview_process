@@ -131,6 +131,22 @@ export default function CodingInterviewsPage() {
     )
   }
 
+  // Compute effective status based on current time
+  const computeEffectiveStatus = (interview: Interview): string => {
+    const now = new Date()
+    const endTime = new Date(interview.scheduled_end_time)
+    const graceMs = (interview.grace_period_minutes || 0) * 60 * 1000
+    const effectiveEnd = new Date(endTime.getTime() + graceMs)
+
+    if (interview.status === 'scheduled' && now > effectiveEnd) {
+      return 'expired'
+    }
+    if (interview.status === 'in_progress' && now > effectiveEnd) {
+      return 'completed'
+    }
+    return interview.status
+  }
+
   const filteredInterviews = interviews.filter((interview) =>
     interview.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
@@ -173,7 +189,7 @@ export default function CodingInterviewsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {interviews.filter((i) => i.status === 'in_progress').length}
+              {interviews.filter((i) => computeEffectiveStatus(i) === 'in_progress').length}
             </div>
           </CardContent>
         </Card>
@@ -184,7 +200,7 @@ export default function CodingInterviewsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {interviews.filter((i) => i.status === 'completed').length}
+              {interviews.filter((i) => computeEffectiveStatus(i) === 'completed').length}
             </div>
           </CardContent>
         </Card>
@@ -195,7 +211,7 @@ export default function CodingInterviewsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {interviews.filter((i) => i.status === 'scheduled').length}
+              {interviews.filter((i) => computeEffectiveStatus(i) === 'scheduled').length}
             </div>
           </CardContent>
         </Card>
@@ -284,7 +300,7 @@ export default function CodingInterviewsPage() {
                           {format(new Date(interview.scheduled_start_time), 'HH:mm')}
                         </div>
                       </TableCell>
-                      <TableCell>{getStatusBadge(interview.status)}</TableCell>
+                      <TableCell>{getStatusBadge(computeEffectiveStatus(interview))}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{interview.programming_language}</Badge>
                       </TableCell>

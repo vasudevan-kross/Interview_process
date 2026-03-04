@@ -148,7 +148,6 @@ class LLMOrchestrator:
             # Generate completion
             options = {
                 "temperature": temperature,
-                "seed": 42,  # Fixed seed for reproducible results
             }
             if max_tokens:
                 options["num_predict"] = max_tokens
@@ -424,7 +423,7 @@ Provide a detailed match analysis as JSON."""
     ) -> Dict[str, Any]:
         """
         Evaluate a candidate's answer against the correct answer.
-        Uses more capable models (llama2:13b, codellama:7b) for better reasoning.
+        Uses more capable models (mistral-nemo:12b, codellama:7b) for better reasoning.
 
         Args:
             question: The question text
@@ -486,7 +485,7 @@ CANDIDATE'S ANSWER:
 
 Provide evaluation as JSON."""
 
-            # Use capable model for evaluation (llama2:13b or codellama:7b for code)
+            # Use capable model for evaluation (mistral-nemo:12b or codellama:7b for code)
             result = await self.evaluate_with_capable_model(
                 prompt=user_prompt,
                 domain=domain,
@@ -927,6 +926,140 @@ Provide evaluation as JSON."""
                 f"Ensure the model is installed: ollama pull {model if model else 'MedAIBase/PaddleOCR-VL:0.9b'}\n"
                 f"Error: {str(e)}"
             )
+    async def evaluate_code_answer(
+        self,
+        question: str,
+        candidate_answer: str,
+        detected_language: str,
+        max_marks: float,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluate code answer WITHOUT a solution reference.
+        AI evaluates based on:
+        1. Question requirements
+        2. Code correctness and logic
+        3. Code quality and best practices
+        4. Language detection accuracy
+
+        Args:
+            question: The question/problem statement
+            candidate_answer: Candidate's code submission
+            detected_language: Detected programming language
+            max_marks: Maximum marks
+            model: Optional model override
+
+        Returns:
+            dict with marks_awarded, feedback, etc.
+        """
+        try:
+            # Validate answer
+            if self._is_answer_invalid(candidate_answer):
+                return {
+                    "marks_awarded": 0.0,
+                    "is_correct": False,
+                    "similarity_score": 0.0,
+                    "feedback": "No valid code provided.",
+                    "key_points_covered": [],
+                    "key_points_missed": ["All requirements - no valid code submitted"],
+                    "code_quality_score": 0,
+                    "model_used": "validation_check"
+                }
+
+            # Select model (CodeLlama for code evaluation)
+            selected_model = model or self.select_model(
+                task_type='code_generation',
+                domain='coding'
+            )
+
+            prompt = f"""You are an expert programming evaluator. Evaluate the following code submission.
+
+**Question/Problem:**
+{question}
+
+**Candidate's Code (Language: {detected_language}):**
+```{detected_language}
+{candidate_answer}
+```
+
+**Evaluation Criteria:**
+1. **Correctness** (40%): Does the code solve the problem correctly?
+2. **Logic & Algorithm** (30%): Is the approach sound and efficient?
+3. **Code Quality** (20%): Clean code, good variable names, readable?
+4. **Best Practices** (10%): Follows language conventions and best practices?
+
+**Instructions:**
+- Award marks out of {max_marks} based on the above criteria
+- Provide constructive feedback
+- List what the code does well
+- List what could be improved
+- Give a code quality score (0-100)
+
+**Response Format (JSON):**
+{{
+    "marks_awarded": <number out of {max_marks}>,
+    "is_correct": <true/false>,
+    "feedback": "<detailed feedback>",
+    "key_points_covered": ["<strength 1>", "<strength 2>", ...],
+    "key_points_missed": ["<issue 1>", "<issue 2>", ...],
+    "code_quality_score": <0-100>,
+    "reasoning": "<explanation of scoring>"
+}}
+
+Return ONLY valid JSON."""
+
+            logger.info(f"Evaluating code with {selected_model} (language: {detected_language})")
+
+            response = await self.generate(
+                prompt=prompt,
+                task_type='code_generation',
+                model=selected_model,
+                temperature=0.2,
+                max_tokens=1000
+            )
+
+            # Parse JSON response
+            import json
+            import re
+
+            # Try to extract JSON from response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                # Fallback if no JSON found
+                logger.warning("No JSON in response, creating default result")
+                result = {
+                    "marks_awarded": max_marks * 0.5,  # Give 50% if we can't parse
+                    "is_correct": True,
+                    "feedback": "Code submitted but evaluation parsing failed. Manual review recommended.",
+                    "key_points_covered": ["Code provided"],
+                    "key_points_missed": ["Evaluation incomplete"],
+                    "code_quality_score": 50,
+                    "reasoning": "Automatic partial credit due to evaluation error"
+                }
+
+            # Add model info
+            result['model_used'] = selected_model
+            result['similarity_score'] = result.get('code_quality_score', 50) / 100.0
+
+            logger.info(f"Evaluation complete: {result['marks_awarded']}/{max_marks} marks")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error evaluating code: {e}")
+            # Return partial credit on error
+            return {
+                "marks_awarded": max_marks * 0.5,
+                "is_correct": False,
+                "similarity_score": 0.5,
+                "feedback": f"Evaluation error: {str(e)}. Partial credit awarded. Manual review recommended.",
+                "key_points_covered": ["Code submitted"],
+                "key_points_missed": ["Full evaluation incomplete"],
+                "code_quality_score": 50,
+                "model_used": model or "error"
+            }
 
 
 # Singleton instance

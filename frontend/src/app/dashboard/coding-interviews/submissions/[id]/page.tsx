@@ -268,6 +268,74 @@ export default function SubmissionReviewPage() {
         </Card>
       )}
 
+      {/* Digital Signature & Bond Agreement */}
+      {submission.signature_data && (
+        <Card className="border-l-4 border-l-amber-500">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+              Bond Agreement Signature
+            </CardTitle>
+            <CardDescription>
+              Candidate accepted terms and conditions with digital signature
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Signature Image */}
+            <div className="border-2 border-amber-200 rounded-lg bg-white p-4">
+              <p className="text-sm font-medium text-gray-700 mb-3">Digital Signature:</p>
+              <div className="bg-gray-50 border border-gray-200 rounded p-4 inline-block">
+                <img
+                  src={submission.signature_data}
+                  alt="Candidate Signature"
+                  className="max-w-md h-auto"
+                />
+              </div>
+            </div>
+
+            {/* Signature Details */}
+            <div className="grid gap-4 md:grid-cols-2 text-sm">
+              {submission.signature_accepted_at && (
+                <div className="flex items-start gap-2">
+                  <Calendar className="h-4 w-4 text-amber-600 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-gray-700">Signed At</p>
+                    <p className="text-gray-600">
+                      {format(new Date(submission.signature_accepted_at), 'MMM dd, yyyy HH:mm:ss')}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {submission.terms_ip_address && (
+                <div className="flex items-start gap-2">
+                  <svg className="h-4 w-4 text-amber-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <div>
+                    <p className="font-medium text-gray-700">IP Address (Audit Trail)</p>
+                    <p className="text-gray-600 font-mono">{submission.terms_ip_address}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Legal Notice */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2">
+              <CheckCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-medium text-amber-900">Terms Accepted</p>
+                <p className="text-amber-800 mt-1">
+                  Candidate has digitally signed and accepted the bond agreement and terms & conditions.
+                  This signature is legally binding.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Score Summary */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card className="border-l-4 border-l-purple-500">
@@ -340,6 +408,11 @@ export default function SubmissionReviewPage() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg">Question {index + 1}</CardTitle>
                 <div className="flex items-center gap-2">
+                  {answer.question_difficulty && (
+                    <Badge variant="outline" className="capitalize">
+                      {answer.question_difficulty}
+                    </Badge>
+                  )}
                   {answer.is_correct ? (
                     <Badge className="bg-green-600">
                       <CheckCircle className="h-3 w-3 mr-1" />
@@ -349,18 +422,33 @@ export default function SubmissionReviewPage() {
                     <Badge variant="outline">Needs Review</Badge>
                   )}
                   <Badge variant="outline">
-                    {answer.marks_awarded?.toFixed(1) || 0} marks
+                    {answer.marks_awarded?.toFixed(1) || 0} / {answer.question_marks || 0} marks
                   </Badge>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Submitted Code */}
+              {/* Question Text */}
+              {answer.question_text && (
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Label className="text-base font-semibold text-blue-900">Question</Label>
+                  <p className="mt-2 text-sm text-blue-800 whitespace-pre-wrap">{answer.question_text}</p>
+                  {answer.question_topics && answer.question_topics.length > 0 && (
+                    <div className="flex gap-1 mt-3 flex-wrap">
+                      {answer.question_topics.map((topic, i) => (
+                        <Badge key={i} variant="outline" className="text-xs bg-blue-100 border-blue-300">{topic}</Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Submitted Answer */}
               <div>
-                <Label className="text-base">Submitted Code</Label>
+                <Label className="text-base">Submitted Answer</Label>
                 <div className="mt-2">
                   <CodeEditor
-                    value={answer.submitted_code || '// No code submitted'}
+                    value={answer.submitted_code || '// No answer submitted'}
                     onChange={() => { }}
                     language={answer.programming_language}
                     readOnly

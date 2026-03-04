@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
-import { Loader2, Search, TrendingUp, Users, Award, ChevronUp, ChevronDown, Trash2 } from 'lucide-react'
+import { Loader2, Search, TrendingUp, Users, Award, ChevronUp, ChevronDown, Trash2, FileText } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -60,6 +60,9 @@ export default function CandidatesPage() {
     candidateName?: string
   } | null>(null)
 
+  const [jobDescriptionText, setJobDescriptionText] = useState('')
+  const [jdDialogOpen, setJdDialogOpen] = useState(false)
+
   useEffect(() => {
     fetchData()
   }, [jobId])
@@ -67,13 +70,17 @@ export default function CandidatesPage() {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [candidatesRes, statsRes] = await Promise.all([
+      const [candidatesRes, statsRes, jdRes] = await Promise.all([
         apiClient.getRankedCandidates(jobId),
         apiClient.getJobStatistics(jobId),
+        apiClient.getJobDescription(jobId).catch(() => null)
       ])
 
       setCandidates(candidatesRes.candidates || [])
       setStatistics(statsRes)
+      if (jdRes && jdRes.raw_text) {
+        setJobDescriptionText(jdRes.raw_text)
+      }
     } catch (error: any) {
       toast.error('Failed to load candidates')
     } finally {
@@ -192,12 +199,24 @@ export default function CandidatesPage() {
                 AI-matched candidates sorted by compatibility score
               </p>
             </div>
-            <Button
-              onClick={() => router.push(`/dashboard/resume-matching/${jobId}/upload-resumes`)}
-              className="bg-white text-purple-600 hover:bg-purple-50 shadow-lg hover:shadow-xl transition-all"
-            >
-              Upload More Resumes
-            </Button>
+            <div className="flex items-center gap-3">
+              {jobDescriptionText && (
+                <Button
+                  onClick={() => setJdDialogOpen(true)}
+                  variant="outline"
+                  className="bg-white/10 text-white hover:bg-white/20 border-white/20 shadow-sm transition-all"
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  View Job Description
+                </Button>
+              )}
+              <Button
+                onClick={() => router.push(`/dashboard/resume-matching/${jobId}/upload-resumes`)}
+                className="bg-white text-purple-600 hover:bg-purple-50 shadow-lg hover:shadow-xl transition-all"
+              >
+                Upload More Resumes
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -502,6 +521,29 @@ export default function CandidatesPage() {
                 </>
               )}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* View Job Description Modal */}
+      <AlertDialog open={jdDialogOpen} onOpenChange={setJdDialogOpen}>
+        <AlertDialogContent className="border-2 border-purple-200 max-w-2xl max-h-[80vh] flex flex-col">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-bold flex items-center gap-2">
+              <FileText className="h-5 w-5 text-purple-600" />
+              Job Description Details
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Review the original criteria AI used for matching.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex-1 overflow-y-auto p-4 border border-slate-200 rounded-lg bg-slate-50 mt-4 font-mono text-sm whitespace-pre-wrap text-slate-700">
+            {jobDescriptionText}
+          </div>
+          <AlertDialogFooter className="mt-4">
+            <AlertDialogCancel className="bg-purple-50 text-purple-700 hover:bg-purple-100 hover:text-purple-800 border-none px-6">
+              Close
+            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

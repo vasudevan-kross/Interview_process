@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users, FileText, TrendingUp, Briefcase, ArrowRight, Sparkles, Clock, Award } from 'lucide-react'
+import { Users, FileText, Briefcase, ArrowRight, Sparkles, Clock, Award } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -146,7 +146,7 @@ export default function DashboardPage() {
       description: 'Resume matching',
       icon: Award,
       gradient: 'from-green-500 to-emerald-500',
-      href: '/dashboard/analytics',
+      href: '/dashboard/resume-matching/jobs',
     },
     {
       title: 'Active Tests',
@@ -264,22 +264,6 @@ export default function DashboardPage() {
                 </p>
               </div>
               <ArrowRight className="h-5 w-5 text-orange-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
-            </Link>
-
-            <Link
-              href="/dashboard/analytics"
-              className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-green-500/40 hover:bg-slate-50 transition-all group"
-            >
-              <div>
-                <h3 className="font-semibold mb-1 flex items-center gap-2 text-slate-900">
-                  <TrendingUp className="h-4 w-4 text-green-500" />
-                  View Analytics
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  See detailed insights and statistics
-                </p>
-              </div>
-              <ArrowRight className="h-5 w-5 text-green-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
             </Link>
           </CardContent>
         </Card>

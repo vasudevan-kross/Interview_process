@@ -6,11 +6,15 @@ import { Toaster } from 'sonner'
 const outfit = Outfit({
   subsets: ['latin'],
   variable: '--font-outfit',
+  display: 'swap',
+  preload: true,
 })
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
   variable: '--font-jetbrains',
+  display: 'swap',
+  preload: true,
 })
 
 export const metadata: Metadata = {

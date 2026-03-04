@@ -66,6 +66,10 @@ export interface Interview {
   total_marks: number;
   duration_minutes?: number;
   resume_required: 'mandatory' | 'optional' | 'disabled';
+  bond_terms?: string;  // Terms and conditions text
+  bond_document_url?: string;  // URL to uploaded bond document
+  require_signature?: boolean;  // Whether signature is required
+  bond_years?: number;  // Number of years for bond
   created_at: string;
   questions?: Question[];
 }
@@ -87,6 +91,9 @@ export interface Submission {
   session_duration_seconds?: number;
   resume_path?: string;
   resume_uploaded_at?: string;
+  signature_data?: string;  // Base64 encoded signature image
+  signature_accepted_at?: string;  // When signature was provided
+  terms_ip_address?: string;  // IP address for audit trail
   answers?: Answer[];
   activities?: Activity[];
 }
@@ -105,6 +112,10 @@ export interface Answer {
   key_points_missed?: string[];
   code_quality_score?: number;
   evaluated_at?: string;
+  question_text?: string;
+  question_marks?: number;
+  question_difficulty?: string;
+  question_topics?: string[];
 }
 
 export interface Activity {
@@ -135,6 +146,10 @@ export async function createInterview(data: {
   interview_type: 'coding' | 'testing' | 'both';
   grace_period_minutes?: number;
   resume_required?: 'mandatory' | 'optional' | 'disabled';
+  bond_terms?: string;  // Terms and conditions text
+  bond_document_url?: string;  // URL to uploaded bond document
+  require_signature?: boolean;  // Whether signature is required
+  bond_years?: number;  // Number of years for bond
   questions: Question[];
 }): Promise<{
   interview_id: string;
@@ -167,7 +182,7 @@ export async function generateQuestions(data: {
   programming_language?: string;
   test_framework?: string;
   interview_type: 'coding' | 'testing' | 'both';
-}): Promise<{ questions: Question[]; count: number }> {
+}): Promise<{ questions: Question[]; count: number; detected_type?: string }> {
   const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/generate-questions`, {
     method: 'POST',
@@ -200,6 +215,7 @@ export async function extractQuestionsFromDocument(data: {
 
   const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/extract-questions`, {
     method: 'POST',
+    headers: { 'ngrok-skip-browser-warning': 'true' },
     body: formData,
     // Note: Don't set Content-Type header - browser will set it with boundary for multipart/form-data
   });
@@ -328,6 +344,39 @@ export async function reevaluateSubmission(submissionId: string): Promise<any> {
   return response.json();
 }
 
+/**
+ * Evaluate all submissions for an interview at once
+ */
+export async function evaluateAllSubmissions(interviewId: string): Promise<{
+  message: string;
+  total: number;
+  evaluated: number;
+  failed: number;
+  results: Array<{
+    submission_id: string;
+    status: 'success' | 'failed';
+    total_marks?: number;
+    percentage?: number;
+    error?: string;
+  }>;
+}> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/evaluate-all`,
+    {
+      method: 'POST',
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to evaluate submissions');
+  }
+
+  return response.json();
+}
+
 // ============================================================================
 // API Methods - Public (Candidate)
 // ============================================================================
@@ -335,14 +384,28 @@ export async function reevaluateSubmission(submissionId: string): Promise<any> {
 /**
  * Join interview with access token (public endpoint)
  */
+// NOTE: Public endpoints use relative URLs (no API_BASE_URL) so they route
+// through the Next.js proxy rewrite. Critical for ngrok/external access.
+
+/** Safely parse error from response (handles non-JSON responses from proxy) */
+async function safeParseError(response: Response, fallback: string): Promise<string> {
+  try {
+    const text = await response.text();
+    const json = JSON.parse(text);
+    return json.detail || fallback;
+  } catch {
+    return `${fallback} (HTTP ${response.status})`;
+  }
+}
+
 export async function joinInterview(accessToken: string): Promise<Interview> {
-  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/join/${accessToken}`, {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/join/${accessToken}`, {
     headers: { 'ngrok-skip-browser-warning': 'true' },
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to join interview');
+    const msg = await safeParseError(response, 'Failed to join interview');
+    throw new Error(msg);
   }
 
   return response.json();
@@ -364,15 +427,15 @@ export async function startSubmission(
   started_at: string;
   expires_at: string;
 }> {
-  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/start?interview_id=${interviewId}`, {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/start?interview_id=${interviewId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify(data),
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to start submission');
+    const msg = await safeParseError(response, 'Failed to start submission');
+    throw new Error(msg);
   }
 
   return response.json();
@@ -387,15 +450,15 @@ export async function saveCode(data: {
   code: string;
   programming_language: string;
 }): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/save-code`, {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/save-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify(data),
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to save code');
+    const msg = await safeParseError(response, 'Failed to save code');
+    throw new Error(msg);
   }
 
   return response.json();
@@ -404,20 +467,30 @@ export async function saveCode(data: {
 /**
  * Submit interview (public endpoint)
  */
-export async function submitInterview(submissionId: string): Promise<{
+export async function submitInterview(
+  submissionId: string,
+  options?: {
+    signature_data?: string;
+    terms_accepted?: boolean;
+  }
+): Promise<{
   message: string;
   submission_id: string;
   submitted_at: string;
 }> {
-  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/submit`, {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
-    body: JSON.stringify({ submission_id: submissionId }),
+    body: JSON.stringify({
+      submission_id: submissionId,
+      signature_data: options?.signature_data,
+      terms_accepted: options?.terms_accepted || false,
+    }),
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to submit interview');
+    const msg = await safeParseError(response, 'Failed to submit interview');
+    throw new Error(msg);
   }
 
   return response.json();
@@ -432,7 +505,7 @@ export async function trackActivity(data: {
   question_id?: string;
   metadata?: Record<string, any>;
 }): Promise<{ status: string }> {
-  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/activity`, {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/activity`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify(data),
@@ -462,15 +535,15 @@ export async function uploadResume(data: {
   formData.append('submission_id', data.submission_id);
   formData.append('file', data.file);
 
-  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/upload-resume`, {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/upload-resume`, {
     method: 'POST',
     headers: { 'ngrok-skip-browser-warning': 'true' },
     body: formData,
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to upload resume');
+    const msg = await safeParseError(response, 'Failed to upload resume');
+    throw new Error(msg);
   }
 
   return response.json();
@@ -482,7 +555,7 @@ export async function uploadResume(data: {
 export async function getResumeUrl(submissionId: string): Promise<{ resume_url: string; resume_path: string }> {
   const headers = await getAuthHeaders();
   const response = await fetch(
-    `${API_BASE_URL}${API_PREFIX}/coding-interviews/submissions/${submissionId}/resume`,
+    `${API_PREFIX}/coding-interviews/submissions/${submissionId}/resume`,
     { headers }
   );
 

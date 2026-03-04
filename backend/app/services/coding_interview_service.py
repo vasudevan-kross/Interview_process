@@ -20,6 +20,7 @@ from collections import deque
 from app.db.supabase_client import get_supabase
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.services.hybrid_scorer import HybridScorer
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,11 @@ class CodingInterviewService:
         grace_period_minutes: int = 15,
         resume_required: str = 'mandatory',
         allowed_languages: Optional[List[str]] = None,
-        total_marks: Optional[int] = None
+        total_marks: Optional[int] = None,
+        bond_terms: Optional[str] = None,
+        bond_document_url: Optional[str] = None,
+        require_signature: bool = False,
+        bond_years: int = 2
     ) -> Dict[str, Any]:
         """
         Create a new coding interview with questions.
@@ -185,6 +190,10 @@ class CodingInterviewService:
                 'allowed_languages': allowed_languages,
                 'total_marks': total_marks,
                 'resume_required': resume_required,
+                'bond_terms': bond_terms,
+                'bond_document_url': bond_document_url,
+                'require_signature': require_signature,
+                'bond_years': bond_years,
                 'created_by': user_id
             }
 
@@ -219,11 +228,14 @@ class CodingInterviewService:
 
             logger.info(f"Created {len(created_questions)} questions for interview {interview_id}")
 
+            # Generate full shareable link using FRONTEND_URL
+            shareable_link = f"{settings.FRONTEND_URL}/interview/{access_token}"
+
             return {
                 'interview_id': interview_id,
                 'access_token': access_token,
                 'link_expires_at': link_expires_at.isoformat(),
-                'shareable_link': f"/interview/{access_token}",
+                'shareable_link': shareable_link,
                 'questions': created_questions,
                 'total_marks': total_marks
             }
@@ -462,7 +474,10 @@ class CodingInterviewService:
     async def submit_interview(
         self,
         submission_id: str,
-        auto_submit: bool = False
+        auto_submit: bool = False,
+        signature_data: Optional[str] = None,
+        terms_accepted: bool = False,
+        client_ip: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Finalize submission and trigger evaluation.
@@ -470,6 +485,9 @@ class CodingInterviewService:
         Args:
             submission_id: Submission ID
             auto_submit: Whether this is auto-submit (grace period expired)
+            signature_data: Base64 encoded signature image (optional)
+            terms_accepted: Whether candidate accepted bond terms
+            client_ip: IP address of the client (for audit trail)
 
         Returns:
             dict with submission details and evaluation status
@@ -491,14 +509,20 @@ class CodingInterviewService:
             submitted_at = datetime.now()
             duration_seconds = int((submitted_at - started_at).total_seconds())
 
-            # Get interview to check grace period
+            # Get interview to check grace period and bond requirement
             interview_result = self.client.table('coding_interviews').select(
-                'link_expires_at'
+                'link_expires_at, require_signature'
             ).eq('id', submission['interview_id']).execute()
 
-            expires_str = interview_result.data[0]['link_expires_at'].replace('Z', '').replace('+00:00', '')
+            interview = interview_result.data[0]
+            expires_str = interview['link_expires_at'].replace('Z', '').replace('+00:00', '')
             link_expires_at = datetime.fromisoformat(expires_str)
             late_submission = submitted_at > link_expires_at
+
+            # Validate signature if required
+            if interview.get('require_signature') and not auto_submit:
+                if not signature_data or not terms_accepted:
+                    raise ValueError("Signature and terms acceptance are required for this interview")
 
             # Update submission
             update_data = {
@@ -508,27 +532,27 @@ class CodingInterviewService:
                 'late_submission': late_submission
             }
 
+            # Add signature data if provided
+            if signature_data:
+                update_data['signature_data'] = signature_data
+                update_data['signature_accepted_at'] = submitted_at.isoformat()
+                update_data['terms_ip_address'] = client_ip
+
             self.client.table('coding_submissions').update(update_data).eq(
                 'id', submission_id
             ).execute()
 
-            logger.info(f"Submitted interview {submission_id} ({'auto' if auto_submit else 'manual'})")
+            logger.info(f"Submitted interview {submission_id} ({'auto' if auto_submit else 'manual'}) with signature: {bool(signature_data)}")
 
-            # Trigger evaluation (async, don't wait)
-            # Note: In production, use background task queue (Celery/Redis)
-            try:
-                await self.evaluate_submission(submission_id)
-            except Exception as eval_error:
-                logger.error(f"Evaluation failed for {submission_id}: {eval_error}")
-
-            # Check for suspicious activity
-            await self.check_suspicious_activity(submission_id)
+            # NOTE: Evaluation is NOT triggered during submission.
+            # Trigger it later from the dashboard via the re-evaluate endpoint.
 
             return {
                 'submission_id': submission_id,
                 'status': 'submitted',
                 'duration_seconds': duration_seconds,
-                'late_submission': late_submission
+                'late_submission': late_submission,
+                'signature_accepted': bool(signature_data)
             }
 
         except ValueError:
@@ -621,13 +645,18 @@ class CodingInterviewService:
 
                 # Evaluate using hybrid approach
                 try:
-                    # Use LLM evaluation
-                    llm_result = await llm.evaluate_answer_hybrid(
+                    submitted_code = answer['submitted_code']
+
+                    # Detect programming language from submitted code
+                    detected_language = await self._detect_programming_language(submitted_code)
+
+                    # Use LLM evaluation WITHOUT solution code
+                    # AI will evaluate based on question requirements and code quality
+                    llm_result = await llm.evaluate_code_answer(
                         question=question['question_text'],
-                        correct_answer=question.get('solution_code', ''),
-                        candidate_answer=answer['submitted_code'],
-                        max_marks=question['marks'],
-                        num_runs=1  # Single run for speed
+                        candidate_answer=submitted_code,
+                        detected_language=detected_language,
+                        max_marks=question['marks']
                     )
 
                     marks_awarded = llm_result.get('marks_awarded', 0)
@@ -638,6 +667,7 @@ class CodingInterviewService:
                         'marks_awarded': marks_awarded,
                         'is_correct': is_correct,
                         'similarity_score': similarity_score,
+                        'programming_language': detected_language,  # Store detected language
                         'feedback': llm_result.get('feedback', ''),
                         'key_points_covered': llm_result.get('key_points_covered', []),
                         'key_points_missed': llm_result.get('key_points_missed', []),
@@ -795,6 +825,67 @@ class CodingInterviewService:
 
         except Exception as e:
             logger.error(f"Error checking suspicious activity: {e}")
+    async def _detect_programming_language(self, code: str) -> str:
+        """
+        Detect programming language from code using AI.
+
+        Args:
+            code: Code snippet to analyze
+
+        Returns:
+            Detected language name (e.g., 'python', 'java', 'javascript')
+        """
+        try:
+            llm = get_llm_orchestrator()
+
+            prompt = f"""Analyze this code and identify the programming language.
+Return ONLY the language name in lowercase (e.g., python, java, javascript, cpp, c, csharp, go, rust, typescript, ruby, php, swift, kotlin, etc.).
+
+Code:
+```
+{code[:500]}  # First 500 chars should be enough
+```
+
+Language:"""
+
+            response = await llm.generate(
+                prompt=prompt,
+                task_type='code_generation',  # Uses CodeLlama
+                temperature=0.1
+            )
+
+            detected = response.strip().lower()
+
+            # Map common variations
+            language_map = {
+                'c++': 'cpp',
+                'c#': 'csharp',
+                'js': 'javascript',
+                'ts': 'typescript',
+                'py': 'python',
+                'rb': 'ruby',
+                'rs': 'rust',
+            }
+
+            detected = language_map.get(detected, detected)
+
+            logger.info(f"Detected language: {detected}")
+            return detected
+
+        except Exception as e:
+            logger.error(f"Error detecting language: {e}")
+            # Fallback: try simple heuristics
+            code_lower = code.lower()
+            if 'def ' in code or 'import ' in code or 'print(' in code:
+                return 'python'
+            elif 'function ' in code or 'const ' in code or 'let ' in code or 'var ' in code:
+                return 'javascript'
+            elif 'public class' in code or 'public static void' in code:
+                return 'java'
+            elif '#include' in code:
+                return 'cpp'
+            else:
+                return 'unknown'
 
 
 # Singleton instance

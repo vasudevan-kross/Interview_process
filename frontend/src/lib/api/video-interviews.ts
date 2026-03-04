@@ -2,7 +2,17 @@
  * Video Interviews API Client
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+
+/**
+ * Helper to get default headers including ngrok bypass
+ */
+function getDefaultHeaders(additionalHeaders: Record<string, string> = {}): HeadersInit {
+  return {
+    'ngrok-skip-browser-warning': 'true',
+    ...additionalHeaders,
+  }
+}
 
 export interface Interviewer {
   name: string
@@ -155,11 +165,11 @@ export interface CreateEvaluationRequest {
 export async function scheduleInterview(
   data: ScheduleInterviewRequest
 ): Promise<ScheduleInterviewResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/schedule`, {
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/schedule`, {
     method: 'POST',
-    headers: {
+    headers: getDefaultHeaders({
       'Content-Type': 'application/json',
-    },
+    }),
     body: JSON.stringify(data),
   })
 
@@ -186,8 +196,8 @@ export async function listInterviews(params?: {
   if (params?.page) searchParams.set('page', params.page.toString())
   if (params?.page_size) searchParams.set('page_size', params.page_size.toString())
 
-  const url = `${API_BASE_URL}/api/v1/video-interviews?${searchParams.toString()}`
-  const response = await fetch(url)
+  const url = `${API_URL}/api/v1/video-interviews?${searchParams.toString()}`
+  const response = await fetch(url, { headers: getDefaultHeaders() })
 
   if (!response.ok) {
     const error = await response.json()
@@ -201,7 +211,7 @@ export async function listInterviews(params?: {
  * Get interview details by ID
  */
 export async function getInterviewDetails(interviewId: string): Promise<InterviewDetails> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}`)
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}`, { headers: getDefaultHeaders() })
 
   if (!response.ok) {
     const error = await response.json()
@@ -223,11 +233,11 @@ export async function updateInterview(
     description?: string
   }
 ): Promise<Interview> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}`, {
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}`, {
     method: 'PUT',
-    headers: {
+    headers: getDefaultHeaders({
       'Content-Type': 'application/json',
-    },
+    }),
     body: JSON.stringify(data),
   })
 
@@ -243,8 +253,9 @@ export async function updateInterview(
  * Delete/cancel interview
  */
 export async function deleteInterview(interviewId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}`, {
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}`, {
     method: 'DELETE',
+    headers: getDefaultHeaders(),
   })
 
   if (!response.ok) {
@@ -257,7 +268,7 @@ export async function deleteInterview(interviewId: string): Promise<void> {
  * Get interview participants
  */
 export async function getInterviewParticipants(interviewId: string): Promise<Participant[]> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}/participants`)
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}/participants`, { headers: getDefaultHeaders() })
 
   if (!response.ok) {
     const error = await response.json()
@@ -271,7 +282,7 @@ export async function getInterviewParticipants(interviewId: string): Promise<Par
  * Get interview questions
  */
 export async function getInterviewQuestions(interviewId: string): Promise<Question[]> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}/questions`)
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}/questions`, { headers: getDefaultHeaders() })
 
   if (!response.ok) {
     const error = await response.json()
@@ -289,7 +300,7 @@ export async function getRecordingUrl(interviewId: string): Promise<{
   duration_seconds?: number
   expires_in: number
 }> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}/recording`)
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}/recording`, { headers: getDefaultHeaders() })
 
   if (!response.ok) {
     const error = await response.json()
@@ -306,11 +317,11 @@ export async function createEvaluation(
   interviewId: string,
   data: CreateEvaluationRequest
 ): Promise<Evaluation> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/video-interviews/${interviewId}/evaluate`, {
+  const response = await fetch(`${API_URL}/api/v1/video-interviews/${interviewId}/evaluate`, {
     method: 'POST',
-    headers: {
+    headers: getDefaultHeaders({
       'Content-Type': 'application/json',
-    },
+    }),
     body: JSON.stringify(data),
   })
 

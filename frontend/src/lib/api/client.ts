@@ -5,7 +5,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios'
 import { createClient } from '@/lib/supabase/client'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
 class APIClient {
   private client: AxiosInstance
@@ -15,6 +15,7 @@ class APIClient {
       baseURL: API_URL,
       headers: {
         'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
       },
     })
 
@@ -69,6 +70,11 @@ class APIClient {
     const response = await this.client.post('/api/v1/resume-matching/resumes/batch', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
+    return response.data
+  }
+
+  async getJobDescription(jobId: string) {
+    const response = await this.client.get(`/api/v1/resume-matching/job/${jobId}`)
     return response.data
   }
 

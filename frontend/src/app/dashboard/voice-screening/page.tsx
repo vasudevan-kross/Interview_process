@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
     Phone,
     Plus,
@@ -13,6 +14,7 @@ import {
     Download,
     Copy,
     Eye,
+    Edit,
     Trash2,
     Loader2,
     Search,
@@ -25,9 +27,23 @@ import {
     CheckCircle,
     AlertCircle,
     Clock,
+    Briefcase,
+    RefreshCw,
 } from 'lucide-react'
+import Link from 'next/link'
 import { apiClient } from '@/lib/api/client'
-import { getCandidateByToken, startCall, type VoiceCandidate } from '@/lib/api/voice-screening'
+import {
+    getCandidateByToken,
+    startCall,
+    getCallHistory,
+    listCandidates,
+    deleteCandidate,
+    updateCandidate,
+    reEvaluateInterview,
+    type VoiceCandidate,
+    type VoiceCandidatePublic,
+    type CallHistory,
+} from '@/lib/api/voice-screening'
 import { toast } from 'sonner'
 import Vapi from '@vapi-ai/web'
 
@@ -42,8 +58,18 @@ export default function VoiceScreeningPage() {
 
     // Add candidate modal
     const [showAddModal, setShowAddModal] = useState(false)
-    const [addForm, setAddForm] = useState({ name: '', email: '', phone: '', is_fresher: false })
+    const [addForm, setAddForm] = useState({ name: '', email: '', phone: '' })
     const [addLoading, setAddLoading] = useState(false)
+
+    // Delete confirmation dialog
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+    const [candidateToDelete, setCandidateToDelete] = useState<string | null>(null)
+
+    // Edit candidate modal
+    const [showEditModal, setShowEditModal] = useState(false)
+    const [editCandidate, setEditCandidate] = useState<VoiceCandidate | null>(null)
+    const [editForm, setEditForm] = useState({ name: '', email: '', phone: '' })
+    const [editLoading, setEditLoading] = useState(false)
 
     // Import modal
     const [showImportModal, setShowImportModal] = useState(false)
@@ -52,10 +78,17 @@ export default function VoiceScreeningPage() {
 
     // Detail modal
     const [selectedCandidate, setSelectedCandidate] = useState<VoiceCandidate | null>(null)
+    const [callHistory, setCallHistory] = useState<CallHistory[]>([])
+    const [loadingHistory, setLoadingHistory] = useState(false)
+    const [selectedCallIndex, setSelectedCallIndex] = useState(0)
+    const [reEvaluating, setReEvaluating] = useState(false)
 
     // Test call state
     const [activeCallId, setActiveCallId] = useState<string | null>(null)
     const [callStatus, setCallStatus] = useState<string>('')
+    const [currentCallId, setCurrentCallId] = useState<string | null>(null) // VAPI call ID
+    const [currentToken, setCurrentToken] = useState<string | null>(null) // Interview token
+    const [fetchingCallData, setFetchingCallData] = useState(false)
     const vapiRef = useRef<Vapi | null>(null)
 
     useEffect(() => {
@@ -65,8 +98,8 @@ export default function VoiceScreeningPage() {
     const loadCandidates = async () => {
         try {
             setLoading(true)
-            const result = await apiClient.listVoiceCandidates()
-            setCandidates(result.candidates || [])
+            const result = await listCandidates()
+            setCandidates(result || [])
         } catch (error: any) {
             toast.error('Failed to load candidates')
         } finally {
@@ -74,51 +107,23 @@ export default function VoiceScreeningPage() {
         }
     }
 
-    // Add single candidate
+    // Add single candidate (requires campaign_id - update this when adding campaign support)
     const handleAddCandidate = async () => {
-        if (!addForm.name.trim()) {
-            toast.error('Name is required')
-            return
-        }
-        try {
-            setAddLoading(true)
-            await apiClient.createVoiceCandidate(addForm)
-            toast.success('Candidate added!')
-            setShowAddModal(false)
-            setAddForm({ name: '', email: '', phone: '', is_fresher: false })
-            loadCandidates()
-        } catch (error: any) {
-            toast.error('Failed to add candidate')
-        } finally {
-            setAddLoading(false)
-        }
+        toast.error('Please create a campaign first, then add candidates to it')
+        setShowAddModal(false)
     }
 
-    // Import CSV/Excel
+    // Import CSV/Excel (requires campaign_id)
     const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        try {
-            setImportLoading(true)
-            const formData = new FormData()
-            formData.append('file', file)
-            const result = await apiClient.uploadVoiceCandidatesFile(formData)
-            toast.success(`Imported ${result.created} candidates from ${result.filename}`)
-            setShowImportModal(false)
-            loadCandidates()
-        } catch (error: any) {
-            toast.error('Failed to import file')
-        } finally {
-            setImportLoading(false)
-            if (fileInputRef.current) fileInputRef.current.value = ''
-        }
+        toast.error('Please create a campaign first, then import candidates to it')
+        setShowImportModal(false)
     }
 
     // Export Excel
     const handleExport = async () => {
         try {
-            const blob = await apiClient.exportVoiceScreeningExcel()
+            const { exportToExcel } = await import('@/lib/api/voice-screening')
+            const blob = await exportToExcel()
             const url = URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
@@ -139,14 +144,105 @@ export default function VoiceScreeningPage() {
     }
 
     // Delete candidate
-    const handleDelete = async (id: string) => {
-        if (!confirm('Delete this candidate?')) return
+    const handleDelete = (id: string) => {
+        setCandidateToDelete(id)
+        setDeleteDialogOpen(true)
+    }
+
+    const confirmDelete = async () => {
+        if (!candidateToDelete) return
         try {
-            await apiClient.deleteVoiceCandidate(id)
-            toast.success('Candidate deleted')
+            await deleteCandidate(candidateToDelete)
+            toast.success('Candidate deleted successfully')
             loadCandidates()
         } catch (error: any) {
-            toast.error('Failed to delete')
+            toast.error('Failed to delete candidate')
+        } finally {
+            setCandidateToDelete(null)
+            setDeleteDialogOpen(false)
+        }
+    }
+
+    // Edit candidate handlers
+    const handleEditCandidate = (candidate: VoiceCandidate) => {
+        setEditCandidate(candidate)
+        setEditForm({
+            name: candidate.name,
+            email: candidate.email || '',
+            phone: candidate.phone || ''
+        })
+        setShowEditModal(true)
+    }
+
+    const handleUpdateCandidate = async () => {
+        if (!editCandidate || !editForm.name.trim()) {
+            toast.error('Name is required')
+            return
+        }
+
+        setEditLoading(true)
+        try {
+            await updateCandidate(editCandidate.id, {
+                name: editForm.name.trim(),
+                email: editForm.email.trim() || undefined,
+                phone: editForm.phone.trim() || undefined
+            })
+            toast.success('Candidate updated successfully!')
+            setShowEditModal(false)
+            setEditCandidate(null)
+            setEditForm({ name: '', email: '', phone: '' })
+            loadCandidates()
+        } catch (err: any) {
+            console.error('Failed to update candidate:', err)
+            toast.error(err.response?.data?.detail || 'Failed to update candidate')
+        } finally {
+            setEditLoading(false)
+        }
+    }
+
+    // Fetch call history for a candidate
+    const fetchCallHistory = async (candidateId: string) => {
+        try {
+            setLoadingHistory(true)
+            const calls = await getCallHistory(candidateId)
+            setCallHistory(calls || [])
+            setSelectedCallIndex(0) // Reset to first call
+        } catch (error: any) {
+            console.error('Failed to fetch call history:', error)
+            toast.error('Failed to load call history')
+        } finally {
+            setLoadingHistory(false)
+        }
+    }
+
+    // Open detail modal and fetch call history
+    const handleViewDetails = async (candidate: VoiceCandidate) => {
+        setSelectedCandidate(candidate)
+        await fetchCallHistory(candidate.id)
+    }
+
+    // Fetch call data from VAPI after call ends
+    const fetchCallData = async (token: string, callId: string) => {
+        try {
+            setFetchingCallData(true)
+            toast.info('Fetching transcript and recording from VAPI...')
+
+            const response = await apiClient['client'].post(
+                `/api/v1/voice-screening/candidates/token/${token}/fetch-call-data`,
+                { call_id: callId }
+            )
+
+            if (response.data.status === 'success') {
+                toast.success('Call data fetched successfully!')
+                loadCandidates() // Refresh to show transcript and recording
+            } else if (response.data.status === 'pending') {
+                toast.info('Call is still processing. Please wait a moment and try again.')
+            }
+        } catch (error: any) {
+            console.error('Failed to fetch call data:', error)
+            toast.error('Failed to fetch call data. You can try refreshing later.')
+        } finally {
+            setFetchingCallData(false)
         }
     }
 
@@ -159,35 +255,47 @@ export default function VoiceScreeningPage() {
             }
 
             setActiveCallId(candidate.id)
+            setCurrentToken(candidate.interview_token)
             setCallStatus('connecting')
+
+            // Fetch full candidate data with campaign vapi_config
+            let fullCandidate: VoiceCandidatePublic | VoiceCandidate = candidate;
+            try {
+                fullCandidate = await getCandidateByToken(candidate.interview_token)
+            } catch (err) {
+                console.error('Failed to fetch candidate config, using basic candidate data:', err)
+            }
 
             // Initialize Vapi
             const vapi = new Vapi(VAPI_PUBLIC_KEY)
             vapiRef.current = vapi
 
-            let callIdSent = false;
-            vapi.on('message', (message: any) => {
-                if (message.type === 'call-update' && message.call?.id && !callIdSent) {
-                    callIdSent = true;
-                    // Send actual Call ID to backend so webhook can match it!
-                    startCall(candidate.interview_token, message.call.id).catch(() => { })
-                }
-            })
+            const candidateToken = candidate.interview_token;
+            let capturedCallId: string | null = null;
 
             vapi.on('call-start', () => {
                 setCallStatus('active')
                 toast.success('Call started!')
-                // Update backend status to in_progress (callId is sent in message event above)
-                startCall(candidate.interview_token, '').catch(() => { })
             })
 
-            vapi.on('call-end', () => {
+            vapi.on('call-end', async () => {
                 setCallStatus('ended')
+                toast.info('Call ended. Fetching transcript and recording...')
+
+                // Wait 10 seconds for VAPI to process the call (transcript generation takes time)
+                await new Promise(resolve => setTimeout(resolve, 10000))
+
+                // Fetch call data from VAPI using captured values
+                if (capturedCallId) {
+                    await fetchCallData(candidateToken, capturedCallId)
+                } else {
+                    toast.error('Could not fetch call data: Call ID not available')
+                }
+
                 setActiveCallId(null)
-                toast.info('Call ended')
+                setCurrentCallId(null)
+                setCurrentToken(null)
                 vapiRef.current = null
-                // Refresh to see updated data
-                setTimeout(() => loadCandidates(), 2000)
             })
 
             vapi.on('error', (error: any) => {
@@ -198,28 +306,40 @@ export default function VoiceScreeningPage() {
                 vapiRef.current = null
             })
 
-            // Start call with assistant configuration
-            if (VAPI_ASSISTANT_ID) {
-                await vapi.start(VAPI_ASSISTANT_ID, {
+            // THREE-TIER FALLBACK SYSTEM (same as voice-interview page):
+            // 1️⃣ Use dynamic campaign config if available
+            // 2️⃣ Use static assistant ID
+            // 3️⃣ Use inline fallback config
+
+            let callResponse;
+            if (fullCandidate.vapi_config) {
+                // NEW: Use campaign's dynamic configuration
+                console.log('✅ Using dynamic campaign configuration for test call')
+                // Strip deprecated 'knowledgeBase' property (removed from Vapi API)
+                const { knowledgeBase, ...cleanConfig } = fullCandidate.vapi_config as any
+                if (knowledgeBase) {
+                    console.log('⚠️ Stripped deprecated knowledgeBase property from config')
+                }
+                callResponse = await vapi.start(cleanConfig)
+            } else if (VAPI_ASSISTANT_ID) {
+                // OLD: Use static assistant ID
+                console.log('⚠️ Using static assistant ID (backward compatible)')
+                callResponse = await vapi.start(VAPI_ASSISTANT_ID, {
                     variableValues: {
                         candidate_name: candidate.name,
-                        is_fresher: String(candidate.is_fresher),
                     },
                 })
             } else {
-                await vapi.start({
+                // FALLBACK: Use inline config
+                console.log('⚠️ Using inline fallback configuration')
+                callResponse = await vapi.start({
                     model: {
                         provider: 'openai',
                         model: 'gpt-4o-mini',
                         messages: [
                             {
                                 role: 'system',
-                                content: `You are an HR screening assistant. You are calling ${candidate.name}.
-${candidate.is_fresher
-                                        ? 'This candidate is a fresher. Only ask for: Name, Gender, Email, Current Location, and Native location.'
-                                        : 'This candidate has experience. Ask all screening questions: Name, Gender, Email, Phone, Current Work Location, Native, Current Employer, Work Type, Full Time/Part Time, Current Role, Expertise, Total Experience, Certifications, Projects Handled, Current CTC, Expected CTC, Notice Period, Serving Notice Period, Tentative Joining Date, Existing Offers, Available Interview Time, Team Size, Shift Timing, Why Leaving Current Job.'
-                                    }
-Be conversational, brief, and polite.`,
+                                content: `You are an HR screening assistant. You are calling ${candidate.name}. Conduct a professional voice interview asking relevant questions about their background, skills, and experience. Be conversational, brief, and polite.`,
                             },
                         ],
                     },
@@ -234,6 +354,16 @@ Be conversational, brief, and polite.`,
                     },
                 })
             }
+
+            // Capture call_id immediately from return value
+            if (callResponse?.id) {
+                capturedCallId = callResponse.id;
+                setCurrentCallId(capturedCallId)
+                // Send call_id to backend immediately
+                startCall(candidateToken, capturedCallId).catch(() => { })
+                console.log(`📞 Call started with ID: ${capturedCallId}`)
+            }
+
         } catch (error: any) {
             console.error('Test call error:', error)
             setActiveCallId(null)
@@ -256,6 +386,27 @@ Be conversational, brief, and polite.`,
             c.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             c.phone?.includes(searchQuery)
     )
+
+    // Re-evaluate interview
+    const handleReEvaluate = async (callHistoryId: string) => {
+        try {
+            setReEvaluating(true)
+            toast.loading('Re-generating AI summary...', { id: 'reeval' })
+
+            const updatedCall = await reEvaluateInterview(callHistoryId)
+
+            // Update the call history in state
+            setCallHistory(prev =>
+                prev.map(call => call.id === callHistoryId ? updatedCall : call)
+            )
+
+            toast.success('AI summary regenerated successfully!', { id: 'reeval' })
+        } catch (error: any) {
+            toast.error(error.response?.data?.detail || 'Failed to regenerate summary', { id: 'reeval' })
+        } finally {
+            setReEvaluating(false)
+        }
+    }
 
     // Status badge
     const getStatusBadge = (status: string) => {
@@ -293,6 +444,22 @@ Be conversational, brief, and polite.`,
                         Export Excel
                     </Button>
                 </div>
+            </div>
+
+            {/* Navigation Tabs */}
+            <div className="flex gap-2 border-b">
+                <Link href="/dashboard/voice-screening/campaigns">
+                    <button className="px-4 py-2 font-medium text-gray-500 hover:text-gray-700 border-b-2 border-transparent hover:border-gray-300">
+                        <Briefcase className="h-4 w-4 inline-block mr-2" />
+                        Campaigns
+                    </button>
+                </Link>
+                <Link href="/dashboard/voice-screening">
+                    <button className="px-4 py-2 font-medium text-teal-600 border-b-2 border-teal-600">
+                        <Phone className="h-4 w-4 inline-block mr-2" />
+                        Candidates
+                    </button>
+                </Link>
             </div>
 
             {/* Search */}
@@ -349,7 +516,7 @@ Be conversational, brief, and polite.`,
                                         <th className="text-left p-4 font-medium text-gray-600 text-sm">Name</th>
                                         <th className="text-left p-4 font-medium text-gray-600 text-sm">Email</th>
                                         <th className="text-left p-4 font-medium text-gray-600 text-sm">Phone</th>
-                                        <th className="text-left p-4 font-medium text-gray-600 text-sm">Type</th>
+                                        <th className="text-left p-4 font-medium text-gray-600 text-sm">Campaign</th>
                                         <th className="text-left p-4 font-medium text-gray-600 text-sm">Status</th>
                                         <th className="text-right p-4 font-medium text-gray-600 text-sm">Actions</th>
                                     </tr>
@@ -361,9 +528,13 @@ Be conversational, brief, and polite.`,
                                             <td className="p-4 text-gray-600 text-sm">{candidate.email || '—'}</td>
                                             <td className="p-4 text-gray-600 text-sm">{candidate.phone || '—'}</td>
                                             <td className="p-4">
-                                                <Badge variant={candidate.is_fresher ? 'secondary' : 'outline'}>
-                                                    {candidate.is_fresher ? 'Fresher' : 'Experienced'}
-                                                </Badge>
+                                                {candidate.campaign_name ? (
+                                                    <Badge variant="outline" className="bg-teal-50 text-teal-700 border-teal-200">
+                                                        {candidate.campaign_name}
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-gray-400 text-sm">—</span>
+                                                )}
                                             </td>
                                             <td className="p-4">{getStatusBadge(candidate.status)}</td>
                                             <td className="p-4">
@@ -389,17 +560,27 @@ Be conversational, brief, and polite.`,
                                                         <Copy className="h-4 w-4 text-blue-600" />
                                                     </Button>
 
-                                                    {/* View Details */}
-                                                    {candidate.status === 'completed' && (
+                                                    {/* View Details - Show if has latest_call_id */}
+                                                    {candidate.latest_call_id && (
                                                         <Button
                                                             variant="ghost"
                                                             size="sm"
-                                                            onClick={() => setSelectedCandidate(candidate)}
-                                                            title="View extracted details"
+                                                            onClick={() => handleViewDetails(candidate)}
+                                                            title="View call history, AI summary & assessment"
                                                         >
                                                             <Eye className="h-4 w-4 text-purple-600" />
                                                         </Button>
                                                     )}
+
+                                                    {/* Edit */}
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleEditCandidate(candidate)}
+                                                        title="Edit candidate details"
+                                                    >
+                                                        <Edit className="h-4 w-4 text-orange-600" />
+                                                    </Button>
 
                                                     {/* Delete */}
                                                     <Button
@@ -474,16 +655,6 @@ Be conversational, brief, and polite.`,
                                 <Label>Phone</Label>
                                 <Input value={addForm.phone} onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })} placeholder="+91 98765 43210" />
                             </div>
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="checkbox"
-                                    id="is_fresher"
-                                    checked={addForm.is_fresher}
-                                    onChange={(e) => setAddForm({ ...addForm, is_fresher: e.target.checked })}
-                                    className="rounded"
-                                />
-                                <Label htmlFor="is_fresher">Fresher (only basic questions)</Label>
-                            </div>
                             <Button onClick={handleAddCandidate} disabled={addLoading} className="w-full bg-gradient-to-r from-teal-500 to-green-500">
                                 {addLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                                 Add Candidate
@@ -505,7 +676,7 @@ Be conversational, brief, and polite.`,
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <p className="text-sm text-gray-600">
-                                Upload a CSV or Excel file with columns: <strong>Name</strong>, <strong>Email</strong>, <strong>Phone</strong>, <strong>Is Fresher</strong> (true/false)
+                                Upload a CSV or Excel file with columns: <strong>Name</strong>, <strong>Email</strong>, <strong>Phone</strong>
                             </p>
                             <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-teal-400 transition-colors cursor-pointer"
                                 onClick={() => fileInputRef.current?.click()}>
@@ -524,78 +695,436 @@ Be conversational, brief, and polite.`,
                 </div>
             )}
 
-            {/* Details Modal */}
+            {/* Details Modal - New Call History Design */}
             {selectedCandidate && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-                    <Card className="w-full max-w-2xl my-8">
-                        <CardHeader className="flex flex-row items-center justify-between">
-                            <CardTitle>Candidate Details — {selectedCandidate.name}</CardTitle>
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedCandidate(null)}>
+                    <Card className="w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        <CardHeader className="flex flex-row items-center justify-between shrink-0 border-b">
+                            <div>
+                                <CardTitle>Interview History — {selectedCandidate.name}</CardTitle>
+                                <p className="text-sm text-gray-500 mt-1">
+                                    {callHistory.length > 0 ? (
+                                        <span className="text-green-600 font-medium">
+                                            {callHistory.length} {callHistory.length === 1 ? 'call' : 'calls'} recorded
+                                        </span>
+                                    ) : (
+                                        <span>No calls recorded yet</span>
+                                    )}
+                                </p>
+                            </div>
                             <Button variant="ghost" size="sm" onClick={() => setSelectedCandidate(null)}>
                                 <X className="h-4 w-4" />
                             </Button>
                         </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                                {[
-                                    ['Name', selectedCandidate.name],
-                                    ['Gender', selectedCandidate.gender],
-                                    ['Email', selectedCandidate.email],
-                                    ['Phone', selectedCandidate.phone],
-                                    ['Current Work Location', selectedCandidate.current_work_location],
-                                    ['Native', selectedCandidate.native_location],
-                                    ['Current Employer', selectedCandidate.current_employer],
-                                    ['Work Type', selectedCandidate.work_type],
-                                    ['Full Time/Part Time', selectedCandidate.employment_type],
-                                    ['Current Role', selectedCandidate.current_role],
-                                    ['Expertise In', selectedCandidate.expertise_in],
-                                    ['Total Experience', selectedCandidate.total_experience],
-                                    ['Certifications', selectedCandidate.certifications],
-                                    ['Projects Handled', selectedCandidate.projects_handled],
-                                    ['Current CTC (LPA)', selectedCandidate.current_ctc],
-                                    ['Expected CTC (LPA)', selectedCandidate.expected_ctc],
-                                    ['Notice Period', selectedCandidate.notice_period],
-                                    ['Serving Notice Period?', selectedCandidate.serving_notice_period],
-                                    ['Tentative Joining Date', selectedCandidate.tentative_joining_date],
-                                    ['Existing Offers?', selectedCandidate.existing_offers],
-                                    ['Available Interview Time', selectedCandidate.available_interview_time],
-                                    ['Team Members Size', selectedCandidate.current_team_size],
-                                    ['Shift Timing', selectedCandidate.current_shift_timing],
-                                    ['Reason for Leaving', selectedCandidate.reason_for_leaving],
-                                ].map(([label, value]) => (
-                                    <div key={label as string} className="p-2 bg-gray-50 rounded">
-                                        <p className="text-xs text-gray-500">{label}</p>
-                                        <p className="font-medium">{value || '—'}</p>
-                                    </div>
-                                ))}
+                        <CardContent className="space-y-6 overflow-y-auto flex-1">
+                            {loadingHistory ? (
+                                <div className="flex items-center justify-center py-12">
+                                    <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+                                </div>
+                            ) : callHistory.length === 0 ? (
+                                <div className="text-center py-12 text-gray-500">
+                                    <PhoneCall className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                                    <p className="text-lg font-medium">No interview calls yet</p>
+                                    <p className="text-sm mt-1">Start a call to see interview data here</p>
+                                </div>
+                            ) : (
+                                <>
+                                    {/* Call Tabs */}
+                                    {callHistory.length > 1 && (
+                                        <div className="flex gap-2 border-b pb-2 overflow-x-auto">
+                                            {callHistory.map((call, index) => (
+                                                <button
+                                                    key={call.id}
+                                                    onClick={() => setSelectedCallIndex(index)}
+                                                    className={`px-4 py-2 font-medium text-sm whitespace-nowrap rounded-t transition-colors ${selectedCallIndex === index
+                                                        ? 'bg-teal-50 text-teal-700 border-b-2 border-teal-600'
+                                                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                                                        }`}
+                                                >
+                                                    {index === 0 ? 'Latest Interview' : `Call ${callHistory.length - index}`}
+                                                    {call.interview_summary && (
+                                                        <CheckCircle className="inline-block ml-1 h-3 w-3 text-green-600" />
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Selected Call Content */}
+                                    {(() => {
+                                        const call = callHistory[selectedCallIndex]
+                                        if (!call) return null
+
+                                        return (
+                                            <div className="space-y-6">
+                                                {/* Re-evaluate Button - Always show if transcript exists */}
+                                                {call.transcript && (
+                                                    <div className="flex justify-end">
+                                                        <Button
+                                                            onClick={() => handleReEvaluate(call.id)}
+                                                            disabled={reEvaluating}
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="gap-2"
+                                                        >
+                                                            {reEvaluating ? (
+                                                                <>
+                                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                                    Regenerating...
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <RefreshCw className="h-4 w-4" />
+                                                                    Re-evaluate Interview
+                                                                </>
+                                                            )}
+                                                        </Button>
+                                                    </div>
+                                                )}
+
+                                                {/* AI Interview Summary */}
+                                                {call.interview_summary ? (
+                                                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-5 border border-purple-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-purple-700 text-lg">
+                                                            <Briefcase className="h-5 w-5" /> AI Interview Summary
+                                                        </h3>
+                                                        <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                                            {call.interview_summary}
+                                                        </p>
+                                                    </div>
+                                                ) : call.transcript ? (
+                                                    <div className="bg-purple-50 rounded-lg p-5 border border-purple-200 text-center">
+                                                        <p className="text-gray-600 mb-3">Interview analysis unavailable.</p>
+                                                        <p className="text-sm text-gray-500">Click "Re-evaluate Interview" above to generate AI summary.</p>
+                                                    </div>
+                                                ) : null}
+
+                                                {/* Key Points */}
+                                                {call.key_points && call.key_points.length > 0 && (
+                                                    <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg p-5 border border-blue-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-blue-700 text-lg">
+                                                            <CheckCircle className="h-5 w-5" /> Key Points
+                                                        </h3>
+                                                        <ul className="space-y-2">
+                                                            {call.key_points.map((point, idx) => (
+                                                                <li key={idx} className="flex items-start gap-2 text-gray-700">
+                                                                    <span className="text-blue-500 mt-1">✦</span>
+                                                                    <span>{point}</span>
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    </div>
+                                                )}
+
+                                                {/* Technical Assessment */}
+                                                {call.technical_assessment && (
+                                                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-5 border border-green-200">
+                                                        <h3 className="font-semibold mb-4 flex items-center gap-2 text-green-700 text-lg">
+                                                            <AlertCircle className="h-5 w-5" /> Technical Assessment
+                                                        </h3>
+                                                        <div className="space-y-4">
+                                                            {/* Top Row: Experience & Match */}
+                                                            <div className="grid grid-cols-2 gap-4">
+                                                                {call.technical_assessment.experience_level && (
+                                                                    <div className="bg-white rounded-lg p-3 border border-green-100">
+                                                                        <p className="text-xs text-gray-500 mb-1">Experience Level</p>
+                                                                        <p className="font-semibold text-green-800">
+                                                                            {call.technical_assessment.experience_level}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+                                                                {call.technical_assessment.tech_stack_match_percentage !== null && (
+                                                                    <div className="bg-white rounded-lg p-3 border border-green-100">
+                                                                        <p className="text-xs text-gray-500 mb-1">Tech Stack Match</p>
+                                                                        <p className="font-semibold text-green-800">
+                                                                            {call.technical_assessment.tech_stack_match_percentage}%
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Skills Mentioned */}
+                                                            {call.technical_assessment.skills_mentioned && call.technical_assessment.skills_mentioned.length > 0 && (
+                                                                <div>
+                                                                    <p className="text-sm font-medium text-gray-700 mb-2">Skills Mentioned</p>
+                                                                    <div className="flex flex-wrap gap-2">
+                                                                        {call.technical_assessment.skills_mentioned.map((skill, idx) => (
+                                                                            <Badge key={idx} variant="secondary" className="bg-green-100 text-green-800">
+                                                                                {skill}
+                                                                            </Badge>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Strengths */}
+                                                            {call.technical_assessment.strengths && call.technical_assessment.strengths.length > 0 && (
+                                                                <div>
+                                                                    <p className="text-sm font-medium text-gray-700 mb-2">✓ Strengths</p>
+                                                                    <ul className="space-y-1">
+                                                                        {call.technical_assessment.strengths.map((strength, idx) => (
+                                                                            <li key={idx} className="text-sm text-gray-600 flex items-start gap-2">
+                                                                                <span className="text-green-500">•</span>
+                                                                                <span>{strength}</span>
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Gaps */}
+                                                            {call.technical_assessment.gaps && call.technical_assessment.gaps.length > 0 && (
+                                                                <div>
+                                                                    <p className="text-sm font-medium text-gray-700 mb-2">⚠ Gaps</p>
+                                                                    <ul className="space-y-1">
+                                                                        {call.technical_assessment.gaps.map((gap, idx) => (
+                                                                            <li key={idx} className="text-sm text-gray-600 flex items-start gap-2">
+                                                                                <span className="text-yellow-500">•</span>
+                                                                                <span>{gap}</span>
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Recommendation & Confidence */}
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-green-200">
+                                                                {call.technical_assessment.recommendation && (
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-500 mb-1">Recommendation</p>
+                                                                        <p className="font-semibold text-gray-900">
+                                                                            {call.technical_assessment.recommendation}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+                                                                {call.technical_assessment.hiring_decision_confidence && (
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-500 mb-1">Confidence Level</p>
+                                                                        <p className="font-semibold text-gray-900">
+                                                                            {call.technical_assessment.hiring_decision_confidence}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Recording */}
+                                                {call.recording_url && (
+                                                    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 border border-indigo-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-indigo-700">
+                                                            <Play className="h-5 w-5" /> Call Recording
+                                                        </h3>
+                                                        <audio controls className="w-full" src={call.recording_url}>
+                                                            Your browser does not support the audio element.
+                                                        </audio>
+                                                    </div>
+                                                )}
+
+                                                {/* Transcript */}
+                                                {call.transcript && (
+                                                    <div className="bg-gradient-to-r from-gray-50 to-slate-50 rounded-lg p-4 border border-gray-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-gray-700">
+                                                            <FileText className="h-5 w-5" /> Full Transcript
+                                                        </h3>
+                                                        <div className="bg-white rounded-lg p-4 max-h-60 overflow-y-auto text-sm whitespace-pre-wrap border border-gray-100 shadow-inner">
+                                                            {call.transcript}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Structured Data (Dynamic) - VAPI Template Style */}
+                                                {call.structured_data && Object.keys(call.structured_data).length > 0 && (
+                                                    <div className="bg-gradient-to-r from-teal-50 to-emerald-50 rounded-lg p-5 border border-teal-200">
+                                                        <h3 className="font-semibold mb-4 flex items-center gap-2 text-teal-700 text-lg">
+                                                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                            </svg>
+                                                            Structured Data Extraction
+                                                        </h3>
+                                                        <div className="bg-white rounded-lg p-4">
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                                                                {Object.entries(call.structured_data).map(([key, value]) => {
+                                                                    const displayValue = typeof value === 'object'
+                                                                        ? JSON.stringify(value, null, 2)
+                                                                        : String(value || '—')
+
+                                                                    const isEmpty = !value || value === '' || value === '—'
+
+                                                                    return (
+                                                                        <div
+                                                                            key={key}
+                                                                            className={`p-3 rounded-lg border transition-all ${
+                                                                                isEmpty
+                                                                                    ? 'bg-gray-50 border-gray-200 opacity-60'
+                                                                                    : 'bg-teal-50 border-teal-200 hover:shadow-sm'
+                                                                            }`}
+                                                                        >
+                                                                            <div className="flex items-start justify-between mb-1">
+                                                                                <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                                                                                    {key.replace(/_/g, ' ')}
+                                                                                </p>
+                                                                                {!isEmpty && (
+                                                                                    <svg className="h-3 w-3 text-teal-600" fill="currentColor" viewBox="0 0 20 20">
+                                                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                                                                    </svg>
+                                                                                )}
+                                                                            </div>
+                                                                            <p className={`font-medium break-words ${
+                                                                                isEmpty
+                                                                                    ? 'text-gray-400 italic'
+                                                                                    : 'text-gray-900'
+                                                                            }`}>
+                                                                                {typeof value === 'object' ? (
+                                                                                    <pre className="text-xs whitespace-pre-wrap font-mono bg-gray-50 p-2 rounded mt-1">
+                                                                                        {displayValue}
+                                                                                    </pre>
+                                                                                ) : (
+                                                                                    displayValue
+                                                                                )}
+                                                                            </p>
+                                                                        </div>
+                                                                    )
+                                                                })}
+                                                            </div>
+
+                                                            {/* Summary Stats */}
+                                                            <div className="mt-4 pt-4 border-t border-teal-100 flex items-center justify-between text-xs text-gray-600">
+                                                                <div className="flex items-center gap-4">
+                                                                    <span className="flex items-center gap-1">
+                                                                        <svg className="h-4 w-4 text-teal-600" fill="currentColor" viewBox="0 0 20 20">
+                                                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                                                        </svg>
+                                                                        {Object.values(call.structured_data).filter(v => v && v !== '').length} fields captured
+                                                                    </span>
+                                                                    <span className="text-gray-400">•</span>
+                                                                    <span className="text-gray-500">
+                                                                        {Object.keys(call.structured_data).length} total fields
+                                                                    </span>
+                                                                </div>
+                                                                <span className="px-2 py-1 bg-teal-100 text-teal-700 rounded-full font-medium">
+                                                                    AI Extracted
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Call Metadata */}
+                                                <div className="flex items-center justify-between text-xs text-gray-500 pt-4 border-t">
+                                                    <div className="flex items-center gap-4">
+                                                        <span className="flex items-center gap-1">
+                                                            <Clock className="h-3 w-3" />
+                                                            {call.started_at && new Date(call.started_at).toLocaleString()}
+                                                        </span>
+                                                        {call.duration_seconds && (
+                                                            <span>Duration: {Math.floor(call.duration_seconds / 60)}m {call.duration_seconds % 60}s</span>
+                                                        )}
+                                                    </div>
+                                                    {call.call_id && (
+                                                        <span className="text-gray-400">Call ID: {call.call_id.substring(0, 8)}...</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )
+                                    })()}
+                                </>
+                            )}
+
+                            {/* Close button at bottom */}
+                            <div className="pt-4 border-t flex justify-end">
+                                <Button variant="outline" onClick={() => setSelectedCandidate(null)}>
+                                    <X className="h-4 w-4 mr-2" />
+                                    Close
+                                </Button>
                             </div>
-
-                            {/* Transcript */}
-                            {selectedCandidate.transcript && (
-                                <div>
-                                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                                        <FileText className="h-4 w-4" /> Transcript
-                                    </h3>
-                                    <div className="bg-gray-50 rounded-lg p-4 max-h-60 overflow-y-auto text-sm whitespace-pre-wrap">
-                                        {selectedCandidate.transcript}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Recording */}
-                            {selectedCandidate.recording_url && (
-                                <div>
-                                    <h3 className="font-semibold mb-2 flex items-center gap-2">
-                                        <Play className="h-4 w-4" /> Recording
-                                    </h3>
-                                    <audio controls className="w-full" src={selectedCandidate.recording_url}>
-                                        Your browser does not support the audio element.
-                                    </audio>
-                                </div>
-                            )}
                         </CardContent>
                     </Card>
                 </div>
             )}
+
+            {/* Edit Candidate Modal */}
+            {showEditModal && editCandidate && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowEditModal(false)}>
+                    <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+                        <CardHeader>
+                            <CardTitle>Edit Candidate Details</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div>
+                                <Label htmlFor="edit-name">Name *</Label>
+                                <Input
+                                    id="edit-name"
+                                    value={editForm.name}
+                                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                                    placeholder="John Doe"
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="edit-email">Email</Label>
+                                <Input
+                                    id="edit-email"
+                                    type="email"
+                                    value={editForm.email}
+                                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                                    placeholder="john@example.com"
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="edit-phone">Phone</Label>
+                                <Input
+                                    id="edit-phone"
+                                    value={editForm.phone}
+                                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                                    placeholder="+1234567890"
+                                />
+                            </div>
+                            <div className="flex gap-2 pt-4">
+                                <Button
+                                    onClick={handleUpdateCandidate}
+                                    disabled={editLoading}
+                                    className="flex-1 bg-gradient-to-r from-orange-500 to-amber-500"
+                                >
+                                    {editLoading ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Updating...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Edit className="mr-2 h-4 w-4" />
+                                            Update Candidate
+                                        </>
+                                    )}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setShowEditModal(false)
+                                        setEditCandidate(null)
+                                        setEditForm({ name: '', email: '', phone: '' })
+                                    }}
+                                    disabled={editLoading}
+                                >
+                                    Cancel
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
+
+            {/* Delete Confirmation Dialog */}
+            <ConfirmDialog
+                open={deleteDialogOpen}
+                onOpenChange={setDeleteDialogOpen}
+                onConfirm={confirmDelete}
+                title="Delete Candidate"
+                description="Are you sure you want to delete this candidate? This action cannot be undone and will remove all interview data."
+                confirmText="Delete"
+                variant="destructive"
+            />
         </div>
     )
 }

@@ -1,0 +1,1092 @@
+"""
+Voice Screening API endpoints.
+
+Provides REST API for:
+- Creating and managing voice screening candidates
+- Bulk import via CSV/Excel
+- Vapi webhook handling
+- Excel export
+"""
+
+import logging
+import csv
+import io
+import json
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Depends, Request
+from fastapi.responses import StreamingResponse
+from typing import Optional
+
+from app.schemas.voice_screening import (
+    VoiceCandidateCreate,
+    VoiceCandidateBulkCreate,
+    CampaignCreateRequest,
+    CampaignResponse,
+    QuestionGenerationRequest,
+    QuestionGenerationResponse,
+)
+from app.services.voice_screening_service import get_voice_screening_service
+from app.services.vapi_prompt_generator import VAPIPromptGenerator
+from app.services.vapi_config_builder import VAPIConfigBuilder
+from app.services.vapi_recording_service import get_vapi_recording_service
+from app.core.config import get_settings
+from app.auth.dependencies import get_current_user_id
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/voice-screening", tags=["voice-screening"])
+
+# Initialize campaign services
+prompt_generator = VAPIPromptGenerator()
+config_builder = VAPIConfigBuilder()
+
+
+# ==================== CAMPAIGN ENDPOINTS ====================
+
+@router.post("/campaigns", response_model=CampaignResponse, summary="Create a voice screening campaign")
+async def create_campaign(
+    campaign: CampaignCreateRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Create a new voice screening campaign with AI-generated prompts.
+
+    Steps:
+    1. Use Ollama to generate optimized VAPI system prompt
+    2. Build complete VAPI configuration JSON
+    3. Store in database (not VAPI platform)
+    4. Return campaign details
+    """
+    try:
+        logger.info(f"Creating campaign: {campaign.name} for role: {campaign.job_role}")
+
+        # Step 1: Generate system prompt using Ollama
+        generated_config = await prompt_generator.generate_system_prompt(
+            job_role=campaign.job_role,
+            custom_questions=campaign.custom_questions,
+            required_fields=campaign.required_fields,
+            interview_persona=campaign.interview_persona.value,
+            candidate_type=campaign.candidate_type.value
+        )
+
+        # Step 2: Build complete VAPI configuration
+        vapi_config = config_builder.build_vapi_config(
+            system_prompt=generated_config["system_prompt"],
+            structured_data_schema=generated_config["structured_data_schema"],
+            candidate_type=campaign.candidate_type.value
+        )
+
+        # Step 3: Store in database
+        service = get_voice_screening_service()
+        campaign_data = {
+            "name": campaign.name,
+            "job_role": campaign.job_role,
+            "description": campaign.description,
+            "custom_questions": campaign.custom_questions,
+            "required_fields": campaign.required_fields,
+            "interview_persona": campaign.interview_persona.value,
+            "candidate_type": campaign.candidate_type.value,
+            "generated_system_prompt": generated_config["system_prompt"],
+            "generated_schema": generated_config["structured_data_schema"],
+            "vapi_config": vapi_config,
+            "generation_model": "mistral:7b",
+            "generation_metadata": {
+                "expected_questions": generated_config.get("expected_questions", []),
+                "conversation_flow": generated_config.get("conversation_flow", "")
+            },
+            "created_by": current_user_id
+        }
+
+        result = service.client.table("voice_screening_campaigns").insert(
+            campaign_data
+        ).execute()
+
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create campaign"
+            )
+
+        logger.info(f"Campaign created successfully: {result.data[0]['id']}")
+        return CampaignResponse(**result.data[0])
+
+    except Exception as e:
+        logger.error(f"Error creating campaign: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create campaign: {str(e)}"
+        )
+
+
+@router.get("/campaigns", summary="List voice screening campaigns")
+async def list_campaigns(
+    is_active: Optional[bool] = None,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """List all campaigns created by current user."""
+    try:
+        service = get_voice_screening_service()
+        query = service.client.table("voice_screening_campaigns").select("*").eq(
+            "created_by", current_user_id
+        ).order("created_at", desc=True)
+
+        if is_active is not None:
+            query = query.eq("is_active", is_active)
+
+        result = query.execute()
+
+        return {
+            "campaigns": [CampaignResponse(**row) for row in result.data],
+            "total": len(result.data)
+        }
+
+    except Exception as e:
+        logger.error(f"Error listing campaigns: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list campaigns: {str(e)}"
+        )
+
+
+@router.get("/campaigns/{campaign_id}", response_model=CampaignResponse, summary="Get campaign details")
+async def get_campaign(
+    campaign_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Get campaign details."""
+    try:
+        service = get_voice_screening_service()
+        result = service.client.table("voice_screening_campaigns").select("*").eq(
+            "id", campaign_id
+        ).eq("created_by", current_user_id).single().execute()
+
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        return CampaignResponse(**result.data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting campaign: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get campaign: {str(e)}"
+        )
+
+
+@router.put("/campaigns/{campaign_id}/regenerate", response_model=CampaignResponse, summary="Regenerate campaign prompt")
+async def regenerate_campaign_prompt(
+    campaign_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Regenerate system prompt for existing campaign.
+    Useful if user wants to try a different prompt variation.
+    """
+    try:
+        service = get_voice_screening_service()
+
+        # Get existing campaign
+        campaign_result = service.client.table("voice_screening_campaigns").select(
+            "*"
+        ).eq("id", campaign_id).eq("created_by", current_user_id).single().execute()
+
+        if not campaign_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Campaign not found"
+            )
+
+        campaign_data = campaign_result.data
+
+        logger.info(f"Regenerating prompt for campaign: {campaign_id}")
+
+        # Regenerate prompt
+        generated_config = await prompt_generator.generate_system_prompt(
+            job_role=campaign_data["job_role"],
+            custom_questions=campaign_data["custom_questions"],
+            required_fields=campaign_data["required_fields"],
+            interview_persona=campaign_data["interview_persona"],
+            candidate_type=campaign_data["candidate_type"]
+        )
+
+        # Rebuild VAPI config
+        vapi_config = config_builder.build_vapi_config(
+            system_prompt=generated_config["system_prompt"],
+            structured_data_schema=generated_config["structured_data_schema"],
+            candidate_type=campaign_data["candidate_type"]
+        )
+
+        # Update database
+        import datetime
+        update_data = {
+            "generated_system_prompt": generated_config["system_prompt"],
+            "generated_schema": generated_config["structured_data_schema"],
+            "vapi_config": vapi_config,
+            "generation_metadata": {
+                "expected_questions": generated_config.get("expected_questions", []),
+                "conversation_flow": generated_config.get("conversation_flow", "")
+            },
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+
+        result = service.client.table("voice_screening_campaigns").update(
+            update_data
+        ).eq("id", campaign_id).execute()
+
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update campaign"
+            )
+
+        logger.info(f"Campaign prompt regenerated successfully: {campaign_id}")
+        return CampaignResponse(**result.data[0])
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error regenerating campaign prompt: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to regenerate prompt: {str(e)}"
+        )
+
+
+# ==================== CANDIDATE ENDPOINTS ====================
+
+@router.post("/candidates", summary="Create a voice screening candidate")
+async def create_candidate(
+    request: VoiceCandidateCreate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Create a single voice screening candidate.
+
+    BACKWARD COMPATIBLE: campaign_id is optional
+    - If campaign_id provided: Uses campaign's dynamic VAPI config
+    - If campaign_id is None: Uses static VAPI_ASSISTANT_ID (legacy workflow)
+    """
+    try:
+        service = get_voice_screening_service()
+        result = await service.create_candidate(
+            name=request.name,
+            email=request.email,
+            phone=request.phone,
+            is_fresher=request.is_fresher,
+            campaign_id=request.campaign_id,  # NEW: Optional campaign link
+            user_id=current_user_id,
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"Error creating voice candidate: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create candidate: {str(e)}"
+        )
+
+
+@router.post("/candidates/bulk", summary="Bulk create voice candidates")
+async def bulk_create_candidates(
+    request: VoiceCandidateBulkCreate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Bulk create voice screening candidates from a list."""
+    try:
+        service = get_voice_screening_service()
+        candidates_data = [c.dict() for c in request.candidates]
+        result = await service.bulk_create_candidates(candidates_data, current_user_id)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error bulk creating candidates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to bulk create candidates: {str(e)}"
+        )
+
+
+@router.post("/candidates/upload", summary="Upload CSV/Excel of candidates")
+async def upload_candidates_file(
+    file: UploadFile = File(...),
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Upload a CSV or Excel file to bulk create candidates.
+    Expected columns: Name, Email, Phone, Is Fresher (true/false)
+    """
+    try:
+        filename = file.filename or ""
+        ext = filename.split(".")[-1].lower()
+
+        content = await file.read()
+
+        candidates = []
+
+        if ext == "csv":
+            # Parse CSV
+            text = content.decode("utf-8-sig")
+            reader = csv.DictReader(io.StringIO(text))
+            for row in reader:
+                # Normalize column names to lowercase
+                row_lower = {k.strip().lower().replace(" ", "_"): v.strip() for k, v in row.items()}
+                candidates.append({
+                    "name": row_lower.get("name", ""),
+                    "email": row_lower.get("email", ""),
+                    "phone": row_lower.get("phone", "") or row_lower.get("phone_number", ""),
+                    "is_fresher": row_lower.get("is_fresher", "false").lower() in ("true", "yes", "1"),
+                })
+
+        elif ext in ("xlsx", "xls"):
+            # Parse Excel
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+            ws = wb.active
+            headers = [str(cell.value or "").strip().lower().replace(" ", "_") for cell in ws[1]]
+
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                row_dict = dict(zip(headers, row))
+                candidates.append({
+                    "name": str(row_dict.get("name", "") or ""),
+                    "email": str(row_dict.get("email", "") or ""),
+                    "phone": str(row_dict.get("phone", "") or row_dict.get("phone_number", "") or ""),
+                    "is_fresher": str(row_dict.get("is_fresher", "false")).lower() in ("true", "yes", "1"),
+                })
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type: {ext}. Use CSV or Excel (.xlsx)"
+            )
+
+        # Filter out empty rows
+        candidates = [c for c in candidates if c.get("name")]
+
+        if not candidates:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid candidates found in file"
+            )
+
+        service = get_voice_screening_service()
+        result = await service.bulk_create_candidates(candidates, current_user_id)
+
+        return {
+            **result,
+            "filename": filename,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading candidates file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process file: {str(e)}"
+        )
+
+
+@router.get("/candidates", summary="List voice screening candidates")
+async def list_candidates(
+    current_user_id: str = Depends(get_current_user_id),
+    limit: int = 100,
+    offset: int = 0,
+    status_filter: Optional[str] = None
+):
+    """List all voice candidates created by the current user."""
+    try:
+        service = get_voice_screening_service()
+        result = await service.list_candidates(
+            user_id=current_user_id,
+            limit=limit,
+            offset=offset,
+            status_filter=status_filter
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"Error listing candidates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list candidates: {str(e)}"
+        )
+
+
+@router.get("/candidates/token/{token}", summary="Get candidate by token (public)")
+async def get_candidate_by_token(token: str):
+    """
+    Public endpoint for shareable link page.
+    BACKWARD COMPATIBLE: Returns VAPI config if campaign exists, otherwise null
+
+    Returns:
+    - vapi_config: Full VAPI configuration (if campaign exists) or None (legacy)
+    - Candidate details (name, is_fresher, status, etc.)
+    """
+    try:
+        service = get_voice_screening_service()
+        candidate = await service.get_candidate_by_token(token)
+
+        response = {
+            "id": candidate["id"],
+            "interview_token": candidate["interview_token"],
+            "name": candidate["name"],
+            "status": candidate["status"],
+            "is_fresher": candidate.get("is_fresher", False),  # For backward compatibility
+            "campaign_id": candidate.get("campaign_id"),
+            "vapi_config": None,  # Default to None (use env ASSISTANT_ID)
+            "system_prompt_preview": None
+        }
+
+        # NEW WORKFLOW: If campaign exists, fetch dynamic VAPI config
+        if candidate.get("campaign_id"):
+            try:
+                campaign = service.client.table("voice_screening_campaigns").select(
+                    "vapi_config, generated_system_prompt"
+                ).eq("id", candidate["campaign_id"]).single().execute()
+
+                if campaign.data:
+                    response["vapi_config"] = campaign.data["vapi_config"]
+                    response["system_prompt_preview"] = campaign.data["generated_system_prompt"][:200] + "..."
+                    logger.info(f"Returning dynamic VAPI config for campaign: {candidate['campaign_id']}")
+            except Exception as campaign_err:
+                logger.warning(f"Failed to fetch campaign config: {campaign_err}")
+                # Continue with vapi_config = None (fallback to legacy)
+
+        # OLD WORKFLOW: If no campaign or campaign fetch failed, vapi_config remains None
+        # Frontend will fall back to VAPI_ASSISTANT_ID from environment
+        else:
+            logger.info("Returning legacy candidate (no campaign)")
+
+        return response
+
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate not found"
+        )
+    except Exception as e:
+        logger.error(f"Error getting candidate by token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get candidate"
+        )
+
+
+@router.post("/candidates/token/{token}/start-call", summary="Mark call started (public)")
+async def start_call(token: str, call_id: Optional[str] = None):
+    """Mark a candidate's call as in progress."""
+    try:
+        service = get_voice_screening_service()
+        await service.update_candidate_status(token, "in_progress", call_id)
+        return {"status": "in_progress"}
+
+    except Exception as e:
+        logger.error(f"Error starting call: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start call"
+        )
+
+
+@router.post("/candidates/token/{token}/fetch-call-data", summary="Fetch call data from VAPI (public)")
+async def fetch_call_data(token: str, call_id: str):
+    """
+    Fetch transcript, recording, and structured data from VAPI API after call ends.
+    This replaces webhook-based data collection with direct API polling.
+    """
+    import httpx
+    from app.core.config import get_settings
+
+    settings = get_settings()
+
+    if not settings.VAPI_PRIVATE_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="VAPI not configured"
+        )
+
+    try:
+        logger.info(f"Fetching call data from VAPI for call_id: {call_id}")
+
+        # Fetch call data from VAPI API
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.vapi.ai/call/{call_id}",
+                headers={
+                    "Authorization": f"Bearer {settings.VAPI_PRIVATE_KEY}"
+                },
+                timeout=30.0
+            )
+
+            if response.status_code == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Call not found in VAPI"
+                )
+
+            if response.status_code != 200:
+                logger.error(f"VAPI API error: {response.status_code} - {response.text}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"VAPI API error: {response.status_code}"
+                )
+
+            call_data = response.json()
+
+        # Extract data from VAPI response
+        transcript = call_data.get("transcript", "")
+        recording_url = call_data.get("recordingUrl", "")
+        structured_data = call_data.get("analysis", {}).get("structuredData", {})
+        call_status = call_data.get("status", "")
+
+        logger.info(f"VAPI call data retrieved:")
+        logger.info(f"  - Status: {call_status}")
+        logger.info(f"  - Transcript length: {len(transcript)} chars")
+        logger.info(f"  - Recording URL: {'Present' if recording_url else 'Missing'}")
+        logger.info(f"  - Structured data fields: {list(structured_data.keys())}")
+
+        # If call is still in progress, return pending status
+        if call_status in ["queued", "ringing", "in-progress"]:
+            return {
+                "status": "pending",
+                "message": "Call is still in progress or processing"
+            }
+
+        # Get service and find candidate
+        service = get_voice_screening_service()
+
+        # Find candidate by token and call_id
+        candidate_result = service.client.table("voice_candidates").select(
+            "*, voice_screening_campaigns(generated_schema)"
+        ).eq("interview_token", token).eq("call_id", call_id).single().execute()
+
+        if not candidate_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Candidate not found"
+            )
+
+        candidate = candidate_result.data
+
+        # Download and store recording permanently in Supabase Storage
+        recording_service = get_vapi_recording_service()
+        stored_recording_url = recording_url
+        stored_transcript_url = None
+
+        if recording_url:
+            logger.info(f"Downloading recording from VAPI: {recording_url}")
+            permanent_recording_url = await recording_service.download_and_store_recording(
+                recording_url=recording_url,
+                candidate_id=candidate["id"],
+                call_id=call_id
+            )
+            if permanent_recording_url:
+                stored_recording_url = permanent_recording_url
+                logger.info(f"Recording stored permanently: {permanent_recording_url}")
+
+        if transcript:
+            logger.info("Storing transcript in Supabase Storage")
+            stored_transcript_url = await recording_service.download_and_store_transcript(
+                transcript=transcript,
+                candidate_id=candidate["id"],
+                call_id=call_id
+            )
+
+        # Prepare update data
+        update_data = {
+            "status": "completed",
+            "transcript": transcript,
+            "recording_url": stored_recording_url,
+            "transcript_url": stored_transcript_url
+        }
+
+        # Campaign-based dynamic field mapping
+        if candidate.get("voice_screening_campaigns"):
+            campaign_schema = candidate["voice_screening_campaigns"]["generated_schema"]
+            for field_name in campaign_schema.keys():
+                if field_name in structured_data:
+                    update_data[field_name] = structured_data[field_name]
+            logger.info(f"Campaign-based mapping: {len(campaign_schema)} fields expected")
+        else:
+            # Legacy static field mapping
+            field_mapping = {
+                "gender": "gender",
+                "current_work_location": "current_work_location",
+                "native_location": "native_location",
+                "current_employer": "current_employer",
+                "work_type": "work_type",
+                "employment_type": "employment_type",
+                "current_role": "current_role",
+                "expertise_in": "expertise_in",
+                "total_experience": "total_experience",
+                "certifications": "certifications",
+                "projects_handled": "projects_handled",
+                "current_ctc": "current_ctc",
+                "expected_ctc": "expected_ctc",
+                "notice_period": "notice_period",
+                "serving_notice_period": "serving_notice_period",
+                "tentative_joining_date": "tentative_joining_date",
+                "existing_offers": "existing_offers",
+                "available_interview_time": "available_interview_time",
+                "current_team_size": "current_team_size",
+                "current_shift_timing": "current_shift_timing",
+                "reason_for_leaving": "reason_for_leaving"
+            }
+            for vapi_field, db_field in field_mapping.items():
+                if vapi_field in structured_data:
+                    update_data[db_field] = structured_data[vapi_field]
+
+        # Update candidate record (latest call data)
+        service.client.table("voice_candidates").update(update_data).eq(
+            "id", candidate["id"]
+        ).execute()
+
+        # Save to call history table
+        call_history_data = {
+            "candidate_id": candidate["id"],
+            "call_id": call_id,
+            "status": "completed",
+            "ended_at": call_data.get("endedAt"),
+            "started_at": call_data.get("startedAt"),
+            "transcript": transcript,
+            "recording_url": stored_recording_url,
+            "transcript_url": stored_transcript_url,
+            "structured_data": structured_data,
+            "call_type": "test",  # You can make this dynamic later
+            "vapi_cost_cents": call_data.get("cost"),
+            "vapi_duration_minutes": call_data.get("duration"),
+            "vapi_metadata": {
+                "model": call_data.get("model"),
+                "voice_provider": call_data.get("voice", {}).get("provider"),
+                "transcriber_provider": call_data.get("transcriber", {}).get("provider")
+            }
+        }
+
+        service.client.table("voice_call_history").insert(call_history_data).execute()
+
+        logger.info(f"✅ Successfully updated candidate {candidate['id']} with call data")
+        logger.info(f"  - Transcript: {'Stored' if transcript else 'Missing'}")
+        logger.info(f"  - Recording: {'Stored' if stored_recording_url else 'Missing'}")
+        logger.info(f"  - Fields updated: {len(update_data)}")
+        logger.info(f"  - Call history saved: {call_id}")
+
+        return {
+            "status": "success",
+            "message": "Call data fetched and stored successfully",
+            "has_transcript": bool(transcript),
+            "has_recording": bool(stored_recording_url),
+            "fields_updated": len(update_data),
+            "call_history_id": call_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching call data: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch call data: {str(e)}"
+        )
+
+
+@router.get("/candidates/{candidate_id}/call-history", summary="Get call history for a candidate")
+async def get_call_history(
+    candidate_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Get all call history for a candidate, ordered by most recent first.
+    Returns transcript, recording, structured data for each call.
+    """
+    try:
+        service = get_voice_screening_service()
+
+        # Verify candidate belongs to user
+        candidate_result = service.client.table("voice_candidates").select("id, created_by").eq(
+            "id", candidate_id
+        ).single().execute()
+
+        if not candidate_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Candidate not found"
+            )
+
+        if candidate_result.data["created_by"] != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this candidate's call history"
+            )
+
+        # Fetch call history
+        history_result = service.client.table("voice_call_history").select("*").eq(
+            "candidate_id", candidate_id
+        ).order("created_at", desc=True).execute()
+
+        return {
+            "candidate_id": candidate_id,
+            "total_calls": len(history_result.data) if history_result.data else 0,
+            "calls": history_result.data or []
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting call history: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get call history: {str(e)}"
+        )
+
+
+@router.delete("/candidates/{candidate_id}", summary="Delete a voice candidate")
+async def delete_candidate(
+    candidate_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Delete a candidate record."""
+    try:
+        service = get_voice_screening_service()
+        return await service.delete_candidate(candidate_id, current_user_id)
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Error deleting candidate: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete candidate: {str(e)}"
+        )
+
+
+@router.post("/webhook", summary="Vapi end-of-call webhook")
+async def vapi_webhook(request: Request):
+    """
+    Webhook endpoint for Vapi to send end-of-call reports.
+    BACKWARD COMPATIBLE: Supports both campaign-based and legacy candidates
+
+    - Campaign candidates: Uses dynamic field schema from campaign
+    - Legacy candidates: Uses static field mapping
+    """
+    try:
+        body = await request.json()
+        logger.info(f"Received Vapi webhook: {json.dumps(body, indent=2)[:500]}")
+
+        message = body.get("message", {})
+        msg_type = message.get("type", "")
+
+        # Handle end-of-call report
+        if msg_type == "end-of-call-report":
+            call_id = message.get("call", {}).get("id", "")
+
+            if not call_id:
+                logger.warning("Webhook missing call ID")
+                return {"status": "ignored", "reason": "no call_id"}
+
+            structured_data = message.get("analysis", {}).get("structuredData", {})
+            transcript = message.get("transcript", "")
+            recording_url = message.get("recordingUrl", "")
+
+            # Enhanced logging for debugging
+            logger.info(f"Webhook data for call {call_id}:")
+            logger.info(f"  - Transcript length: {len(transcript) if transcript else 0} chars")
+            logger.info(f"  - Recording URL: {recording_url if recording_url else 'MISSING'}")
+            logger.info(f"  - Structured data fields: {list(structured_data.keys())}")
+
+            service = get_voice_screening_service()
+
+            # Find candidate by call_id (LEFT JOIN to support candidates without campaigns)
+            try:
+                candidate_result = service.client.table("voice_candidates").select(
+                    "*, voice_screening_campaigns(generated_schema)"
+                ).eq("call_id", call_id).single().execute()
+
+                if not candidate_result.data:
+                    logger.warning(f"No candidate found for call_id: {call_id}")
+                    return {"status": "candidate_not_found"}
+
+                candidate = candidate_result.data
+
+            except Exception as find_error:
+                logger.error(f"Error finding candidate: {find_error}")
+                return {"status": "error", "message": "Candidate not found"}
+
+            # Download and store recording permanently in Supabase Storage
+            recording_service = get_vapi_recording_service()
+            stored_recording_url = recording_url  # Default to VAPI URL
+            stored_transcript_url = None
+
+            if recording_url:
+                logger.info(f"Downloading recording from VAPI: {recording_url}")
+                permanent_recording_url = await recording_service.download_and_store_recording(
+                    recording_url=recording_url,
+                    candidate_id=candidate["id"],
+                    call_id=call_id
+                )
+                if permanent_recording_url:
+                    stored_recording_url = permanent_recording_url
+                    logger.info(f"Recording stored permanently: {permanent_recording_url}")
+                else:
+                    logger.warning("Failed to store recording permanently, using VAPI URL")
+
+            if transcript:
+                logger.info("Storing transcript in Supabase Storage")
+                stored_transcript_url = await recording_service.download_and_store_transcript(
+                    transcript=transcript,
+                    candidate_id=candidate["id"],
+                    call_id=call_id
+                )
+
+            # Base update data (always included)
+            update_data = {
+                "status": "completed",
+                "transcript": transcript,
+                "recording_url": stored_recording_url,  # Use permanent URL
+                "transcript_url": stored_transcript_url  # New field for transcript file
+            }
+
+            # NEW WORKFLOW: Campaign-based dynamic field mapping
+            if candidate.get("voice_screening_campaigns"):
+                campaign_schema = candidate["voice_screening_campaigns"]["generated_schema"]
+
+                # Map only fields defined in campaign schema
+                for field_name in campaign_schema.keys():
+                    if field_name in structured_data:
+                        update_data[field_name] = structured_data[field_name]
+
+                logger.info(f"Webhook: Campaign-based mapping, {len(campaign_schema)} fields expected, {len([f for f in campaign_schema.keys() if f in structured_data])} fields extracted")
+                workflow = "campaign"
+
+            # OLD WORKFLOW: Legacy static schema mapping
+            else:
+                # Use existing hardcoded field mapping for backward compatibility
+                extracted_data = {
+                    "transcript": transcript,
+                    "recordingUrl": recording_url,
+                    "structuredData": structured_data,
+                }
+
+                # Call existing service method (maintains backward compatibility)
+                await service.update_candidate_from_webhook(call_id, extracted_data)
+
+                logger.info(f"Webhook: Legacy mapping completed for call {call_id}")
+                return {"status": "processed", "workflow": "legacy"}
+
+            # Update candidate (for campaign workflow)
+            try:
+                service.client.table("voice_candidates").update(update_data).eq(
+                    "call_id", call_id
+                ).execute()
+
+                logger.info(f"✅ Updated candidate from call {call_id}")
+                logger.info(f"  - Fields updated: {list(update_data.keys())}")
+                logger.info(f"  - Transcript stored: {'Yes' if update_data.get('transcript') else 'No'}")
+                logger.info(f"  - Recording URL stored: {'Yes' if update_data.get('recording_url') else 'No'}")
+                logger.info(f"  - Transcript URL stored: {'Yes' if update_data.get('transcript_url') else 'No'}")
+
+                return {
+                    "status": "processed",
+                    "fields_updated": len(update_data),
+                    "workflow": workflow
+                }
+
+            except Exception as update_error:
+                logger.error(f"Error updating candidate: {update_error}")
+                return {"status": "error", "message": "Failed to update candidate"}
+
+        # Handle status updates
+        elif msg_type == "status-update":
+            call_status = message.get("status", "")
+            logger.info(f"Call status update: {call_status}")
+            return {"status": "acknowledged"}
+
+        return {"status": "ignored", "type": msg_type}
+
+    except Exception as e:
+        logger.error(f"Error processing Vapi webhook: {e}", exc_info=True)
+        # Always return 200 to Vapi to prevent retries
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/generate-questions", response_model=QuestionGenerationResponse, summary="Generate interview questions using AI")
+async def generate_questions(
+    request: QuestionGenerationRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Generate interview questions using Ollama AI based on job role and candidate type.
+
+    This uses the Mistral:7b model to generate contextually relevant questions.
+    """
+    try:
+        import ollama
+
+        # Build prompt for question generation
+        candidate_context = {
+            "fresher": "entry-level candidate with 0-2 years of experience",
+            "experienced": "senior professional with 5+ years of experience",
+            "general": "candidate of any experience level"
+        }.get(request.candidate_type.value, "candidate")
+
+        system_prompt = f"""You are an expert HR interviewer. Generate {request.num_questions} specific, relevant interview questions for a {candidate_context} applying for the position of {request.job_role}.
+
+Requirements:
+- Questions should be clear and concise
+- Focus on skills, experience, and fit for the role
+- Include both technical and behavioral questions
+- Avoid yes/no questions
+- Make questions conversational for voice interviews
+
+Return ONLY a JSON array of questions, nothing else. Format: ["question1", "question2", ...]"""
+
+        logger.info(f"Generating {request.num_questions} questions for {request.job_role} ({request.candidate_type})")
+
+        response = ollama.chat(
+            model="mistral:7b",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Generate {request.num_questions} interview questions for {request.job_role} position."}
+            ],
+            options={
+                "temperature": 0.7,
+                "seed": None  # Allow variation
+            }
+        )
+
+        response_text = response["message"]["content"].strip()
+        logger.info(f"Raw AI response: {response_text[:500]}...")
+
+        # Extract JSON array from response with robust parsing
+        import json
+        import re
+
+        questions = []
+
+        # Strategy 1: Try to find and parse JSON array
+        json_match = re.search(r'\[[\s\S]*\]', response_text)
+        if json_match:
+            questions_json = json_match.group(0)
+            try:
+                # Try direct JSON parse
+                parsed_data = json.loads(questions_json)
+
+                # Check if the parsed data is a list of dictionaries with 'question' field
+                if isinstance(parsed_data, list) and len(parsed_data) > 0:
+                    if isinstance(parsed_data[0], dict) and 'question' in parsed_data[0]:
+                        # Extract the 'question' field from each dictionary
+                        questions = [item['question'] for item in parsed_data if isinstance(item, dict) and 'question' in item]
+                        logger.info("Strategy 1: Extracted questions from dictionary format")
+                    elif isinstance(parsed_data[0], str):
+                        # Already a list of strings
+                        questions = parsed_data
+                        logger.info("Strategy 1: Direct string list parse successful")
+                    else:
+                        questions = []
+                else:
+                    questions = []
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"Strategy 1 failed: {e}")
+                # Strategy 2: Try to repair common JSON issues
+                try:
+                    # Fix single quotes to double quotes
+                    repaired = questions_json.replace("'", '"')
+                    # Remove trailing commas before closing bracket
+                    repaired = re.sub(r',(\s*\])', r'\1', repaired)
+                    # Remove trailing commas before closing brace
+                    repaired = re.sub(r',(\s*\})', r'\1', repaired)
+                    parsed_data = json.loads(repaired)
+
+                    # Check if it's dictionary format
+                    if isinstance(parsed_data, list) and len(parsed_data) > 0:
+                        if isinstance(parsed_data[0], dict) and 'question' in parsed_data[0]:
+                            questions = [item['question'] for item in parsed_data if isinstance(item, dict) and 'question' in item]
+                            logger.info("Strategy 2: Extracted questions from repaired dictionary format")
+                        elif isinstance(parsed_data[0], str):
+                            questions = parsed_data
+                            logger.info("Strategy 2: Repaired JSON parse successful")
+                        else:
+                            questions = []
+                    else:
+                        questions = []
+                except json.JSONDecodeError as e2:
+                    logger.warning(f"Strategy 2 failed: {e2}")
+                    questions = []
+
+        # Strategy 3: Fallback - extract questions from text
+        if not questions:
+            logger.info("Using Strategy 3: Text extraction")
+            # Split by newlines and extract anything that looks like a question
+            lines = response_text.split('\n')
+            for line in lines:
+                line = line.strip()
+                # Skip empty, JSON syntax, or very short lines
+                if not line or line in ['[', ']', '{', '}'] or len(line) < 10:
+                    continue
+                # Remove common prefixes
+                cleaned = re.sub(r'^[\d\.\-\*\•\)]+\s*', '', line)
+                cleaned = cleaned.strip(' "\'`')
+                # Remove trailing commas and quotes
+                cleaned = re.sub(r'[,"\'\`]+$', '', cleaned)
+
+                if cleaned and len(cleaned) > 15:  # Must be substantial
+                    questions.append(cleaned)
+
+            questions = questions[:request.num_questions]
+
+        if not questions or len(questions) == 0:
+            # Last resort: provide default questions
+            logger.warning("All strategies failed, using default questions")
+            questions = [
+                f"Tell me about your experience as a {request.job_role}",
+                f"What are your key skills relevant to this {request.job_role} position?",
+                "What is your current work situation and availability?",
+                "What are your salary expectations for this role?",
+                "Why are you interested in this opportunity?"
+            ][:request.num_questions]
+
+        logger.info(f"Successfully extracted {len(questions)} questions")
+
+        return QuestionGenerationResponse(
+            questions=questions[:request.num_questions],  # Ensure we don't exceed requested number
+            model="mistral:7b"
+        )
+
+    except Exception as e:
+        logger.error(f"Error generating questions: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate questions: {str(e)}"
+        )
+
+
+@router.get("/export", summary="Export candidates to Excel")
+async def export_excel(
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Export all voice candidates to an Excel file."""
+    try:
+        service = get_voice_screening_service()
+        excel_bytes = await service.export_to_excel(current_user_id)
+
+        return StreamingResponse(
+            io.BytesIO(excel_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": "attachment; filename=voice_screening_candidates.xlsx"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error exporting to Excel: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to export: {str(e)}"
+        )

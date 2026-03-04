@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { createClient } from '@/lib/supabase/client'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
 // Cache for Supabase client to avoid multiple instances
 let supabaseClientInstance: ReturnType<typeof createClient> | null = null
@@ -18,6 +18,9 @@ const getSupabaseClient = () => {
 const createAuthenticatedClient = () => {
   const client = axios.create({
     baseURL: API_URL,
+    headers: {
+      'ngrok-skip-browser-warning': 'true',
+    }
   })
 
   client.interceptors.request.use(
