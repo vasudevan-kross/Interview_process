@@ -341,9 +341,19 @@ async def list_interviews(
 
         result = query.execute()
 
+        # Calculate duration_minutes dynamically for each interview
+        interviews = result.data or []
+        for interview in interviews:
+            try:
+                start_time = datetime.fromisoformat(interview['scheduled_start_time'].replace('Z', '+00:00'))
+                end_time = datetime.fromisoformat(interview['scheduled_end_time'].replace('Z', '+00:00'))
+                interview['duration_minutes'] = int((end_time - start_time).total_seconds() / 60)
+            except (ValueError, KeyError, TypeError):
+                interview['duration_minutes'] = None
+
         return {
-            'interviews': result.data or [],
-            'count': len(result.data) if result.data else 0
+            'interviews': interviews,
+            'count': len(interviews)
         }
 
     except Exception as e:
@@ -407,6 +417,14 @@ async def get_interview(
 
         interview['questions'] = questions_result.data or []
 
+        # Calculate duration_minutes dynamically from scheduled times
+        try:
+            start_time = datetime.fromisoformat(interview['scheduled_start_time'].replace('Z', '+00:00'))
+            end_time = datetime.fromisoformat(interview['scheduled_end_time'].replace('Z', '+00:00'))
+            interview['duration_minutes'] = int((end_time - start_time).total_seconds() / 60)
+        except (ValueError, KeyError, TypeError):
+            interview['duration_minutes'] = None
+
         return interview
 
     except HTTPException:
@@ -448,6 +466,64 @@ async def delete_interview(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete interview: {str(e)}"
+        )
+
+
+@router.get("/submissions/{submission_id}/risk-score", summary="Get submission risk score")
+async def get_submission_risk_score(
+    submission_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Get comprehensive risk score for a submission based on anti-cheating activities.
+
+    Returns:
+    - total_risk_score: Sum of all risk points
+    - risk_level: low/medium/high/critical
+    - activity_counts: Count of each activity type
+    - high_risk_activities: List of concerning activities
+    - flagged_events: Specific flagged events
+    """
+    try:
+        service = get_coding_interview_service()
+        client = get_supabase()
+
+        # Verify ownership
+        submission_result = client.table('coding_submissions').select(
+            'id, interview_id'
+        ).eq('id', submission_id).execute()
+
+        if not submission_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Submission not found"
+            )
+
+        submission = submission_result.data[0]
+
+        # Check if user owns the interview
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', submission['interview_id']
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this submission"
+            )
+
+        # Calculate risk score
+        risk_score = await service.get_submission_risk_score(submission_id)
+
+        return risk_score
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting risk score: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get risk score: {str(e)}"
         )
 
 

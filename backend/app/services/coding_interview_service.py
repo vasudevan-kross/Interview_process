@@ -176,6 +176,7 @@ class CodingInterviewService:
             logger.info(f"Creating interview: {title} ({interview_type})")
 
             # Create interview record
+            # Note: duration_minutes is calculated dynamically from scheduled times (not stored)
             interview_data = {
                 'title': title,
                 'description': description,
@@ -280,6 +281,14 @@ class CodingInterviewService:
             ).eq('interview_id', interview['id']).order('question_number').execute()
 
             interview['questions'] = questions_result.data if questions_result.data else []
+
+            # Calculate duration_minutes dynamically from scheduled times
+            try:
+                start_time = datetime.fromisoformat(interview['scheduled_start_time'].replace('Z', '+00:00'))
+                end_time = datetime.fromisoformat(interview['scheduled_end_time'].replace('Z', '+00:00'))
+                interview['duration_minutes'] = int((end_time - start_time).total_seconds() / 60)
+            except (ValueError, KeyError, TypeError):
+                interview['duration_minutes'] = None
 
             # Don't expose access_token in response
             del interview['access_token']
@@ -825,6 +834,133 @@ class CodingInterviewService:
 
         except Exception as e:
             logger.error(f"Error checking suspicious activity: {e}")
+
+    async def get_submission_risk_score(self, submission_id: str) -> Dict[str, Any]:
+        """
+        Calculate comprehensive risk score for a submission based on all activities.
+
+        Returns:
+            dict with:
+            - total_risk_score (int): Sum of all risk points
+            - risk_level (str): 'low', 'medium', 'high', 'critical'
+            - activity_counts (dict): Count of each activity type
+            - high_risk_activities (list): List of concerning activities
+            - flagged_events (list): Specific flagged events with details
+        """
+        # Risk score per activity type
+        ACTIVITY_RISK_SCORES = {
+            'tab_switch': 5,
+            'window_blur': 3,
+            'window_focus': 1,  # Low risk, normal behavior
+            'copy': 10,
+            'paste': 10,
+            'code_change': 0,  # Normal activity
+            'device_fingerprint': 0,  # Informational only
+            'devtools': 50,  # High risk - developer tools opened
+            'vm_detected': 100,  # Critical - virtual machine/automation
+            'fullscreen_change': 10,  # Exiting fullscreen is suspicious
+            'screenshot_attempt': 25,  # Trying to capture questions
+            'ai_typing_detected': 75,  # Very suspicious - bot typing
+            'right_click_attempt': 5,  # Trying to inspect element
+            'multiple_tabs_detected': 50,  # Opening same interview in multiple tabs
+        }
+
+        try:
+            # Get all activities for this submission
+            activities_result = self.client.table('session_activities').select(
+                '*'
+            ).eq('submission_id', submission_id).execute()
+
+            activities = activities_result.data or []
+
+            # Count activities by type
+            activity_counts = {}
+            total_risk = 0
+            high_risk_activities = []
+            flagged_events = []
+
+            for activity in activities:
+                activity_type = activity['activity_type']
+                activity_counts[activity_type] = activity_counts.get(activity_type, 0) + 1
+
+                # Add risk score
+                risk_points = ACTIVITY_RISK_SCORES.get(activity_type, 0)
+                total_risk += risk_points
+
+                # Track high-risk activities
+                if risk_points >= 50:
+                    high_risk_activities.append({
+                        'type': activity_type,
+                        'timestamp': activity.get('timestamp'),
+                        'metadata': activity.get('metadata', {}),
+                        'risk_points': risk_points
+                    })
+
+                # Special handling for specific activities
+                if activity_type == 'fullscreen_change':
+                    metadata = activity.get('metadata', {})
+                    if not metadata.get('is_fullscreen'):
+                        # Exiting fullscreen is more suspicious
+                        flagged_events.append({
+                            'type': 'exited_fullscreen',
+                            'timestamp': activity.get('timestamp'),
+                            'severity': 'medium'
+                        })
+
+                if activity_type == 'devtools':
+                    metadata = activity.get('metadata', {})
+                    if metadata.get('is_open'):
+                        flagged_events.append({
+                            'type': 'opened_devtools',
+                            'timestamp': activity.get('timestamp'),
+                            'severity': 'high'
+                        })
+
+            # Determine risk level
+            if total_risk >= 150:
+                risk_level = 'critical'
+            elif total_risk >= 100:
+                risk_level = 'high'
+            elif total_risk >= 50:
+                risk_level = 'medium'
+            else:
+                risk_level = 'low'
+
+            # Additional pattern-based flags
+            if activity_counts.get('tab_switch', 0) > 15:
+                flagged_events.append({
+                    'type': 'excessive_tab_switching',
+                    'count': activity_counts['tab_switch'],
+                    'severity': 'high'
+                })
+
+            if activity_counts.get('paste', 0) > 10:
+                flagged_events.append({
+                    'type': 'excessive_pasting',
+                    'count': activity_counts['paste'],
+                    'severity': 'medium'
+                })
+
+            return {
+                'total_risk_score': total_risk,
+                'risk_level': risk_level,
+                'activity_counts': activity_counts,
+                'high_risk_activities': high_risk_activities,
+                'flagged_events': flagged_events,
+                'total_activities': len(activities)
+            }
+
+        except Exception as e:
+            logger.error(f"Error calculating risk score: {e}")
+            return {
+                'total_risk_score': 0,
+                'risk_level': 'unknown',
+                'activity_counts': {},
+                'high_risk_activities': [],
+                'flagged_events': [],
+                'error': str(e)
+            }
+
     async def _detect_programming_language(self, code: str) -> str:
         """
         Detect programming language from code using AI.

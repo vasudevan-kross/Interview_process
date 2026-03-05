@@ -11,6 +11,7 @@
   "dependencies": {
     "@daily-co/daily-js": "^0.71.0",
     "@daily-co/daily-react": "^0.24.0",
+    "@fingerprintjs/fingerprintjs": "^5.1.0",
     "@hookform/resolvers": "^3.9.1",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -30,9 +31,11 @@
     "@types/papaparse": "^5.5.2",
     "@vapi-ai/web": "^2.5.2",
     "axios": "^1.7.9",
+    "bowser": "^2.14.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "devtools-detector": "^2.0.25",
     "framer-motion": "^11.15.0",
     "jotai": "^2.18.0",
     "lucide-react": "^0.475.0",
@@ -46,6 +49,7 @@
     "recharts": "^2.15.1",
     "sonner": "^1.7.3",
     "tailwind-merge": "^3.0.1",
+    "ua-parser-js": "^2.0.9",
     "xlsx": "^0.18.5",
     "zod": "^3.24.1",
     "zustand": "^5.0.3"

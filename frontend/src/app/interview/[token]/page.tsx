@@ -29,7 +29,7 @@ import {
   uploadResume,
   type Interview,
 } from '@/lib/api/coding-interviews'
-import { initializeAntiCheating, createCodeChangeTracker } from '@/lib/anti-cheating'
+import { initializeEnhancedAntiCheating, createCodeChangeTracker } from '@/lib/anti-cheating-enhanced'
 import CodeEditor from '@/components/coding/CodeEditor'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -63,8 +63,8 @@ export default function CandidateInterviewPage() {
   const [timerExpired, setTimerExpired] = useState(false)
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false)
 
-  // Anti-cheating
-  const antiCheatingRef = useRef<ReturnType<typeof initializeAntiCheating> | null>(null)
+  // Anti-cheating (enhanced)
+  const antiCheatingRef = useRef<Awaited<ReturnType<typeof initializeEnhancedAntiCheating>> | null>(null)
   const codeChangeTrackerRef = useRef<ReturnType<typeof createCodeChangeTracker> | null>(null)
 
   // Load interview details
@@ -135,12 +135,18 @@ export default function CandidateInterviewPage() {
       setSubmissionId(response.submission_id)
       setHasStarted(true)
 
-      // Initialize anti-cheating
+      // Initialize enhanced anti-cheating
       const currentQuestionId = interview?.questions?.[0]?.id || '0'
-      antiCheatingRef.current = initializeAntiCheating(response.submission_id, currentQuestionId)
+      antiCheatingRef.current = await initializeEnhancedAntiCheating(response.submission_id, currentQuestionId)
       codeChangeTrackerRef.current = createCodeChangeTracker(response.submission_id, currentQuestionId)
 
-      toast.success('Interview started! Good luck!')
+      // Request fullscreen mode for better focus (optional - can be declined by user)
+      try {
+        await antiCheatingRef.current.requestFullscreen()
+        toast.success('Interview started! Stay in fullscreen for best experience.')
+      } catch (error) {
+        toast.success('Interview started! Good luck!')
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to start interview')
     } finally {

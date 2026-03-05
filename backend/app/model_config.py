@@ -21,7 +21,7 @@ class ModelConfig:
 
         # Evaluation tasks - upgraded to mistral-nemo:12b for better reasoning + faster
         "answer_evaluation": "mistral-nemo:12b",
-        "resume_matching": "mistral-nemo:12b",
+        "resume_matching": "llama3.1:8b",  # Use same model as skill_extraction to avoid model switching overhead
 
         # Specialized tasks
         "code_evaluation": "codellama:7b",

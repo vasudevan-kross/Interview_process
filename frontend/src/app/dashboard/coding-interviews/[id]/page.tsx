@@ -192,9 +192,15 @@ export default function InterviewDetailPage() {
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-lg font-bold">{interview.programming_language.toUpperCase()}</div>
+                        <div className="text-lg font-bold">
+                            {interview.allowed_languages?.length === 0
+                                ? 'ANY LANGUAGE'
+                                : interview.programming_language.toUpperCase()}
+                        </div>
                         <p className="text-sm text-gray-500">
-                            {interview.interview_type === 'testing' ? 'Test Framework' : 'Programming Language'}
+                            {interview.allowed_languages?.length === 0
+                                ? "Candidate's Choice"
+                                : interview.interview_type === 'testing' ? 'Test Framework' : 'Programming Language'}
                         </p>
                     </CardContent>
                 </Card>
