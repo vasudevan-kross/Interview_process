@@ -76,6 +76,12 @@ export default function VoiceScreeningPage() {
     const [importLoading, setImportLoading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
+    // Fetch data modal
+    const [showFetchDataModal, setShowFetchDataModal] = useState(false)
+    const [fetchDataCandidate, setFetchDataCandidate] = useState<VoiceCandidate | null>(null)
+    const [fetchCallId, setFetchCallId] = useState('')
+    const [fetchingData, setFetchingData] = useState(false)
+
     // Detail modal
     const [selectedCandidate, setSelectedCandidate] = useState<VoiceCandidate | null>(null)
     const [callHistory, setCallHistory] = useState<CallHistory[]>([])
@@ -219,6 +225,35 @@ export default function VoiceScreeningPage() {
     const handleViewDetails = async (candidate: VoiceCandidate) => {
         setSelectedCandidate(candidate)
         await fetchCallHistory(candidate.id)
+    }
+
+    // Open fetch data modal
+    const handleOpenFetchDataModal = (candidate: VoiceCandidate) => {
+        setFetchDataCandidate(candidate)
+        setFetchCallId(candidate.latest_call_id || '')
+        setShowFetchDataModal(true)
+    }
+
+    // Handle manual fetch of call data
+    const handleManualFetchData = async () => {
+        if (!fetchDataCandidate || !fetchCallId.trim()) {
+            toast.error('Please enter a valid Call ID')
+            return
+        }
+
+        try {
+            setFetchingData(true)
+            await fetchCallData(fetchDataCandidate.interview_token, fetchCallId.trim())
+
+            // Close modal and refresh
+            setShowFetchDataModal(false)
+            setFetchCallId('')
+            setFetchDataCandidate(null)
+        } catch (error) {
+            console.error('Error fetching data:', error)
+        } finally {
+            setFetchingData(false)
+        }
     }
 
     // Fetch call data from VAPI after call ends
@@ -558,6 +593,17 @@ export default function VoiceScreeningPage() {
                                                         title="Copy shareable link"
                                                     >
                                                         <Copy className="h-4 w-4 text-blue-600" />
+                                                    </Button>
+
+                                                    {/* Fetch Data - Manual fetch if call completed but data not synced */}
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleOpenFetchDataModal(candidate)}
+                                                        title="Fetch call data from Vapi (transcript, recording, AI analysis)"
+                                                        disabled={fetchingData}
+                                                    >
+                                                        <Download className="h-4 w-4 text-indigo-600" />
                                                     </Button>
 
                                                     {/* View Details - Show if has latest_call_id */}
@@ -1106,6 +1152,88 @@ export default function VoiceScreeningPage() {
                                         setEditForm({ name: '', email: '', phone: '' })
                                     }}
                                     disabled={editLoading}
+                                >
+                                    Cancel
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
+
+            {/* Fetch Data Modal */}
+            {showFetchDataModal && fetchDataCandidate && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowFetchDataModal(false)}>
+                    <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <Download className="h-5 w-5 text-indigo-600" />
+                                Fetch Call Data from Vapi
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                                <p className="text-sm text-blue-900 mb-2">
+                                    <strong>Candidate:</strong> {fetchDataCandidate.name}
+                                </p>
+                                <p className="text-xs text-blue-700">
+                                    Enter the Call ID from your Vapi dashboard to fetch the transcript, recording, and AI-generated analysis.
+                                </p>
+                            </div>
+
+                            <div>
+                                <Label htmlFor="call-id">Call ID *</Label>
+                                <Input
+                                    id="call-id"
+                                    value={fetchCallId}
+                                    onChange={(e) => setFetchCallId(e.target.value)}
+                                    placeholder="e.g., c123e456-789a-0bcd-ef12-3456789abcde"
+                                    className="font-mono text-sm"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Find this in your Vapi dashboard under Calls
+                                </p>
+                            </div>
+
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                <p className="text-xs text-amber-900">
+                                    <strong>What will be fetched:</strong>
+                                </p>
+                                <ul className="text-xs text-amber-800 mt-1 space-y-1 ml-4">
+                                    <li>• Full call transcript</li>
+                                    <li>• Call recording (audio)</li>
+                                    <li>• AI-extracted structured data (24 fields)</li>
+                                    <li>• Call duration, timestamps, cost</li>
+                                    <li>• AI-generated hiring assessment (runs in background)</li>
+                                </ul>
+                            </div>
+
+                            <div className="flex gap-2 pt-4">
+                                <Button
+                                    onClick={handleManualFetchData}
+                                    disabled={fetchingData || !fetchCallId.trim()}
+                                    className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-500"
+                                >
+                                    {fetchingData ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Fetching...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Download className="mr-2 h-4 w-4" />
+                                            Fetch Call Data
+                                        </>
+                                    )}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                        setShowFetchDataModal(false)
+                                        setFetchCallId('')
+                                        setFetchDataCandidate(null)
+                                    }}
+                                    disabled={fetchingData}
                                 >
                                     Cancel
                                 </Button>

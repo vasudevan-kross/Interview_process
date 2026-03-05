@@ -214,42 +214,59 @@ async def extract_questions_from_document(
         # Parse questions using LLM
         llm = get_llm_orchestrator()
 
-        prompt = f"""Extract coding interview questions from the following document text.
+        system_prompt = """You are an expert at extracting interview questions from documents and structuring them as JSON.
+Always return valid JSON arrays only, without any additional text or explanation."""
+
+        prompt = f"""Extract coding interview questions from the following document text and return them as a JSON array.
 
 Document Text:
-{extracted_text[:4000]}  # Limit to prevent token overflow
+{extracted_text[:4000]}
 
-Extract each question and structure them as JSON array with this format:
+Return ONLY a JSON array with this exact structure (no markdown, no explanations):
 [
   {{
-    "question_text": "Full question text...",
+    "question_text": "Full question text here",
     "difficulty": "{difficulty}",
     "marks": 10,
-    "topics": ["topic1", "topic2"],
-    "starter_code": "# Optional starter code if provided in document",
-    "solution_code": "# Optional solution if provided in document"
+    "topics": ["relevant", "topics"],
+    "starter_code": "",
+    "solution_code": ""
   }}
 ]
 
-Important:
-- Extract ALL questions found in the document
-- If marks are not specified, assign reasonable marks based on difficulty (easy: 5-10, medium: 10-20, hard: 20-30)
-- If no starter code is provided, leave it empty
-- Preserve the exact question wording from the document
+Rules:
+- Extract ALL questions from the document
+- If marks not specified, use: easy=5-10, medium=10-20, hard=20-30
+- Keep exact question wording from document
+- Return valid JSON array only"""
 
-Return ONLY the JSON array, no additional text."""
-
-        result = await llm.generate_completion(prompt)
+        result = await llm.generate_completion(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.3  # Low temperature for more consistent JSON output
+        )
 
         # Parse LLM response as JSON
         try:
-            # Extract JSON from response (handle markdown code blocks)
+            # Extract JSON from response (handle markdown code blocks and various formats)
             json_text = result['response'].strip()
-            if json_text.startswith('```'):
-                json_text = json_text.split('```')[1]
-                if json_text.startswith('json'):
-                    json_text = json_text[4:]
+
+            # Remove markdown code blocks
+            if '```json' in json_text:
+                json_text = json_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in json_text:
+                json_text = json_text.split('```')[1].split('```')[0].strip()
+
+            # Try to find JSON array in the response
+            if '[' in json_text:
+                start = json_text.index('[')
+                end = json_text.rindex(']') + 1
+                json_text = json_text[start:end]
+
             json_text = json_text.strip()
+
+            if not json_text:
+                raise ValueError("Empty response from LLM")
 
             questions = json.loads(json_text)
 
@@ -266,10 +283,10 @@ Return ONLY the JSON array, no additional text."""
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"LLM Response: {result[:500]}")
+            logger.error(f"LLM Response: {result.get('response', '')[:500]}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to parse questions from document. LLM response was not valid JSON."
+                detail=f"Failed to parse questions from document. LLM response was not valid JSON. Please try again or check the document format."
             )
 
     except HTTPException:

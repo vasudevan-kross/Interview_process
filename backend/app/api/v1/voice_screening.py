@@ -17,7 +17,7 @@ import httpx
 import pandas as pd
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from postgrest import APIError
 
@@ -1215,27 +1215,41 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
 # ============================================================================
 
 @router.post("/webhook")
-async def vapi_webhook(payload: VoiceWebhookPayload):
+async def vapi_webhook(request: Request):
     """Handle VAPI webhooks (end-of-call reports, function calls, etc.)."""
     try:
-        logger.info(f"📥 Received VAPI webhook: {payload.dict()}")
+        # Log raw request for debugging
+        body = await request.body()
+        logger.info(f"🔔 WEBHOOK RECEIVED - Raw body length: {len(body)} bytes")
+        logger.info(f"🔔 WEBHOOK HEADERS: {dict(request.headers)}")
+
+        # Parse as JSON
+        payload_dict = await request.json() if body else {}
+        logger.info(f"📥 Parsed VAPI webhook: {payload_dict}")
 
         # Handle different webhook types
-        message_type = payload.message.get("type") if payload.message else None
+        message = payload_dict.get("message", {})
+        message_type = message.get("type") if message else None
+
+        logger.info(f"📨 Message type: {message_type}")
 
         if message_type == "end-of-call-report":
             # Extract call data
-            call_data = payload.message.get("call", {})
+            call_data = message.get("call", {})
             call_id = call_data.get("id")
+            transcript = call_data.get("transcript", "")
+            recording_url = call_data.get("recordingUrl")
 
-            logger.info(f"✅ Received end-of-call report for {call_id}")
+            logger.info(f"✅ Received end-of-call report for call {call_id}")
+            logger.info(f"📝 Transcript length: {len(transcript)} chars")
+            logger.info(f"🎙️ Recording URL: {recording_url}")
 
             # You can process this immediately or let the fetch-call-data endpoint handle it
             # For now, just log it
 
         elif message_type == "function-call":
             # Handle function calling (e.g., end_call)
-            function_call = payload.message.get("functionCall", {})
+            function_call = message.get("functionCall", {})
             function_name = function_call.get("name")
 
             logger.info(f"📞 Function called: {function_name}")

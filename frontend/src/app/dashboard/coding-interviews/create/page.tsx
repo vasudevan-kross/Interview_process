@@ -224,6 +224,15 @@ export default function CreateInterviewPage() {
       toast.error('Please select start and end times')
       return
     }
+
+    // Validate end time is after start time
+    const startTime = new Date(scheduledStartTime)
+    const endTime = new Date(scheduledEndTime)
+    if (endTime <= startTime) {
+      toast.error('End time must be after start time. Please check your times.')
+      return
+    }
+
     if (questions.length === 0) {
       toast.error('Please add at least one question')
       return
