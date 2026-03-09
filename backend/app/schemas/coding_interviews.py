@@ -32,6 +32,7 @@ class InterviewCreate(BaseModel):
     bond_document_url: Optional[str] = None  # URL to uploaded bond document
     require_signature: bool = False  # Whether signature is required
     bond_years: int = 2  # Number of years for bond
+    bond_timing: str = 'before_submission'  # 'before_start' | 'before_submission'
     questions: List[QuestionCreate]
 
 
@@ -43,6 +44,7 @@ class GenerateQuestionsRequest(BaseModel):
     programming_language: Optional[str] = 'python'
     test_framework: Optional[str] = None
     interview_type: str = 'coding'
+    domain_tool: Optional[str] = None  # Generic tool/dialect field (devops_tool, sql_dialect, etc.)
 
 
 class StartSubmissionRequest(BaseModel):

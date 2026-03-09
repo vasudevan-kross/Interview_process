@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Briefcase, Calendar, Users, ArrowRight, Plus } from 'lucide-react'
+import { Briefcase, Calendar, Users, ArrowRight, Plus, Trash2 } from 'lucide-react'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { apiClient } from '@/lib/api/client'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -27,6 +29,9 @@ export default function JobsListPage() {
   const [jobs, setJobs] = useState<JobDescription[]>([])
   const [loading, setLoading] = useState(true)
   const [resumeCounts, setResumeCounts] = useState<Record<string, number>>({})
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     fetchJobs()
@@ -43,23 +48,21 @@ export default function JobsListPage() {
         return
       }
 
-      // Get user record
+      // Fetch job descriptions — try both auth user ID and users-table ID
+      // (the LLM service stores created_by as auth user ID or users.id depending on signup path)
       const { data: userRecord } = await supabase
         .from('users')
         .select('id')
         .eq('auth_user_id', user.id)
         .single()
 
-      if (!userRecord) {
-        toast.error('User not found')
-        return
-      }
+      const userIds = [user.id]
+      if (userRecord && userRecord.id !== user.id) userIds.push(userRecord.id)
 
-      // Fetch job descriptions
       const { data: jobsData, error } = await supabase
         .from('job_descriptions')
         .select('id, title, department, created_at, parsed_data')
-        .eq('created_by', userRecord.id)
+        .in('created_by', userIds)
         .order('created_at', { ascending: false })
 
       if (error) {
@@ -99,6 +102,32 @@ export default function JobsListPage() {
 
   const handleUploadResumes = (jobId: string) => {
     router.push(`/dashboard/resume-matching/${jobId}/upload-resumes`)
+  }
+
+  const handleDeleteJob = (jobId: string) => {
+    setPendingDeleteId(jobId)
+    setDeleteDialogOpen(true)
+  }
+
+  const confirmDeleteJob = async () => {
+    if (!pendingDeleteId) return
+    try {
+      setDeleting(true)
+      await apiClient.deleteJobDescription(pendingDeleteId)
+      toast.success('Job description and all resumes deleted')
+      setJobs((prev) => prev.filter((j) => j.id !== pendingDeleteId))
+      setResumeCounts((prev) => {
+        const next = { ...prev }
+        delete next[pendingDeleteId]
+        return next
+      })
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to delete job description')
+    } finally {
+      setDeleting(false)
+      setDeleteDialogOpen(false)
+      setPendingDeleteId(null)
+    }
   }
 
   if (loading) {
@@ -203,23 +232,31 @@ export default function JobsListPage() {
                     </div>
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
-                    {resumeCounts[job.id] > 0 ? (
-                      <Button
-                        onClick={() => handleViewJob(job.id)}
-                        className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-md hover:shadow-lg transition-all"
-                      >
-                        View Candidates
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <Button
-                        onClick={() => handleUploadResumes(job.id)}
-                        className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-md hover:shadow-lg transition-all"
-                      >
-                        Upload Resumes
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteJob(job.id)}
+                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      title="Delete job description"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleUploadResumes(job.id)}
+                      className="border-purple-200 text-purple-700 hover:bg-purple-50"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Upload Resumes
+                    </Button>
+                    <Button
+                      onClick={() => handleViewJob(job.id)}
+                      className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-md hover:shadow-lg transition-all"
+                    >
+                      <Users className="mr-2 h-4 w-4" />
+                      {resumeCounts[job.id] > 0 ? `View ${resumeCounts[job.id]} Candidates` : 'View Candidates'}
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -227,6 +264,16 @@ export default function JobsListPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDeleteJob}
+        title="Delete Job Description"
+        description="Are you sure you want to delete this job description? All associated candidate resumes and match scores will also be permanently deleted. This action cannot be undone."
+        confirmText={deleting ? 'Deleting...' : 'Delete'}
+        variant="destructive"
+      />
     </div>
   )
 }

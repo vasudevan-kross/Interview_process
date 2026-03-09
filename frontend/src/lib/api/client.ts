@@ -118,6 +118,11 @@ class APIClient {
     return this.listModels()
   }
 
+  async deleteJobDescription(jobId: string) {
+    const response = await this.client.delete(`/api/v1/resume-matching/job/${jobId}`)
+    return response.data
+  }
+
   async deleteResumes(resumeIds: string[]) {
     const response = await this.client.delete('/api/v1/resume-matching/resumes', {
       data: { resume_ids: resumeIds }

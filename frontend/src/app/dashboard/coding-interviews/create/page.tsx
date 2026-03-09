@@ -32,6 +32,7 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import { createInterview, generateQuestions, generateShareableLink, extractQuestionsFromDocument, type Question } from '@/lib/api/coding-interviews'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { toast } from 'sonner'
 
 export default function CreateInterviewPage() {
@@ -49,8 +50,9 @@ export default function CreateInterviewPage() {
   const [scheduledEndTime, setScheduledEndTime] = useState('')
   const [gracePeriodMinutes, setGracePeriodMinutes] = useState(15)
   const [programmingLanguage, setProgrammingLanguage] = useState('python')
-  const [interviewType, setInterviewType] = useState<'coding' | 'testing' | 'both'>('coding')
+  const [interviewType, setInterviewType] = useState('coding')
   const [testFramework, setTestFramework] = useState('selenium-python')
+  const [domainTool, setDomainTool] = useState('')  // Generic tool/dialect for non-coding/testing domains
   const [resumeRequired, setResumeRequired] = useState<'mandatory' | 'optional' | 'disabled'>('mandatory')
 
   // Bond/Terms fields
@@ -58,6 +60,7 @@ export default function CreateInterviewPage() {
   const [bondDocumentUrl, setBondDocumentUrl] = useState('')
   const [requireSignature, setRequireSignature] = useState(true)  // Default to checked
   const [bondYears, setBondYears] = useState<string>('2')  // Use string to allow clearing
+  const [bondTiming, setBondTiming] = useState<'before_start' | 'before_submission'>('before_submission')
   const [bondDocumentFile, setBondDocumentFile] = useState<File | null>(null)
 
   // AI Generation
@@ -119,14 +122,15 @@ export default function CreateInterviewPage() {
         job_description: jobDescription,
         difficulty,
         num_questions: parseInt(numQuestions) || 3,
-        programming_language: interviewType === 'coding' ? programmingLanguage : undefined,
+        programming_language: interviewType === 'coding' || interviewType === 'fullstack' || interviewType === 'data_science' ? programmingLanguage : undefined,
         test_framework: interviewType === 'testing' ? testFramework : undefined,
+        domain_tool: ['devops', 'sql'].includes(interviewType) ? domainTool : undefined,
         interview_type: interviewType,
       })
 
-      // Auto-switch interview type if backend detected a testing role
+      // Auto-switch interview type if backend detected a different role
       if (response.detected_type && response.detected_type !== interviewType) {
-        setInterviewType(response.detected_type as 'coding' | 'testing' | 'both')
+        setInterviewType(response.detected_type)
         toast.info(`Detected a ${response.detected_type} role from your job description — generated ${response.detected_type} questions instead.`)
       }
 
@@ -240,10 +244,12 @@ export default function CreateInterviewPage() {
 
     try {
       setLoading(true)
-      // Determine the correct language to send based on interview type
+      // Determine the correct language/tool to store based on interview type
       const effectiveLanguage = interviewType === 'testing'
         ? testFramework
-        : (programmingLanguage === 'any' ? 'python' : programmingLanguage)
+        : (['devops', 'sql', 'system_design', 'data_science', 'fullstack'].includes(interviewType)
+            ? (domainTool || interviewType)
+            : programmingLanguage)  // 'any' is sent as-is — no fallback to 'python'
 
       const response = await createInterview({
         title,
@@ -251,7 +257,7 @@ export default function CreateInterviewPage() {
         scheduled_start_time: scheduledStartTime,
         scheduled_end_time: scheduledEndTime,
         programming_language: effectiveLanguage,
-        allowed_languages: interviewType !== 'testing' && programmingLanguage === 'any' ? [] : undefined,
+        allowed_languages: interviewType === 'coding' && programmingLanguage === 'any' ? [] : undefined,
         interview_type: interviewType,
         grace_period_minutes: gracePeriodMinutes,
         resume_required: resumeRequired,
@@ -259,6 +265,7 @@ export default function CreateInterviewPage() {
         bond_document_url: bondDocumentUrl || undefined,
         require_signature: requireSignature,
         bond_years: parseInt(bondYears) || 2,
+        bond_timing: bondTiming,
         questions,
       })
 
@@ -329,9 +336,9 @@ export default function CreateInterviewPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-          Create Coding Interview
+          Create Technical Assessment
         </h1>
-        <p className="text-gray-600 mt-2">Set up a time-bound interview with AI-generated or custom questions</p>
+        <p className="text-gray-600 mt-2">Set up a time-bound assessment with AI-generated or custom questions</p>
       </div>
 
       {/* Interview Details */}
@@ -354,14 +361,19 @@ export default function CreateInterviewPage() {
 
             <div className="space-y-2">
               <Label htmlFor="interviewType">Interview Type *</Label>
-              <Select value={interviewType} onValueChange={(v: any) => setInterviewType(v)}>
+              <Select value={interviewType} onValueChange={(v) => { setInterviewType(v); setDomainTool('') }}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="coding">Coding (Algorithms, Development)</SelectItem>
                   <SelectItem value="testing">Testing/QA (Test Cases, Automation)</SelectItem>
-                  <SelectItem value="both">Both (Mixed)</SelectItem>
+                  <SelectItem value="devops">DevOps (Docker, K8s, CI/CD, IaC)</SelectItem>
+                  <SelectItem value="sql">SQL / Database</SelectItem>
+                  <SelectItem value="system_design">System Design (Architecture)</SelectItem>
+                  <SelectItem value="fullstack">Fullstack (Backend + Frontend)</SelectItem>
+                  <SelectItem value="data_science">Data Science / ML</SelectItem>
+                  <SelectItem value="both">Both Coding + Testing (Mixed)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -380,28 +392,38 @@ export default function CreateInterviewPage() {
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <Label htmlFor="startTime">
+              <Label>
                 <Calendar className="inline h-4 w-4 mr-1" />
                 Start Time *
               </Label>
-              <Input
-                id="startTime"
-                type="datetime-local"
+              <DateTimePicker
                 value={scheduledStartTime}
-                onChange={(e) => setScheduledStartTime(e.target.value)}
+                onChange={(start) => {
+                  setScheduledStartTime(start)
+                  // Auto-set end time to 1 hour after start if not yet set
+                  if (start && !scheduledEndTime) {
+                    const endDate = new Date(new Date(start).getTime() + 60 * 60 * 1000)
+                    const pad = (n: number) => String(n).padStart(2, '0')
+                    setScheduledEndTime(
+                      `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}T${pad(endDate.getHours())}:${pad(endDate.getMinutes())}`
+                    )
+                  }
+                }}
+                placeholder="Select start date & time"
+                minDate={new Date()}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="endTime">
+              <Label>
                 <Clock className="inline h-4 w-4 mr-1" />
                 End Time *
               </Label>
-              <Input
-                id="endTime"
-                type="datetime-local"
+              <DateTimePicker
                 value={scheduledEndTime}
-                onChange={(e) => setScheduledEndTime(e.target.value)}
+                onChange={setScheduledEndTime}
+                placeholder="Select end date & time"
+                minDate={scheduledStartTime ? new Date(scheduledStartTime) : new Date()}
               />
             </div>
 
@@ -419,7 +441,8 @@ export default function CreateInterviewPage() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {interviewType !== 'testing' && (
+            {/* Coding / Fullstack / Data Science: programming language picker */}
+            {['coding', 'fullstack', 'data_science', 'both'].includes(interviewType) && (
               <div className="space-y-2">
                 <Label htmlFor="language">Programming Language</Label>
                 <Select value={programmingLanguage} onValueChange={setProgrammingLanguage}>
@@ -427,11 +450,13 @@ export default function CreateInterviewPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="any">Any Language (Candidate's Choice)</SelectItem>
+                    {interviewType === 'coding' && <SelectItem value="any">Any Language (Candidate's Choice)</SelectItem>}
                     <SelectItem value="python">Python</SelectItem>
                     <SelectItem value="javascript">JavaScript</SelectItem>
+                    <SelectItem value="typescript">TypeScript</SelectItem>
                     <SelectItem value="java">Java</SelectItem>
                     <SelectItem value="cpp">C++</SelectItem>
+                    <SelectItem value="csharp">C#</SelectItem>
                     <SelectItem value="go">Go</SelectItem>
                     <SelectItem value="rust">Rust</SelectItem>
                   </SelectContent>
@@ -445,6 +470,7 @@ export default function CreateInterviewPage() {
               </div>
             )}
 
+            {/* Testing: test framework picker */}
             {interviewType === 'testing' && (
               <div className="space-y-2">
                 <Label htmlFor="testFramework">Test Framework *</Label>
@@ -460,6 +486,47 @@ export default function CreateInterviewPage() {
                     <SelectItem value="pytest">Pytest (Python)</SelectItem>
                     <SelectItem value="junit">JUnit (Java)</SelectItem>
                     <SelectItem value="manual-test-cases">Manual Test Case Design</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* DevOps: tool picker */}
+            {interviewType === 'devops' && (
+              <div className="space-y-2">
+                <Label htmlFor="devopsTool">DevOps Focus</Label>
+                <Select value={domainTool || 'general'} onValueChange={setDomainTool}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General DevOps</SelectItem>
+                    <SelectItem value="docker">Docker</SelectItem>
+                    <SelectItem value="kubernetes">Kubernetes</SelectItem>
+                    <SelectItem value="terraform">Terraform</SelectItem>
+                    <SelectItem value="ansible">Ansible</SelectItem>
+                    <SelectItem value="bash">Bash / Shell Scripting</SelectItem>
+                    <SelectItem value="ci-cd">CI/CD (GitHub Actions / Jenkins)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* SQL: dialect picker */}
+            {interviewType === 'sql' && (
+              <div className="space-y-2">
+                <Label htmlFor="sqlDialect">SQL Dialect</Label>
+                <Select value={domainTool || 'general'} onValueChange={setDomainTool}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General SQL</SelectItem>
+                    <SelectItem value="postgresql">PostgreSQL</SelectItem>
+                    <SelectItem value="mysql">MySQL</SelectItem>
+                    <SelectItem value="sqlite">SQLite</SelectItem>
+                    <SelectItem value="oracle">Oracle SQL</SelectItem>
+                    <SelectItem value="sqlserver">SQL Server (T-SQL)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -514,27 +581,46 @@ export default function CreateInterviewPage() {
 
           {requireSignature && (
             <>
-              <div className="space-y-2">
-                <Label htmlFor="bondYears">Bond Period (Years)</Label>
-                <Input
-                  id="bondYears"
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={bondYears}
-                  onChange={(e) => setBondYears(e.target.value)}
-                  onBlur={(e) => {
-                    const val = e.target.value
-                    if (val === '' || parseInt(val) < 1) {
-                      setBondYears('1')
-                    } else if (parseInt(val) > 10) {
-                      setBondYears('10')
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="bondYears">Bond Period (Years)</Label>
+                  <Input
+                    id="bondYears"
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={bondYears}
+                    onChange={(e) => setBondYears(e.target.value)}
+                    onBlur={(e) => {
+                      const val = e.target.value
+                      if (val === '' || parseInt(val) < 1) {
+                        setBondYears('1')
+                      } else if (parseInt(val) > 10) {
+                        setBondYears('10')
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500">Number of years for the bond agreement</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="bondTiming">Show Bond Agreement</Label>
+                  <Select value={bondTiming} onValueChange={(v: any) => setBondTiming(v)}>
+                    <SelectTrigger id="bondTiming">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="before_submission">Before submission (after completing test)</SelectItem>
+                      <SelectItem value="before_start">Before test starts (must sign to begin)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500">
+                    {bondTiming === 'before_start'
+                      ? 'Candidate must sign the bond before they can start answering questions'
+                      : 'Candidate signs the bond after completing the test, before final submission'
                     }
-                  }}
-                />
-                <p className="text-xs text-gray-500">
-                  Number of years for the bond agreement
-                </p>
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-2">

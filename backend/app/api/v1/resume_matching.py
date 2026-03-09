@@ -338,6 +338,30 @@ async def list_models():
 
 
 @router.delete(
+    "/job/{job_id}",
+    summary="Delete a job description and all its resumes"
+)
+async def delete_job_description(
+    job_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Delete a job description by ID.
+    All associated resumes are deleted automatically (CASCADE).
+    """
+    try:
+        service = get_resume_matching_service()
+        await service.delete_job_description(job_id=job_id, user_id=current_user_id)
+        return {"message": "Job description and all associated resumes deleted successfully", "job_id": job_id}
+
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting job description: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete job description")
+
+
+@router.delete(
     "/resumes",
     summary="Delete multiple resumes"
 )

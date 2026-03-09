@@ -154,6 +154,26 @@ Return ONLY the JSON object."""
             # Ensure user exists in the users table
             db_user_id = self._ensure_user_exists(user_id)
 
+            # Dedup: return existing record if same title + filename uploaded by same user recently
+            existing = self.client.table('job_descriptions') \
+                .select('id') \
+                .eq('title', title) \
+                .eq('file_path', filename) \
+                .eq('created_by', db_user_id) \
+                .limit(1) \
+                .execute()
+            if existing.data:
+                existing_id = existing.data[0]['id']
+                logger.info(f"Returning existing job description {existing_id} for title='{title}' file='{filename}'")
+                return {
+                    'job_id': existing_id,
+                    'title': title,
+                    'department': department,
+                    'extracted_text': job_text[:1000],
+                    'required_skills': required_skills[:20],
+                    'total_skills': len(required_skills)
+                }
+
             # Store in database
             job_id = str(uuid.uuid4())
 
@@ -161,8 +181,12 @@ Return ONLY the JSON object."""
                 'id': job_id,
                 'title': title,
                 'department': department,
-                'description': job_text[:5000],  # Limit size
-                'required_skills': required_skills,
+                'description': job_text[:5000],
+                'file_path': filename,
+                'parsed_data': {
+                    'required_skills': required_skills,
+                    'file_name': filename,
+                },
                 'created_by': db_user_id,
                 'created_at': datetime.now().isoformat(),
                 'status': 'active'
@@ -527,6 +551,41 @@ Return ONLY the JSON object."""
 
         except Exception as e:
             logger.error(f"Error deleting resumes: {e}")
+            raise
+
+    async def delete_job_description(self, job_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Delete a job description and all its associated resumes (cascade).
+
+        Args:
+            job_id: Job description ID
+            user_id: User ID (for ownership check)
+
+        Returns:
+            dict with deleted job_id
+        """
+        try:
+            db_user_id = self._ensure_user_exists(user_id)
+
+            # Verify ownership — check both possible stored user IDs
+            result = self.client.table('job_descriptions') \
+                .select('id') \
+                .eq('id', job_id) \
+                .in_('created_by', [user_id, db_user_id]) \
+                .limit(1) \
+                .execute()
+
+            if not result.data:
+                raise ValueError(f"Job description {job_id} not found or access denied")
+
+            # Delete — resumes are removed automatically via ON DELETE CASCADE
+            self.client.table('job_descriptions').delete().eq('id', job_id).execute()
+
+            logger.info(f"Deleted job description {job_id} and its resumes")
+            return {'job_id': job_id}
+
+        except Exception as e:
+            logger.error(f"Error deleting job description {job_id}: {e}")
             raise
 
     async def get_job_description(self, job_id: str) -> Dict[str, Any]:

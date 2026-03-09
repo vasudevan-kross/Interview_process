@@ -15,6 +15,92 @@ from app.services.llm_orchestrator import get_llm_orchestrator
 
 logger = logging.getLogger(__name__)
 
+# Domain registry — add a new domain by inserting one entry here.
+DOMAIN_REGISTRY = {
+    'coding': {
+        'label': 'Coding',
+        'generator': 'generate_coding_questions',
+        'tool_param': 'programming_language',
+        'tool_options': [
+            {'value': 'any', 'label': 'Any Language'},
+            {'value': 'python', 'label': 'Python'},
+            {'value': 'javascript', 'label': 'JavaScript'},
+            {'value': 'java', 'label': 'Java'},
+            {'value': 'cpp', 'label': 'C++'},
+            {'value': 'go', 'label': 'Go'},
+            {'value': 'rust', 'label': 'Rust'},
+            {'value': 'typescript', 'label': 'TypeScript'},
+            {'value': 'csharp', 'label': 'C#'},
+        ],
+    },
+    'testing': {
+        'label': 'Testing/QA',
+        'generator': 'generate_testing_questions',
+        'tool_param': 'test_framework',
+        'tool_options': [
+            {'value': 'selenium-python', 'label': 'Selenium (Python)'},
+            {'value': 'selenium-java', 'label': 'Selenium (Java)'},
+            {'value': 'playwright-js', 'label': 'Playwright (JavaScript)'},
+            {'value': 'cypress-js', 'label': 'Cypress (JavaScript)'},
+            {'value': 'pytest', 'label': 'Pytest (Python)'},
+            {'value': 'junit', 'label': 'JUnit (Java)'},
+            {'value': 'manual-test-cases', 'label': 'Manual Test Case Design'},
+        ],
+    },
+    'devops': {
+        'label': 'DevOps',
+        'generator': 'generate_devops_questions',
+        'tool_param': 'devops_tool',
+        'tool_options': [
+            {'value': 'general', 'label': 'General DevOps'},
+            {'value': 'docker', 'label': 'Docker'},
+            {'value': 'kubernetes', 'label': 'Kubernetes'},
+            {'value': 'terraform', 'label': 'Terraform'},
+            {'value': 'ansible', 'label': 'Ansible'},
+            {'value': 'bash', 'label': 'Bash/Shell Scripting'},
+            {'value': 'ci-cd', 'label': 'CI/CD (GitHub Actions / Jenkins)'},
+        ],
+    },
+    'sql': {
+        'label': 'SQL/Database',
+        'generator': 'generate_sql_questions',
+        'tool_param': 'sql_dialect',
+        'tool_options': [
+            {'value': 'general', 'label': 'General SQL'},
+            {'value': 'postgresql', 'label': 'PostgreSQL'},
+            {'value': 'mysql', 'label': 'MySQL'},
+            {'value': 'sqlite', 'label': 'SQLite'},
+            {'value': 'oracle', 'label': 'Oracle SQL'},
+            {'value': 'sqlserver', 'label': 'SQL Server (T-SQL)'},
+        ],
+    },
+    'system_design': {
+        'label': 'System Design',
+        'generator': 'generate_system_design_questions',
+        'tool_param': None,
+        'tool_options': [],
+    },
+    'fullstack': {
+        'label': 'Fullstack',
+        'generator': 'generate_fullstack_questions',
+        'tool_param': 'programming_language',
+        'tool_options': [
+            {'value': 'python', 'label': 'Python (Django/FastAPI)'},
+            {'value': 'javascript', 'label': 'JavaScript (Node + React)'},
+            {'value': 'typescript', 'label': 'TypeScript'},
+            {'value': 'java', 'label': 'Java (Spring)'},
+        ],
+    },
+    'data_science': {
+        'label': 'Data Science/ML',
+        'generator': 'generate_data_science_questions',
+        'tool_param': 'programming_language',
+        'tool_options': [
+            {'value': 'python', 'label': 'Python (pandas/sklearn)'},
+        ],
+    },
+}
+
 
 class QuestionGenerator:
     """Service for generating interview questions using AI."""
@@ -214,6 +300,381 @@ Generate exactly {num_questions} UNIQUE questions. Each must test a DIFFERENT sc
             return self._get_fallback_testing_questions(
                 test_framework, difficulty, num_questions
             )
+
+    async def generate_devops_questions(
+        self,
+        job_description: str,
+        difficulty: str,
+        num_questions: int,
+        devops_tool: str = 'general'
+    ) -> List[Dict[str, Any]]:
+        """Generate DevOps interview questions."""
+        try:
+            logger.info(f"Generating {num_questions} {difficulty} devops questions (tool: {devops_tool})")
+            tool_label = devops_tool if devops_tool != 'general' else 'Docker, Kubernetes, CI/CD, Bash, Infrastructure'
+            prompt = f"""Generate exactly {num_questions} UNIQUE and DIFFERENT {difficulty} DevOps interview questions focused on {tool_label}.
+
+Job Description: {job_description}
+
+CRITICAL REQUIREMENTS:
+- Each question MUST be completely different from the others
+- Cover DIFFERENT topics (e.g., containerization, orchestration, CI/CD pipelines, IaC, monitoring, networking)
+- Include practical scenario-based questions
+- Include configuration/script starter templates where relevant
+- Reference solution or expected approach
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "question_text": "Unique DevOps problem description here",
+    "difficulty": "{difficulty}",
+    "marks": 20,
+    "starter_code": "# Starter config / script",
+    "solution_code": "# Reference solution / approach",
+    "test_cases": [],
+    "topics": ["topic1", "topic2"],
+    "time_estimate_minutes": 30
+  }}
+]
+
+Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
+
+            response = await self._generate_with_llm(prompt)
+            questions = self._extract_json_from_response(response)
+            if not isinstance(questions, list) or len(questions) == 0:
+                raise ValueError("Failed to generate valid questions")
+            return questions[:num_questions]
+        except Exception as e:
+            logger.error(f"Error generating devops questions: {e}")
+            return self._get_fallback_devops_questions(devops_tool, difficulty, num_questions)
+
+    async def generate_sql_questions(
+        self,
+        job_description: str,
+        difficulty: str,
+        num_questions: int,
+        sql_dialect: str = 'general'
+    ) -> List[Dict[str, Any]]:
+        """Generate SQL/Database interview questions."""
+        try:
+            logger.info(f"Generating {num_questions} {difficulty} SQL questions (dialect: {sql_dialect})")
+            dialect_label = sql_dialect if sql_dialect != 'general' else 'standard SQL'
+            prompt = f"""Generate exactly {num_questions} UNIQUE and DIFFERENT {difficulty} SQL/database interview questions using {dialect_label}.
+
+Job Description: {job_description}
+
+CRITICAL REQUIREMENTS:
+- Each question MUST be completely different from the others
+- Cover DIFFERENT topics (e.g., SELECT queries, JOINs, aggregations, subqueries, indexes, schema design, transactions, optimization)
+- Include a sample schema or table definition in the starter code
+- Include the reference SQL solution
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "question_text": "Unique SQL/database problem description here",
+    "difficulty": "{difficulty}",
+    "marks": 20,
+    "starter_code": "-- Sample schema:\\nCREATE TABLE ...",
+    "solution_code": "-- Reference solution:\\nSELECT ...",
+    "test_cases": [
+      {{"input": "sample data description", "expected_output": "expected query result"}}
+    ],
+    "topics": ["JOINs", "aggregation"],
+    "time_estimate_minutes": 25
+  }}
+]
+
+Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
+
+            response = await self._generate_with_llm(prompt)
+            questions = self._extract_json_from_response(response)
+            if not isinstance(questions, list) or len(questions) == 0:
+                raise ValueError("Failed to generate valid questions")
+            return questions[:num_questions]
+        except Exception as e:
+            logger.error(f"Error generating SQL questions: {e}")
+            return self._get_fallback_sql_questions(sql_dialect, difficulty, num_questions)
+
+    async def generate_system_design_questions(
+        self,
+        job_description: str,
+        difficulty: str,
+        num_questions: int,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """Generate System Design interview questions (text/markdown answers)."""
+        try:
+            logger.info(f"Generating {num_questions} {difficulty} system design questions")
+            prompt = f"""Generate exactly {num_questions} UNIQUE and DIFFERENT {difficulty} system design interview questions.
+
+Job Description: {job_description}
+
+CRITICAL REQUIREMENTS:
+- Each question MUST be completely different from the others
+- Cover DIFFERENT topics (e.g., URL shortener, chat system, news feed, rate limiter, distributed cache, CDN, payment system)
+- Questions should ask candidates to design a system end-to-end
+- Starter code should be a structured Markdown template for their answer (no executable code)
+- No solution code needed — provide key points to cover instead
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "question_text": "Design a [unique system] that can handle [requirements]...",
+    "difficulty": "{difficulty}",
+    "marks": 30,
+    "starter_code": "## System Design: [System Name]\\n\\n### Requirements\\n- Functional: \\n- Non-functional: \\n\\n### High-Level Architecture\\n\\n### Components\\n\\n### Data Model\\n\\n### API Design\\n\\n### Scalability Considerations\\n",
+    "solution_code": "Key points: scalability, availability, consistency trade-offs, caching, load balancing, database choice...",
+    "test_cases": [],
+    "topics": ["scalability", "distributed systems"],
+    "time_estimate_minutes": 45
+  }}
+]
+
+Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
+
+            response = await self._generate_with_llm(prompt)
+            questions = self._extract_json_from_response(response)
+            if not isinstance(questions, list) or len(questions) == 0:
+                raise ValueError("Failed to generate valid questions")
+            return questions[:num_questions]
+        except Exception as e:
+            logger.error(f"Error generating system design questions: {e}")
+            return self._get_fallback_system_design_questions(difficulty, num_questions)
+
+    async def generate_fullstack_questions(
+        self,
+        job_description: str,
+        difficulty: str,
+        num_questions: int,
+        programming_language: str = 'javascript'
+    ) -> List[Dict[str, Any]]:
+        """Generate Fullstack development interview questions."""
+        try:
+            logger.info(f"Generating {num_questions} {difficulty} fullstack questions (lang: {programming_language})")
+            prompt = f"""Generate exactly {num_questions} UNIQUE and DIFFERENT {difficulty} fullstack development interview questions using {programming_language}.
+
+Job Description: {job_description}
+
+CRITICAL REQUIREMENTS:
+- Each question MUST be completely different from the others
+- Cover DIFFERENT topics (e.g., REST API design, database integration, authentication, frontend state management, performance, deployment)
+- Mix backend and frontend concerns
+- Include starter code templates
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "question_text": "Unique fullstack problem description here",
+    "difficulty": "{difficulty}",
+    "marks": 20,
+    "starter_code": "# Starter code in {programming_language}",
+    "solution_code": "# Reference solution",
+    "test_cases": [],
+    "topics": ["REST API", "authentication"],
+    "time_estimate_minutes": 35
+  }}
+]
+
+Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
+
+            response = await self._generate_with_llm(prompt)
+            questions = self._extract_json_from_response(response)
+            if not isinstance(questions, list) or len(questions) == 0:
+                raise ValueError("Failed to generate valid questions")
+            return questions[:num_questions]
+        except Exception as e:
+            logger.error(f"Error generating fullstack questions: {e}")
+            return self._get_fallback_coding_questions(programming_language, difficulty, num_questions)
+
+    async def generate_data_science_questions(
+        self,
+        job_description: str,
+        difficulty: str,
+        num_questions: int,
+        programming_language: str = 'python'
+    ) -> List[Dict[str, Any]]:
+        """Generate Data Science / ML interview questions."""
+        try:
+            logger.info(f"Generating {num_questions} {difficulty} data science questions")
+            prompt = f"""Generate exactly {num_questions} UNIQUE and DIFFERENT {difficulty} data science and machine learning interview questions using Python (pandas, numpy, scikit-learn).
+
+Job Description: {job_description}
+
+CRITICAL REQUIREMENTS:
+- Each question MUST be completely different from the others
+- Cover DIFFERENT topics (e.g., data cleaning, EDA, feature engineering, model training, evaluation metrics, hyperparameter tuning, deep learning basics)
+- Include starter code with sample data or imports
+- Include reference solution
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "question_text": "Unique data science problem description here",
+    "difficulty": "{difficulty}",
+    "marks": 20,
+    "starter_code": "import pandas as pd\\nimport numpy as np\\n# Your code here",
+    "solution_code": "# Reference solution",
+    "test_cases": [
+      {{"input": "sample dataset description", "expected_output": "expected result"}}
+    ],
+    "topics": ["pandas", "feature engineering"],
+    "time_estimate_minutes": 30
+  }}
+]
+
+Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
+
+            response = await self._generate_with_llm(prompt)
+            questions = self._extract_json_from_response(response)
+            if not isinstance(questions, list) or len(questions) == 0:
+                raise ValueError("Failed to generate valid questions")
+            return questions[:num_questions]
+        except Exception as e:
+            logger.error(f"Error generating data science questions: {e}")
+            return self._get_fallback_coding_questions('python', difficulty, num_questions)
+
+    async def generate_questions_for_domain(
+        self,
+        domain: str,
+        job_description: str,
+        difficulty: str,
+        num_questions: int,
+        domain_tool: Optional[str] = None,
+        programming_language: Optional[str] = None,
+        test_framework: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Dispatch question generation by domain using the registry."""
+        config = DOMAIN_REGISTRY.get(domain)
+        if not config:
+            logger.warning(f"Unknown domain '{domain}', falling back to coding")
+            config = DOMAIN_REGISTRY['coding']
+            domain = 'coding'
+
+        generator_name = config['generator']
+        tool_param = config['tool_param']
+
+        # Resolve tool value from generic domain_tool or legacy fields
+        tool_value = domain_tool
+        if tool_value is None:
+            if domain == 'coding' or domain == 'fullstack' or domain == 'data_science':
+                tool_value = programming_language or 'python'
+            elif domain == 'testing':
+                tool_value = test_framework or 'manual-test-cases'
+            elif domain == 'devops':
+                tool_value = 'general'
+            elif domain == 'sql':
+                tool_value = 'general'
+
+        generator_method = getattr(self, generator_name)
+
+        kwargs = {
+            'job_description': job_description,
+            'difficulty': difficulty,
+            'num_questions': num_questions,
+        }
+        if tool_param:
+            kwargs[tool_param] = tool_value or 'general'
+
+        return await generator_method(**kwargs)
+
+    def _get_fallback_devops_questions(self, tool: str, difficulty: str, num: int) -> List[Dict[str, Any]]:
+        """Fallback DevOps questions."""
+        questions = [
+            {
+                'question_text': 'Write a Dockerfile to containerize a Python Flask application. Include best practices like using a non-root user, multi-stage builds, and proper layer caching.',
+                'difficulty': difficulty,
+                'marks': 20,
+                'starter_code': '# Dockerfile\nFROM python:3.11-slim\n\n# Your configuration here\n',
+                'solution_code': 'FROM python:3.11-slim AS base\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nRUN adduser --disabled-password appuser && chown -R appuser /app\nUSER appuser\nEXPOSE 5000\nCMD ["python", "app.py"]',
+                'test_cases': [],
+                'topics': ['docker', 'containerization', 'best practices'],
+                'time_estimate_minutes': 25,
+            },
+            {
+                'question_text': 'Write a GitHub Actions CI/CD workflow that: (1) runs tests on every push, (2) builds a Docker image, (3) pushes to Docker Hub on merge to main.',
+                'difficulty': difficulty,
+                'marks': 25,
+                'starter_code': '# .github/workflows/ci.yml\nname: CI/CD Pipeline\n\non:\n  push:\n    branches: [main, develop]\n\njobs:\n  # Your jobs here\n',
+                'solution_code': 'on:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v3\n      - run: pip install -r requirements.txt && pytest\n  build:\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v3\n      - uses: docker/login-action@v2\n        with:\n          username: ${{ secrets.DOCKER_USER }}\n          password: ${{ secrets.DOCKER_PASS }}\n      - run: docker build -t myapp:${{ github.sha }} . && docker push myapp:${{ github.sha }}',
+                'test_cases': [],
+                'topics': ['ci/cd', 'github actions', 'docker'],
+                'time_estimate_minutes': 35,
+            },
+            {
+                'question_text': 'Write a Kubernetes Deployment manifest for a web application with: 3 replicas, resource limits, liveness/readiness probes, and a ConfigMap for environment variables.',
+                'difficulty': difficulty,
+                'marks': 25,
+                'starter_code': '# deployment.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-app\n# Complete the manifest\n',
+                'solution_code': 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-app\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: web-app\n  template:\n    metadata:\n      labels:\n        app: web-app\n    spec:\n      containers:\n      - name: web\n        image: myapp:latest\n        resources:\n          requests:\n            cpu: 100m\n            memory: 128Mi\n          limits:\n            cpu: 500m\n            memory: 512Mi\n        livenessProbe:\n          httpGet:\n            path: /health\n            port: 8080\n          initialDelaySeconds: 30\n        readinessProbe:\n          httpGet:\n            path: /ready\n            port: 8080',
+                'test_cases': [],
+                'topics': ['kubernetes', 'deployments', 'resource management'],
+                'time_estimate_minutes': 35,
+            },
+        ]
+        return questions[:num]
+
+    def _get_fallback_sql_questions(self, dialect: str, difficulty: str, num: int) -> List[Dict[str, Any]]:
+        """Fallback SQL questions."""
+        questions = [
+            {
+                'question_text': 'Given an Orders table (order_id, customer_id, amount, order_date) and Customers table (customer_id, name, country), write a query to find the top 5 customers by total order value, showing their name, country, and total amount.',
+                'difficulty': difficulty,
+                'marks': 20,
+                'starter_code': '-- Schema:\n-- Customers(customer_id, name, country)\n-- Orders(order_id, customer_id, amount, order_date)\n\nSELECT -- your query here\n',
+                'solution_code': 'SELECT c.name, c.country, SUM(o.amount) AS total_amount\nFROM customers c\nJOIN orders o ON c.customer_id = o.customer_id\nGROUP BY c.customer_id, c.name, c.country\nORDER BY total_amount DESC\nLIMIT 5;',
+                'test_cases': [{'input': 'customers and orders tables', 'expected_output': 'Top 5 customers with total amounts'}],
+                'topics': ['JOINs', 'aggregation', 'GROUP BY'],
+                'time_estimate_minutes': 20,
+            },
+            {
+                'question_text': 'Write a SQL query to find all employees who earn more than the average salary of their department. Use the Employees table (employee_id, name, department_id, salary).',
+                'difficulty': difficulty,
+                'marks': 20,
+                'starter_code': '-- Employees(employee_id, name, department_id, salary)\n\nSELECT -- your query here\n',
+                'solution_code': 'SELECT e.name, e.department_id, e.salary\nFROM employees e\nWHERE e.salary > (\n    SELECT AVG(salary)\n    FROM employees\n    WHERE department_id = e.department_id\n)\nORDER BY e.department_id, e.salary DESC;',
+                'test_cases': [{'input': 'employees table', 'expected_output': 'Employees above department average'}],
+                'topics': ['subqueries', 'correlated subquery', 'aggregation'],
+                'time_estimate_minutes': 25,
+            },
+            {
+                'question_text': 'Design a normalized database schema for a library management system. Include tables for books, authors, members, and loans. Write the CREATE TABLE statements with appropriate constraints.',
+                'difficulty': difficulty,
+                'marks': 25,
+                'starter_code': '-- Design the schema for a library management system\n-- Tables needed: books, authors, members, loans\n\nCREATE TABLE -- your schema here\n',
+                'solution_code': 'CREATE TABLE authors (author_id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL);\nCREATE TABLE books (book_id SERIAL PRIMARY KEY, title VARCHAR(200) NOT NULL, author_id INT REFERENCES authors, isbn VARCHAR(20) UNIQUE, available BOOLEAN DEFAULT TRUE);\nCREATE TABLE members (member_id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, email VARCHAR(100) UNIQUE, joined_date DATE DEFAULT CURRENT_DATE);\nCREATE TABLE loans (loan_id SERIAL PRIMARY KEY, book_id INT REFERENCES books, member_id INT REFERENCES members, loan_date DATE DEFAULT CURRENT_DATE, return_date DATE, CONSTRAINT one_active_loan UNIQUE (book_id, return_date));',
+                'test_cases': [],
+                'topics': ['schema design', 'normalization', 'constraints'],
+                'time_estimate_minutes': 30,
+            },
+        ]
+        return questions[:num]
+
+    def _get_fallback_system_design_questions(self, difficulty: str, num: int) -> List[Dict[str, Any]]:
+        """Fallback system design questions."""
+        questions = [
+            {
+                'question_text': 'Design a URL shortening service (like bit.ly). The system should: generate short URLs, redirect users to original URLs, handle 100M URLs and 10B redirects/day, provide analytics (click counts), and support custom aliases.',
+                'difficulty': difficulty,
+                'marks': 30,
+                'starter_code': '## System Design: URL Shortener\n\n### Requirements\n**Functional:**\n- \n\n**Non-functional:**\n- \n\n### High-Level Architecture\n\n### Components\n\n### Data Model\n\n### API Design\n\n### Scalability Considerations\n',
+                'solution_code': 'Key points: hash function for URL generation (Base62), read-heavy design (cache aggressively), DB: SQL for metadata, Redis for caching, CDN for redirection, consistent hashing for horizontal scaling, analytics via event streaming (Kafka).',
+                'test_cases': [],
+                'topics': ['distributed systems', 'caching', 'scalability'],
+                'time_estimate_minutes': 45,
+            },
+            {
+                'question_text': 'Design a real-time messaging application (like WhatsApp). Support: 1-1 and group chats, message delivery receipts, online/offline status, message history, and 1B users with 100M concurrent connections.',
+                'difficulty': difficulty,
+                'marks': 35,
+                'starter_code': '## System Design: Messaging App\n\n### Requirements\n**Functional:**\n- \n\n**Non-functional:**\n- \n\n### High-Level Architecture\n\n### Components\n\n### Data Model\n\n### Message Delivery Flow\n\n### Scalability Considerations\n',
+                'solution_code': 'Key points: WebSockets for real-time, message queue (Kafka) for reliability, Cassandra for message storage (write-heavy), Redis for presence/online status, consistent hashing for connection routing, fan-out service for group messages.',
+                'test_cases': [],
+                'topics': ['websockets', 'message queues', 'distributed systems'],
+                'time_estimate_minutes': 50,
+            },
+        ]
+        return questions[:num]
 
     def _extract_json_from_response(self, response: str) -> List[Dict[str, Any]]:
         """Extract JSON array from LLM response."""

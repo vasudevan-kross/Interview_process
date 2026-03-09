@@ -19,7 +19,11 @@ import {
   CheckCircle,
   Upload,
   FileText,
+  PenTool,
 } from 'lucide-react'
+import dynamic from 'next/dynamic'
+
+const SignatureCanvas = dynamic(() => import('react-signature-canvas'), { ssr: false })
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   joinInterview,
@@ -62,6 +66,12 @@ export default function CandidateInterviewPage() {
   const [timeRemaining, setTimeRemaining] = useState(0)
   const [timerExpired, setTimerExpired] = useState(false)
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false)
+
+  // Bond agreement (for before_start timing)
+  const [bondTermsAccepted, setBondTermsAccepted] = useState(false)
+  const [bondHasSignature, setBondHasSignature] = useState(false)
+  const [bondSignatureData, setBondSignatureData] = useState<string>('')
+  const bondSignatureRef = useRef<any>(null)
 
   // Anti-cheating (enhanced)
   const antiCheatingRef = useRef<Awaited<ReturnType<typeof initializeEnhancedAntiCheating>> | null>(null)
@@ -109,6 +119,22 @@ export default function CandidateInterviewPage() {
     if (interview?.resume_required === 'mandatory' && !resumeFile) {
       toast.error('Please upload your resume before starting')
       return
+    }
+
+    // Validate bond signature if required before start
+    if (interview?.require_signature && interview?.bond_timing === 'before_start') {
+      if (!bondTermsAccepted) {
+        toast.error('Please accept the bond terms before starting')
+        return
+      }
+      if (!bondHasSignature) {
+        toast.error('Please provide your signature before starting')
+        return
+      }
+      // Capture signature data now — submitted with the final submission
+      if (bondSignatureRef.current && !bondSignatureRef.current.isEmpty()) {
+        setBondSignatureData(bondSignatureRef.current.toDataURL())
+      }
     }
 
     try {
@@ -279,17 +305,22 @@ export default function CandidateInterviewPage() {
 
       // Check if signature is required
       if (interview?.require_signature) {
-        // Redirect to signature page
-        antiCheatingRef.current?.cleanup()
-        toast.info('Please review and sign the bond agreement')
-        router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}`)
+        if (interview.bond_timing === 'before_start') {
+          // Bond already signed before start — submit directly with the stored signature
+          await submitInterview(submissionId, { signature_data: bondSignatureData || undefined, terms_accepted: true })
+          antiCheatingRef.current?.cleanup()
+          toast.success('Interview submitted successfully!')
+          router.push(`/interview/${accessToken}/thank-you`)
+        } else {
+          // before_submission (default): redirect to signature page
+          antiCheatingRef.current?.cleanup()
+          toast.info('Please review and sign the bond agreement')
+          router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}`)
+        }
       } else {
-        // Submit interview directly
+        // No signature required — submit directly
         await submitInterview(submissionId)
-
-        // Cleanup anti-cheating
         antiCheatingRef.current?.cleanup()
-
         toast.success('Interview submitted successfully!')
         router.push(`/interview/${accessToken}/thank-you`)
       }
@@ -322,13 +353,19 @@ export default function CandidateInterviewPage() {
 
       // Check if signature is required
       if (interview?.require_signature) {
-        // Redirect to signature page even on auto-submit
-        toast.info("Time's up! Please sign the bond agreement to complete your submission.")
-        router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}&auto=true`)
+        if (interview.bond_timing === 'before_start') {
+          // Bond already signed before start — submit directly with stored signature
+          await submitInterview(submissionId, { signature_data: bondSignatureData || undefined, terms_accepted: true })
+          toast.info("Time's up! Your assessment has been auto-submitted.")
+          router.push(`/interview/${accessToken}/thank-you`)
+        } else {
+          // before_submission: redirect to signature page
+          toast.info("Time's up! Please sign the bond agreement to complete your submission.")
+          router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}&auto=true`)
+        }
       } else {
-        // Submit interview directly
         await submitInterview(submissionId)
-        toast.info("Time's up! Your interview has been auto-submitted.")
+        toast.info("Time's up! Your assessment has been auto-submitted.")
         router.push(`/interview/${accessToken}/thank-you`)
       }
     } catch (error) {
@@ -427,25 +464,21 @@ export default function CandidateInterviewPage() {
                 </ul>
               </div>
 
-              {/* Bond Agreement Notice (if signature is required) */}
-              {interview.require_signature && (
+              {/* Bond Agreement Notice — only shown here for before_submission timing */}
+              {interview.require_signature && interview.bond_timing !== 'before_start' && (
                 <div className="p-4 bg-amber-50 border-l-4 border-amber-500 rounded-lg">
                   <p className="text-sm font-semibold text-amber-900 mb-2 flex items-center gap-2">
                     <span>⚠️</span> Bond Agreement Required
                   </p>
                   <ul className="text-xs text-amber-800 space-y-1.5">
-                    <li>• Digital signature required</li>
+                    <li>• Digital signature required after submission</li>
                     <li>• {interview.bond_years || 2} year bond period</li>
                     <li>• Certificates collected until completion</li>
                     {interview.bond_document_url && (
                       <li>
                         •{' '}
-                        <a
-                          href={interview.bond_document_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline font-medium"
-                        >
+                        <a href={interview.bond_document_url} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline font-medium">
                           View bond document
                         </a>
                       </li>
@@ -525,6 +558,75 @@ export default function CandidateInterviewPage() {
               </div>
             </div>
 
+            {/* Bond Agreement — shown inline before start when bond_timing === 'before_start' */}
+            {interview.require_signature && interview.bond_timing === 'before_start' && (
+              <div className="border border-amber-300 bg-amber-50 rounded-lg p-5 space-y-4">
+                <div className="flex items-center gap-2">
+                  <PenTool className="h-5 w-5 text-amber-600" />
+                  <h3 className="font-semibold text-amber-900">Bond Agreement — Sign Before Starting</h3>
+                </div>
+
+                {/* Bond terms text */}
+                {interview.bond_terms && (
+                  <div className="bg-white border border-amber-200 rounded-md p-4 max-h-48 overflow-y-auto">
+                    <p className="text-xs text-gray-700 whitespace-pre-wrap">{interview.bond_terms}</p>
+                  </div>
+                )}
+
+                {interview.bond_document_url && (
+                  <a href={interview.bond_document_url} target="_blank" rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+                    <FileText className="h-4 w-4" />
+                    View full bond document
+                  </a>
+                )}
+
+                {/* Signature pad */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium text-amber-900">Your Signature *</Label>
+                  <div className="border-2 border-amber-300 rounded-lg bg-white overflow-hidden">
+                    <SignatureCanvas
+                      ref={bondSignatureRef}
+                      penColor="black"
+                      canvasProps={{ width: 500, height: 120, className: 'w-full' }}
+                      onEnd={() => {
+                        if (bondSignatureRef.current && !bondSignatureRef.current.isEmpty()) {
+                          setBondHasSignature(true)
+                          setBondSignatureData(bondSignatureRef.current.toDataURL())
+                        }
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      bondSignatureRef.current?.clear()
+                      setBondHasSignature(false)
+                      setBondSignatureData('')
+                    }}
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    Clear signature
+                  </button>
+                </div>
+
+                {/* Accept checkbox */}
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="bondAccept"
+                    checked={bondTermsAccepted}
+                    onChange={(e) => setBondTermsAccepted(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="bondAccept" className="text-sm text-amber-900 cursor-pointer leading-relaxed">
+                    I have read and agree to the bond terms above. I understand this is a {interview.bond_years || 2}-year bond agreement
+                    and my signature constitutes a legally binding acceptance.
+                  </Label>
+                </div>
+              </div>
+            )}
+
             {/* Time Info */}
             <div className={`p-3 rounded-lg border-l-4 ${timerExpired
               ? 'bg-red-50 border-red-500'
@@ -549,8 +651,11 @@ export default function CandidateInterviewPage() {
 
             <Button
               onClick={handleStartSubmission}
-              disabled={loading || timerExpired}
-              className="w-full h-12 text-base font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all"
+              disabled={
+                loading || timerExpired ||
+                (interview.require_signature && interview.bond_timing === 'before_start' && (!bondTermsAccepted || !bondHasSignature))
+              }
+              className="w-full h-12 text-base font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
             >
               {loading ? (
                 <>

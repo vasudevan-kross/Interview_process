@@ -18,9 +18,13 @@ class JobDescriptionResponse(BaseModel):
     job_id: str
     title: str
     extracted_text: str
-    skills: Dict[str, List[str]]
-    file_info: Dict[str, Any]
-    metadata: Dict[str, Any]
+    skills: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    # LLM service fields
+    required_skills: Optional[List[str]] = None
+    total_skills: Optional[int] = None
+    department: Optional[str] = None
 
 
 class ResumeUpload(BaseModel):
@@ -36,11 +40,12 @@ class ResumeResponse(BaseModel):
     resume_id: str
     candidate_name: Optional[str]
     extracted_text: str
-    skills: Dict[str, List[str]]
+    skills: Optional[Dict[str, Any]] = None
     match_score: float
-    match_details: Dict[str, Any]
-    file_info: Dict[str, Any]
-    metadata: Dict[str, Any]
+    match_details: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    candidate_email: Optional[str] = None
 
 
 class BatchResumeResponse(BaseModel):

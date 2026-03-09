@@ -122,11 +122,27 @@ export default function CodingInterviewsPage() {
       coding: 'bg-purple-100 text-purple-800',
       testing: 'bg-orange-100 text-orange-800',
       both: 'bg-indigo-100 text-indigo-800',
+      devops: 'bg-amber-100 text-amber-800',
+      sql: 'bg-green-100 text-green-800',
+      system_design: 'bg-pink-100 text-pink-800',
+      fullstack: 'bg-cyan-100 text-cyan-800',
+      data_science: 'bg-teal-100 text-teal-800',
+    }
+
+    const labels: Record<string, string> = {
+      coding: 'CODING',
+      testing: 'TESTING',
+      both: 'BOTH',
+      devops: 'DEVOPS',
+      sql: 'SQL',
+      system_design: 'SYS DESIGN',
+      fullstack: 'FULLSTACK',
+      data_science: 'DATA SCI',
     }
 
     return (
       <Badge className={variants[type] || variants.coding}>
-        {type.toUpperCase()}
+        {labels[type] || type.toUpperCase()}
       </Badge>
     )
   }
@@ -157,10 +173,10 @@ export default function CodingInterviewsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            Coding Interviews
+            Technical Assessments
           </h1>
           <p className="text-gray-600 mt-2">
-            Create and manage time-bound coding and testing interviews
+            Create and manage time-bound technical assessments across all domains
           </p>
         </div>
         <Button
@@ -302,7 +318,11 @@ export default function CodingInterviewsPage() {
                       </TableCell>
                       <TableCell>{getStatusBadge(computeEffectiveStatus(interview))}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{interview.programming_language}</Badge>
+                        <Badge variant="outline">
+                          {interview.programming_language === 'any' || (interview.allowed_languages && interview.allowed_languages.length === 0)
+                            ? 'Any Language'
+                            : interview.programming_language}
+                        </Badge>
                       </TableCell>
                       <TableCell>{interview.total_marks}</TableCell>
                       <TableCell className="text-right">

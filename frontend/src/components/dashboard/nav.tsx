@@ -33,7 +33,7 @@ const navItems = [
   //   gradient: 'from-cyan-500 to-blue-500',
   // },
   {
-    title: 'Coding Interviews',
+    title: 'Technical Assessments',
     href: '/dashboard/coding-interviews',
     icon: Code,
     gradient: 'from-indigo-500 to-purple-500',

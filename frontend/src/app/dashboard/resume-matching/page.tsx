@@ -37,7 +37,7 @@ export default function ResumeMatchingPage() {
       const result = await apiClient.uploadJobDescription(formData)
 
       toast.success('Job description uploaded successfully!')
-      router.push(`/dashboard/resume-matching/${result.job_id}/upload-resumes`)
+      router.push(`/dashboard/resume-matching/jobs`)
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Failed to upload job description')
     } finally {

@@ -134,7 +134,8 @@ class CodingInterviewService:
         bond_terms: Optional[str] = None,
         bond_document_url: Optional[str] = None,
         require_signature: bool = False,
-        bond_years: int = 2
+        bond_years: int = 2,
+        bond_timing: str = 'before_submission'
     ) -> Dict[str, Any]:
         """
         Create a new coding interview with questions.
@@ -195,6 +196,7 @@ class CodingInterviewService:
                 'bond_document_url': bond_document_url,
                 'require_signature': require_signature,
                 'bond_years': bond_years,
+                'bond_timing': bond_timing,
                 'created_by': user_id
             }
 

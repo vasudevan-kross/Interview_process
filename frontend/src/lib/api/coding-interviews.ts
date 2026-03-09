@@ -60,7 +60,7 @@ export interface Interview {
   status: 'scheduled' | 'in_progress' | 'completed' | 'expired';
   access_token: string;
   link_expires_at: string;
-  interview_type: 'coding' | 'testing' | 'both';
+  interview_type: string;
   programming_language: string;
   allowed_languages?: string[];  // Languages candidates can choose from. undefined/[] = ANY language
   total_marks: number;
@@ -70,6 +70,7 @@ export interface Interview {
   bond_document_url?: string;  // URL to uploaded bond document
   require_signature?: boolean;  // Whether signature is required
   bond_years?: number;  // Number of years for bond
+  bond_timing?: 'before_start' | 'before_submission';  // When bond appears
   created_at: string;
   questions?: Question[];
 }
@@ -143,13 +144,14 @@ export async function createInterview(data: {
   scheduled_end_time: string;
   programming_language: string;
   allowed_languages?: string[];  // Languages candidates can choose from
-  interview_type: 'coding' | 'testing' | 'both';
+  interview_type: string;
   grace_period_minutes?: number;
   resume_required?: 'mandatory' | 'optional' | 'disabled';
   bond_terms?: string;  // Terms and conditions text
   bond_document_url?: string;  // URL to uploaded bond document
   require_signature?: boolean;  // Whether signature is required
   bond_years?: number;  // Number of years for bond
+  bond_timing?: 'before_start' | 'before_submission';
   questions: Question[];
 }): Promise<{
   interview_id: string;
@@ -181,7 +183,8 @@ export async function generateQuestions(data: {
   num_questions: number;
   programming_language?: string;
   test_framework?: string;
-  interview_type: 'coding' | 'testing' | 'both';
+  domain_tool?: string;
+  interview_type: string;
 }): Promise<{ questions: Question[]; count: number; detected_type?: string }> {
   const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/generate-questions`, {
@@ -204,7 +207,7 @@ export async function generateQuestions(data: {
 export async function extractQuestionsFromDocument(data: {
   file: File;
   programming_language?: string;
-  interview_type?: 'coding' | 'testing' | 'both';
+  interview_type?: string;
   difficulty?: 'easy' | 'medium' | 'hard';
 }): Promise<{ questions: Question[]; count: number; extracted_text_length: number }> {
   const formData = new FormData();

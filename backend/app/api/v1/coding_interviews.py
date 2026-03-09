@@ -23,7 +23,7 @@ from app.schemas.coding_interviews import (
     TrackActivityRequest
 )
 from app.services.coding_interview_service import get_coding_interview_service
-from app.services.question_generator import get_question_generator
+from app.services.question_generator import get_question_generator, DOMAIN_REGISTRY
 from app.services.document_processor import get_document_processor
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.db.supabase_client import get_supabase
@@ -32,6 +32,15 @@ from app.auth.dependencies import get_current_user_id
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/coding-interviews", tags=["coding-interviews"])
+
+
+@router.get("/domains", summary="List available interview domains")
+async def list_domains():
+    """
+    Return the domain registry config so the frontend can render domain/tool dropdowns dynamically.
+    Adding a new domain requires only a change to DOMAIN_REGISTRY in question_generator.py.
+    """
+    return {"domains": DOMAIN_REGISTRY}
 
 
 @router.post("", summary="Create coding interview")
@@ -69,7 +78,8 @@ async def create_interview(
             bond_terms=request.bond_terms,
             bond_document_url=request.bond_document_url,
             require_signature=request.require_signature,
-            bond_years=request.bond_years
+            bond_years=request.bond_years,
+            bond_timing=request.bond_timing
         )
 
         return result
@@ -95,33 +105,26 @@ async def generate_questions(request: GenerateQuestionsRequest):
     try:
         generator = get_question_generator()
 
-        # Auto-detect if the job description is for a testing/QA role
-        testing_keywords = [
-            'tester', 'testing', 'qa ', 'quality assurance', 'sdet',
-            'test engineer', 'test analyst', 'automation tester',
-            'manual tester', 'test lead', 'test case', 'test plan',
-            'selenium', 'playwright', 'cypress', 'appium', 'jmeter',
-            'bug', 'defect', 'regression', 'smoke test', 'sanity test',
-        ]
+        # --- Auto-detect domain from job description keywords ---
         jd_lower = request.job_description.lower()
-        is_testing_role = any(kw in jd_lower for kw in testing_keywords)
 
-        # Determine effective interview type
+        KEYWORD_DOMAINS = [
+            ('devops', ['devops', 'docker', 'kubernetes', 'k8s', 'terraform', 'ansible', 'ci/cd', 'jenkins', 'pipeline', 'infrastructure', 'cloud engineer', 'site reliability', 'sre']),
+            ('sql', ['sql', 'database', 'dba', 'postgres', 'mysql', 'oracle', 'schema design', 'query optimiz']),
+            ('data_science', ['data scientist', 'machine learning', 'ml engineer', 'data analyst', 'pandas', 'numpy', 'sklearn', 'deep learning', 'nlp', 'computer vision']),
+            ('testing', ['tester', 'testing', 'qa ', 'quality assurance', 'sdet', 'test engineer', 'test analyst', 'automation tester', 'manual tester', 'selenium', 'playwright', 'cypress', 'appium', 'jmeter', 'regression', 'smoke test']),
+        ]
+
         effective_type = request.interview_type
-        if is_testing_role and effective_type == 'coding':
-            effective_type = 'testing'
-            logger.info(f"Auto-detected testing role from job description, switching to testing questions")
+        for domain, keywords in KEYWORD_DOMAINS:
+            if any(kw in jd_lower for kw in keywords):
+                if effective_type == 'coding':  # Only auto-switch if still on default
+                    effective_type = domain
+                    logger.info(f"Auto-detected '{domain}' role from job description")
+                break
 
-        if effective_type == 'testing' or request.test_framework:
-            # Generate testing questions
-            questions = await generator.generate_testing_questions(
-                job_description=request.job_description,
-                difficulty=request.difficulty,
-                num_questions=request.num_questions,
-                test_framework=request.test_framework or 'manual-test-cases'
-            )
-        elif effective_type == 'both':
-            # Generate a mix: half coding, half testing
+        if effective_type == 'both':
+            # Legacy: mix coding + testing
             coding_count = request.num_questions // 2
             testing_count = request.num_questions - coding_count
             coding_qs = await generator.generate_coding_questions(
@@ -138,12 +141,15 @@ async def generate_questions(request: GenerateQuestionsRequest):
             )
             questions = coding_qs + testing_qs
         else:
-            # Generate coding questions
-            questions = await generator.generate_coding_questions(
+            # Use registry dispatch for all other domains
+            questions = await generator.generate_questions_for_domain(
+                domain=effective_type,
                 job_description=request.job_description,
                 difficulty=request.difficulty,
                 num_questions=request.num_questions,
-                programming_language=request.programming_language or 'python'
+                domain_tool=request.domain_tool,
+                programming_language=request.programming_language,
+                test_framework=request.test_framework,
             )
 
         return {

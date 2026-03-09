@@ -47,6 +47,7 @@ CREATE TABLE job_descriptions (
     file_size INTEGER,
 
     -- Parsed content
+    description TEXT,               -- Optional free-text description / notes
     raw_text TEXT,
     parsed_data JSONB,
 
