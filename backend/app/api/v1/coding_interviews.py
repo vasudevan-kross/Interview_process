@@ -11,7 +11,11 @@ Provides REST API for:
 
 import logging
 import json
+import re
+import zipfile
+from io import BytesIO
 from fastapi import APIRouter, HTTPException, status, Request, Body, Depends, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from typing import List, Optional
 
 from app.schemas.coding_interviews import (
@@ -1135,9 +1139,13 @@ async def bulk_import_candidates(
 
         # Column alias resolution (case-insensitive, already lowercased above)
         cols = set(df.columns)
-        email_col = next((c for c in ['email', 'email address', 'e-mail', 'mail'] if c in cols), None)
-        phone_col = next((c for c in ['phone', 'mobile', 'mobile number', 'phone number',
-                                       'contact', 'contact number', 'cell', 'telephone'] if c in cols), None)
+        email_col = next((c for c in [
+            'email', 'email id', 'emailid', 'email address', 'e-mail', 'mail'
+        ] if c in cols), None)
+        phone_col = next((c for c in [
+            'phone', 'mobile', 'mobile no', 'mobile number', 'phone number',
+            'contact', 'contact number', 'cell', 'telephone'
+        ] if c in cols), None)
 
         import math
 
@@ -1345,3 +1353,265 @@ async def delete_candidate(
     except Exception as e:
         logger.error(f"Error deleting candidate: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete candidate: {str(e)}")
+
+
+def _sanitize_name(name: str) -> str:
+    """Replace unsafe characters with underscores for ZIP entry names."""
+    sanitized = re.sub(r'[^\w\s\-]', '_', name)
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    return sanitized or 'Unknown'
+
+
+@router.get("/{interview_id}/export", summary="Export submissions as ZIP")
+async def export_submissions_zip(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Download all submitted candidates' resumes + answers as a ZIP archive.
+
+    ZIP structure:
+        {assessment_title}/
+            {candidate_name}/
+                resume.{ext}   (if uploaded)
+                answers.docx   (styled Word document)
+    """
+    try:
+        client = get_supabase()
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select(
+            'id, title, created_by'
+        ).eq('id', interview_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(status_code=404, detail="Interview not found")
+
+        interview = interview_result.data[0]
+        if interview.get('created_by') != current_user_id:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        title = interview.get('title', 'Assessment')
+        safe_title = _sanitize_name(title)
+
+        # Fetch questions for this interview
+        questions_result = client.table('coding_questions').select(
+            'id, question_text, difficulty, marks'
+        ).eq('interview_id', interview_id).order('created_at').execute()
+        questions = {q['id']: q for q in (questions_result.data or [])}
+
+        # Fetch submitted submissions
+        subs_result = client.table('coding_submissions').select(
+            'id, candidate_name, candidate_email, total_marks_obtained, percentage, '
+            'submitted_at, status, resume_path, candidate_decision'
+        ).eq('interview_id', interview_id).in_(
+            'status', ['submitted', 'auto_submitted']
+        ).execute()
+
+        submissions = subs_result.data or []
+
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        DECISION_COLORS = {
+            'advanced': RGBColor(0x16, 0xa3, 0x4a),   # green
+            'rejected': RGBColor(0xdc, 0x26, 0x26),   # red
+            'hold':     RGBColor(0xd9, 0x77, 0x06),   # amber
+            'pending':  RGBColor(0x6b, 0x72, 0x80),   # gray
+        }
+
+        def _add_label_value(para, label: str, value: str):
+            """Bold label, normal value on the same paragraph."""
+            run = para.add_run(f"{label}: ")
+            run.bold = True
+            run.font.size = Pt(11)
+            val_run = para.add_run(value)
+            val_run.font.size = Pt(11)
+
+        def _build_docx(sub: dict, answers: list) -> bytes:
+            doc = Document()
+
+            # ── Page margins ────────────────────────────────────────────────
+            for section in doc.sections:
+                section.top_margin    = Inches(0.9)
+                section.bottom_margin = Inches(0.9)
+                section.left_margin   = Inches(1.0)
+                section.right_margin  = Inches(1.0)
+
+            candidate_name = sub.get('candidate_name') or 'Unknown'
+            total_marks    = sub.get('total_marks_obtained')
+            percentage     = sub.get('percentage')
+            submitted_at   = sub.get('submitted_at', '')
+            raw_decision   = (sub.get('candidate_decision') or 'pending').lower()
+            decision_label = raw_decision.capitalize()
+            total_possible = sum(q.get('marks', 0) for q in questions.values())
+
+            # ── Title ────────────────────────────────────────────────────────
+            title_para = doc.add_paragraph()
+            title_run  = title_para.add_run(title)
+            title_run.bold       = True
+            title_run.font.size  = Pt(18)
+            title_run.font.color.rgb = RGBColor(0x1e, 0x3a, 0x8a)  # indigo-900
+            title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            # ── Candidate header ─────────────────────────────────────────────
+            name_para = doc.add_paragraph()
+            name_run  = name_para.add_run(candidate_name)
+            name_run.bold      = True
+            name_run.font.size = Pt(15)
+            name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            doc.add_paragraph()  # spacer
+
+            # ── Summary table ────────────────────────────────────────────────
+            tbl = doc.add_table(rows=1, cols=2)
+            tbl.style = 'Table Grid'
+            tbl.columns[0].width = Inches(2.2)
+            tbl.columns[1].width = Inches(4.0)
+
+            def _tbl_row(label, value, color=None):
+                row  = tbl.add_row()
+                lbl  = row.cells[0].paragraphs[0]
+                lbl_run = lbl.add_run(label)
+                lbl_run.bold = True
+                lbl_run.font.size = Pt(10)
+                val  = row.cells[1].paragraphs[0]
+                val_run = val.add_run(value)
+                val_run.font.size = Pt(10)
+                if color:
+                    val_run.font.color.rgb = color
+
+            # remove blank first row
+            tbl.rows[0]._element.getparent().remove(tbl.rows[0]._element)
+
+            _tbl_row("Email",     sub.get('candidate_email', ''))
+            if total_marks is not None:
+                score_str = f"{percentage:.1f}%  ({total_marks} / {total_possible} marks)"
+            else:
+                score_str = "Not evaluated"
+            _tbl_row("Score",     score_str)
+            _tbl_row("Submitted", submitted_at)
+            _tbl_row("Decision",  decision_label,
+                     DECISION_COLORS.get(raw_decision, RGBColor(0x6b, 0x72, 0x80)))
+
+            doc.add_paragraph()  # spacer
+
+            # ── Answers ──────────────────────────────────────────────────────
+            for idx, ans in enumerate(answers, 1):
+                q_id       = ans.get('question_id', '')
+                q          = questions.get(q_id, {})
+                q_text     = q.get('question_text', 'Unknown question')
+                difficulty = q.get('difficulty', '').capitalize()
+                q_marks    = q.get('marks', 0)
+                awarded    = ans.get('marks_awarded')
+                lang       = ans.get('programming_language', '')
+                code       = (ans.get('submitted_code') or '').strip()
+                feedback   = (ans.get('feedback') or '').strip()
+                covered    = ans.get('key_points_covered') or []
+                missed     = ans.get('key_points_missed') or []
+                quality    = ans.get('code_quality_score')
+                awarded_str = str(awarded) if awarded is not None else 'N/A'
+
+                # Question heading
+                q_para = doc.add_paragraph()
+                q_run  = q_para.add_run(f"Q{idx}. {q_text}")
+                q_run.bold      = True
+                q_run.font.size = Pt(12)
+                q_run.font.color.rgb = RGBColor(0x1e, 0x40, 0xaf)  # blue-800
+
+                # Meta line
+                meta_para = doc.add_paragraph()
+                meta_para.add_run(f"Difficulty: {difficulty}   |   Marks: {awarded_str} / {q_marks}   |   Language: {lang}").font.size = Pt(10)
+
+                # Code block
+                if code:
+                    code_label = doc.add_paragraph()
+                    code_label.add_run("Submitted Code").bold = True
+
+                    code_para = doc.add_paragraph(code)
+                    code_para.style = doc.styles['No Spacing']
+                    for run in code_para.runs:
+                        run.font.name = 'Courier New'
+                        run.font.size = Pt(9)
+                    # Light gray shading
+                    from docx.oxml.ns import qn
+                    from docx.oxml   import OxmlElement
+                    pPr = code_para._p.get_or_add_pPr()
+                    shd = OxmlElement('w:shd')
+                    shd.set(qn('w:val'),   'clear')
+                    shd.set(qn('w:color'), 'auto')
+                    shd.set(qn('w:fill'),  'F3F4F6')
+                    pPr.append(shd)
+
+                # AI Feedback
+                if feedback:
+                    fb_label = doc.add_paragraph()
+                    fb_label.add_run("AI Feedback").bold = True
+                    doc.add_paragraph(feedback)
+
+                if covered:
+                    p = doc.add_paragraph()
+                    _add_label_value(p, "Key Points Covered", ", ".join(covered))
+                if missed:
+                    p = doc.add_paragraph()
+                    _add_label_value(p, "Key Points Missed", ", ".join(missed))
+                if quality is not None:
+                    p = doc.add_paragraph()
+                    _add_label_value(p, "Code Quality Score", f"{quality}/100")
+
+                # Divider
+                doc.add_paragraph("─" * 60)
+
+            buf = BytesIO()
+            doc.save(buf)
+            return buf.getvalue()
+
+        # Build ZIP in memory
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for sub in submissions:
+                sub_id = sub['id']
+                candidate_name = sub.get('candidate_name') or 'Unknown'
+                safe_candidate = _sanitize_name(candidate_name)
+                folder = f"{safe_title}/{safe_candidate}"
+
+                # Fetch answers for this submission
+                answers_result = client.table('coding_answers').select(
+                    'question_id, submitted_code, programming_language, marks_awarded, '
+                    'feedback, key_points_covered, key_points_missed, code_quality_score'
+                ).eq('submission_id', sub_id).execute()
+                answers = answers_result.data or []
+
+                # Build styled Word document
+                docx_bytes = _build_docx(sub, answers)
+                zf.writestr(f"{folder}/answers.docx", docx_bytes)
+
+                # Download and add resume if present
+                resume_path = sub.get('resume_path')
+                if resume_path:
+                    try:
+                        resume_bytes = client.storage.from_('documents').download(resume_path)
+                        ext = resume_path.rsplit('.', 1)[-1] if '.' in resume_path else 'pdf'
+                        zf.writestr(f"{folder}/resume.{ext}", resume_bytes)
+                    except Exception as resume_err:
+                        logger.warning(f"Could not download resume for {sub_id}: {resume_err}")
+
+        zip_buffer.seek(0)
+        safe_filename = re.sub(r'[^\w\-]', '_', title)
+
+        return StreamingResponse(
+            zip_buffer,
+            media_type='application/zip',
+            headers={
+                'Content-Disposition': f'attachment; filename="{safe_filename}_submissions.zip"'
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting submissions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to export submissions: {str(e)}"
+        )

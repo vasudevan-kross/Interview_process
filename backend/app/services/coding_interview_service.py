@@ -766,29 +766,7 @@ class CodingInterviewService:
                 f"{total_marks_obtained}/{total_marks} ({percentage:.2f}%)"
             )
 
-            # Notify HR that evaluation is done (fire-and-forget)
-            try:
-                from app.services.email_service import send_evaluation_complete
-                from app.config import settings as _s
-                # Get interview title
-                interview_title_result = self.client.table('coding_interviews').select(
-                    'title'
-                ).eq('id', submission['interview_id']).execute()
-                interview_title = (
-                    interview_title_result.data[0]['title']
-                    if interview_title_result.data else 'Technical Interview'
-                )
-                candidate_name = submission.get('candidate_name', 'Candidate')
-                send_evaluation_complete(
-                    hr_email=_s.GMAIL_RECIPIENT,
-                    candidate_name=candidate_name,
-                    interview_title=interview_title,
-                    score=total_marks_obtained,
-                    total=total_marks,
-                    percentage=percentage
-                )
-            except Exception as email_err:
-                logger.warning(f"Evaluation complete email failed (non-fatal): {email_err}")
+
 
             return {
                 'submission_id': submission_id,
@@ -1183,10 +1161,15 @@ Language:"""
 
         # Build email → submission map (skip null emails)
         sub_by_email: Dict[str, Dict] = {}
+        sub_by_name: Dict[str, Dict] = {}  # fallback: normalize name → submission
         for s in submissions:
             email = (s.get('candidate_email') or '').strip().lower()
             if email:
                 sub_by_email[email] = s
+            # Always index by name as fallback
+            name_key = (s.get('candidate_name') or '').strip().lower()
+            if name_key:
+                sub_by_name[name_key] = s
 
         # Track which submission IDs are already matched
         matched_sub_ids: set = set()
@@ -1195,18 +1178,28 @@ Language:"""
 
         for cand in imported:
             cand_email = (cand.get('email') or '').strip().lower()
+            cand_name_key = (cand.get('name') or '').strip().lower()
+
+            # Match by email first, then fall back to name
             sub = sub_by_email.get(cand_email) if cand_email else None
+            if sub is None:
+                sub = sub_by_name.get(cand_name_key) if cand_name_key else None
+
             submitted = sub is not None
 
             if sub:
                 matched_sub_ids.add(sub['id'])
 
+            # Show submission email/phone if the pre-registered row is missing them
+            display_email = cand.get('email') or (sub.get('candidate_email') if sub else None)
+            display_phone = cand.get('phone') or (sub.get('candidate_phone') if sub else None)
+
             unified.append({
                 'id': cand['id'],
                 'candidate_id': cand['id'],  # interview_candidates.id — present = editable/deletable
                 'name': cand['name'],
-                'email': cand.get('email'),
-                'phone': cand.get('phone'),
+                'email': display_email,
+                'phone': display_phone,
                 'submitted': submitted,
                 'submission_id': sub['id'] if sub else None,
                 'score': sub.get('total_marks_obtained') if sub else None,

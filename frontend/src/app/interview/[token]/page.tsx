@@ -21,9 +21,16 @@ import {
   FileText,
   PenTool,
 } from 'lucide-react'
+import type SignatureCanvasT from 'react-signature-canvas'
+import type { SignatureCanvasProps } from 'react-signature-canvas'
 import dynamic from 'next/dynamic'
 
-const SignatureCanvas = dynamic(() => import('react-signature-canvas'), { ssr: false })
+// dynamic() doesn't forward refs by default — cast so TypeScript accepts ref
+const SignatureCanvas = dynamic(
+  () => import('react-signature-canvas'),
+  { ssr: false }
+) as React.ForwardRefExoticComponent<SignatureCanvasProps & React.RefAttributes<SignatureCanvasT>>
+
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   joinInterview,
@@ -66,12 +73,15 @@ export default function CandidateInterviewPage() {
   const [timeRemaining, setTimeRemaining] = useState(0)
   const [timerExpired, setTimerExpired] = useState(false)
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false)
+  const [emptySubmitDialogOpen, setEmptySubmitDialogOpen] = useState(false)
 
   // Bond agreement (for before_start timing)
   const [bondTermsAccepted, setBondTermsAccepted] = useState(false)
   const [bondHasSignature, setBondHasSignature] = useState(false)
   const [bondSignatureData, setBondSignatureData] = useState<string>('')
   const bondSignatureRef = useRef<any>(null)
+  const bondSigContainerRef = useRef<HTMLDivElement>(null)
+  const [bondSigWidth, setBondSigWidth] = useState(600)
 
   // Anti-cheating (enhanced)
   const antiCheatingRef = useRef<Awaited<ReturnType<typeof initializeEnhancedAntiCheating>> | null>(null)
@@ -246,6 +256,18 @@ export default function CandidateInterviewPage() {
     codeChangeTrackerRef.current = createCodeChangeTracker(submissionId, currentQuestionId)
   }, [currentQuestionIndex, hasStarted, interview, submissionId])
 
+  // Measure signature container so canvas pixel width matches displayed width
+  useEffect(() => {
+    const measure = () => {
+      if (bondSigContainerRef.current) {
+        setBondSigWidth(bondSigContainerRef.current.clientWidth)
+      }
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+
   // Handle code change
   const handleCodeChange = (questionId: string, code: string | undefined) => {
     if (code === undefined) return
@@ -279,8 +301,23 @@ export default function CandidateInterviewPage() {
     }
   }
 
+  // Check if all answers are empty or match starter code (unattempted)
+  const hasAllEmptyOrStarterCode = (): boolean => {
+    if (!interview?.questions) return false
+    return interview.questions.every((q, idx) => {
+      const questionId = q.id || idx.toString()
+      const currentCode = (codeAnswers[questionId] || '').trim()
+      const starter = (q.starter_code || '').trim()
+      return currentCode === '' || currentCode === starter
+    })
+  }
+
   const handleSubmit = async () => {
-    setSubmitDialogOpen(true)
+    if (hasAllEmptyOrStarterCode()) {
+      setEmptySubmitDialogOpen(true)
+    } else {
+      setSubmitDialogOpen(true)
+    }
   }
 
   const confirmSubmit = async () => {
@@ -584,11 +621,11 @@ export default function CandidateInterviewPage() {
                 {/* Signature pad */}
                 <div className="space-y-2">
                   <Label className="text-sm font-medium text-amber-900">Your Signature *</Label>
-                  <div className="border-2 border-amber-300 rounded-lg bg-white overflow-hidden">
+                  <div ref={bondSigContainerRef} className="border-2 border-amber-300 rounded-lg bg-white overflow-hidden">
                     <SignatureCanvas
                       ref={bondSignatureRef}
                       penColor="black"
-                      canvasProps={{ width: 500, height: 120, className: 'w-full' }}
+                      canvasProps={{ width: bondSigWidth, height: 120 }}
                       onEnd={() => {
                         if (bondSignatureRef.current && !bondSignatureRef.current.isEmpty()) {
                           setBondHasSignature(true)
@@ -807,6 +844,22 @@ export default function CandidateInterviewPage() {
               </Button>
             )}
           </div>
+
+          {/* Warning: all answers empty / starter code */}
+          <ConfirmDialog
+            open={emptySubmitDialogOpen}
+            onOpenChange={setEmptySubmitDialogOpen}
+            onConfirm={() => {
+              setEmptySubmitDialogOpen(false)
+              setSubmitDialogOpen(true)
+            }}
+            title="⚠️ Answers Look Empty"
+            description={
+              `All your answers appear to be empty or still contain only the default starter code. ` +
+              `Are you sure you want to submit without attempting the questions?`
+            }
+            confirmText="Yes, Submit Anyway"
+          />
 
           <ConfirmDialog
             open={submitDialogOpen}

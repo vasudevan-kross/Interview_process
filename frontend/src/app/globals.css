@@ -81,3 +81,13 @@
     @apply bg-slate-600;
   }
 }
+
+/* Hide Next.js dev indicators (Static Indicator and Build Activity) */
+#nextjs-static-indicator-root,
+#nextjs-build-activity-root,
+.__next-static-indicator,
+.nextjs-static-indicator-root {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

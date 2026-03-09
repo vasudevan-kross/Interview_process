@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
     // Performance optimizations
     reactStrictMode: true,
 
+    // Hide Next.js dev indicator (the "N" icon)
+    devIndicators: false,
+
     // Reduce bundle size
     compiler: {
         removeConsole: process.env.NODE_ENV === 'production',

@@ -85,7 +85,6 @@ class Settings(BaseSettings):
     # Gmail SMTP (for transactional emails)
     GMAIL_SENDER: str = "vasudevan.r@krossark.com"
     GMAIL_APP_PASSWORD: Optional[str] = None   # 16-char Google App Password
-    GMAIL_RECIPIENT: str = "vasudevan.r@krossark.com"  # Default HR/admin recipient
 
     @property
     def allowed_extensions_list(self) -> List[str]:
