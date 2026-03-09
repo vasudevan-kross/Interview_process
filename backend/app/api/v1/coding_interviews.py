@@ -20,7 +20,11 @@ from app.schemas.coding_interviews import (
     StartSubmissionRequest,
     SaveCodeRequest,
     SubmitInterviewRequest,
-    TrackActivityRequest
+    TrackActivityRequest,
+    BulkImportResponse,
+    InterviewCandidateResponse,
+    CandidateDecisionUpdate,
+    CandidateUpdate,
 )
 from app.services.coding_interview_service import get_coding_interview_service
 from app.services.question_generator import get_question_generator, DOMAIN_REGISTRY
@@ -1087,3 +1091,257 @@ async def evaluate_all_submissions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to perform bulk evaluation"
         )
+
+
+@router.post(
+    "/{interview_id}/candidates/bulk",
+    response_model=BulkImportResponse,
+    summary="Bulk import candidates from Excel/CSV"
+)
+async def bulk_import_candidates(
+    interview_id: str,
+    file: UploadFile = File(...),
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Upload an Excel (.xlsx / .xls) or CSV file to pre-register candidates for an interview.
+    Required column: name. Optional: email, phone. Column names are case-insensitive.
+    """
+    try:
+        import pandas as pd
+        from io import BytesIO
+
+        filename = file.filename or ''
+        if filename.endswith('.csv'):
+            content = await file.read()
+            df = pd.read_csv(BytesIO(content))
+        elif filename.endswith(('.xlsx', '.xls')):
+            content = await file.read()
+            df = pd.read_excel(BytesIO(content))
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only CSV and Excel files (.csv, .xlsx, .xls) are supported"
+            )
+
+        # Normalize column names
+        df.columns = [c.strip().lower() for c in df.columns]
+
+        if 'name' not in df.columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must contain a 'name' column"
+            )
+
+        # Column alias resolution (case-insensitive, already lowercased above)
+        cols = set(df.columns)
+        email_col = next((c for c in ['email', 'email address', 'e-mail', 'mail'] if c in cols), None)
+        phone_col = next((c for c in ['phone', 'mobile', 'mobile number', 'phone number',
+                                       'contact', 'contact number', 'cell', 'telephone'] if c in cols), None)
+
+        import math
+
+        # Build candidate list
+        candidates = []
+        for _, row in df.iterrows():
+            def safe_val(v):
+                """Convert pandas NaN / empty string to None."""
+                if v is None:
+                    return None
+                try:
+                    if math.isnan(float(v)):
+                        return None
+                except (TypeError, ValueError):
+                    pass
+                s = str(v).strip()
+                return s if s else None
+
+            candidates.append({
+                'name': str(row.get('name', '') or '').strip(),
+                'email': safe_val(row[email_col] if email_col and email_col in row else None),
+                'phone': safe_val(row[phone_col] if phone_col and phone_col in row else None),
+            })
+
+        service = get_coding_interview_service()
+        result = await service.bulk_import_candidates(
+            interview_id=interview_id,
+            candidates=candidates,
+            user_id=current_user_id
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error importing candidates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to import candidates: {str(e)}"
+        )
+
+
+@router.get(
+    "/{interview_id}/candidates",
+    summary="List all candidates for an interview"
+)
+async def get_interview_candidates(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Return unified candidate list: pre-registered + walk-in submissions.
+    Requires interview ownership.
+    """
+    try:
+        client = get_supabase()
+
+        # Verify ownership
+        interview_result = client.table('coding_interviews').select('id, title, access_token').eq(
+            'id', interview_id
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found"
+            )
+
+        service = get_coding_interview_service()
+        candidates = await service.get_interview_candidates(interview_id)
+        interview = interview_result.data[0]
+
+        return {
+            'interview_id': interview_id,
+            'interview_title': interview.get('title'),
+            'access_token': interview.get('access_token'),
+            'candidates': candidates,
+            'total': len(candidates),
+            'submitted': sum(1 for c in candidates if c['submitted']),
+            'advanced': sum(1 for c in candidates if c['decision'] == 'advanced'),
+            'rejected': sum(1 for c in candidates if c['decision'] == 'rejected'),
+            'hold': sum(1 for c in candidates if c['decision'] == 'hold'),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting candidates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get candidates: {str(e)}"
+        )
+
+
+@router.patch(
+    "/submissions/{submission_id}/decision",
+    summary="Set decision on a submission"
+)
+async def set_submission_decision(
+    submission_id: str,
+    body: CandidateDecisionUpdate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Mark a candidate submission as advanced / rejected / hold / pending.
+    Requires ownership of the parent interview.
+    """
+    try:
+        client = get_supabase()
+
+        # Verify ownership via interview
+        sub_result = client.table('coding_submissions').select('interview_id').eq(
+            'id', submission_id
+        ).execute()
+
+        if not sub_result.data:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', sub_result.data[0]['interview_id']
+        ).eq('created_by', current_user_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        allowed_decisions = {'advanced', 'rejected', 'hold', 'pending'}
+        if body.decision not in allowed_decisions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid decision. Must be one of: {', '.join(allowed_decisions)}"
+            )
+
+        service = get_coding_interview_service()
+        result = await service.set_submission_decision(
+            submission_id=submission_id,
+            decision=body.decision,
+            notes=body.notes,
+            decided_by=current_user_id
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error setting decision: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to set decision: {str(e)}"
+        )
+
+
+@router.patch(
+    "/{interview_id}/candidates/{candidate_id}",
+    summary="Edit a pre-registered candidate"
+)
+async def update_candidate(
+    interview_id: str,
+    candidate_id: str,
+    body: CandidateUpdate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Update name, email, phone of a pre-registered candidate."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.update_interview_candidate(
+            interview_id=interview_id,
+            candidate_id=candidate_id,
+            name=body.name,
+            email=body.email,
+            phone=body.phone,
+            user_id=current_user_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating candidate: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update candidate: {str(e)}")
+
+
+@router.delete(
+    "/{interview_id}/candidates/{candidate_id}",
+    summary="Remove a pre-registered candidate"
+)
+async def delete_candidate(
+    interview_id: str,
+    candidate_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Delete a pre-registered candidate from the interview list."""
+    try:
+        service = get_coding_interview_service()
+        await service.delete_interview_candidate(
+            interview_id=interview_id,
+            candidate_id=candidate_id,
+            user_id=current_user_id
+        )
+        return {'message': 'Candidate removed successfully'}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting candidate: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete candidate: {str(e)}")

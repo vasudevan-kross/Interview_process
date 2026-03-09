@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     VAPI_PRIVATE_KEY: Optional[str] = None
     VAPI_ASSISTANT_ID: Optional[str] = None
 
+    # Gmail SMTP (for transactional emails)
+    GMAIL_SENDER: str = "vasudevan.r@krossark.com"
+    GMAIL_APP_PASSWORD: Optional[str] = None   # 16-char Google App Password
+    GMAIL_RECIPIENT: str = "vasudevan.r@krossark.com"  # Default HR/admin recipient
+
     @property
     def allowed_extensions_list(self) -> List[str]:
         """Get allowed extensions as a list."""

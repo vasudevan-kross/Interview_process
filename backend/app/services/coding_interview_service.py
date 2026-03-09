@@ -520,9 +520,9 @@ class CodingInterviewService:
             submitted_at = datetime.now()
             duration_seconds = int((submitted_at - started_at).total_seconds())
 
-            # Get interview to check grace period and bond requirement
+            # Get interview to check grace period, bond requirement, and title
             interview_result = self.client.table('coding_interviews').select(
-                'link_expires_at, require_signature'
+                'link_expires_at, require_signature, title'
             ).eq('id', submission['interview_id']).execute()
 
             interview = interview_result.data[0]
@@ -557,6 +557,21 @@ class CodingInterviewService:
 
             # NOTE: Evaluation is NOT triggered during submission.
             # Trigger it later from the dashboard via the re-evaluate endpoint.
+
+            # Send confirmation email to candidate (fire-and-forget)
+            try:
+                from app.services.email_service import send_submission_confirmation
+                candidate_email = submission.get('candidate_email')
+                candidate_name = submission.get('candidate_name', 'Candidate')
+                interview_title = interview.get('title', 'Technical Interview')
+                if candidate_email:
+                    send_submission_confirmation(
+                        candidate_email=candidate_email,
+                        candidate_name=candidate_name,
+                        interview_title=interview_title
+                    )
+            except Exception as email_err:
+                logger.warning(f"Submission confirmation email failed (non-fatal): {email_err}")
 
             return {
                 'submission_id': submission_id,
@@ -658,6 +673,40 @@ class CodingInterviewService:
                 try:
                     submitted_code = answer['submitted_code']
 
+                    # Check if candidate submitted unchanged starter/template code
+                    starter_code = (question.get('starter_code') or '').strip()
+                    submitted_stripped = submitted_code.strip()
+
+                    # Also check against known global templates
+                    known_templates = [t.strip() for t in TEST_FRAMEWORK_TEMPLATES.values()]
+
+                    is_starter_code = (
+                        (starter_code and submitted_stripped == starter_code) or
+                        submitted_stripped in known_templates
+                    )
+
+                    if is_starter_code:
+                        logger.info(
+                            f"Q{question['question_number']}: Submitted code matches starter template — 0 marks"
+                        )
+                        evaluation_data = {
+                            'marks_awarded': 0,
+                            'is_correct': False,
+                            'similarity_score': 0.0,
+                            'programming_language': answer.get('programming_language', 'unknown'),
+                            'feedback': 'No attempt made. Starter/template code was submitted unchanged.',
+                            'key_points_covered': [],
+                            'key_points_missed': ['All requirements — no attempt made'],
+                            'code_quality_score': 0,
+                            'evaluated_at': datetime.now().isoformat(),
+                            'evaluated_by_model': 'system'
+                        }
+                        self.client.table('coding_answers').update(evaluation_data).eq(
+                            'id', answer['id']
+                        ).execute()
+                        evaluations.append({**evaluation_data, 'question_id': question['id']})
+                        continue
+
                     # Detect programming language from submitted code
                     detected_language = await self._detect_programming_language(submitted_code)
 
@@ -716,6 +765,30 @@ class CodingInterviewService:
                 f"Evaluation complete for {submission_id}: "
                 f"{total_marks_obtained}/{total_marks} ({percentage:.2f}%)"
             )
+
+            # Notify HR that evaluation is done (fire-and-forget)
+            try:
+                from app.services.email_service import send_evaluation_complete
+                from app.config import settings as _s
+                # Get interview title
+                interview_title_result = self.client.table('coding_interviews').select(
+                    'title'
+                ).eq('id', submission['interview_id']).execute()
+                interview_title = (
+                    interview_title_result.data[0]['title']
+                    if interview_title_result.data else 'Technical Interview'
+                )
+                candidate_name = submission.get('candidate_name', 'Candidate')
+                send_evaluation_complete(
+                    hr_email=_s.GMAIL_RECIPIENT,
+                    candidate_name=candidate_name,
+                    interview_title=interview_title,
+                    score=total_marks_obtained,
+                    total=total_marks,
+                    percentage=percentage
+                )
+            except Exception as email_err:
+                logger.warning(f"Evaluation complete email failed (non-fatal): {email_err}")
 
             return {
                 'submission_id': submission_id,
@@ -986,13 +1059,13 @@ Code:
 
 Language:"""
 
-            response = await llm.generate(
+            result = await llm.generate_completion(
                 prompt=prompt,
-                task_type='code_generation',  # Uses CodeLlama
+                model=llm.get_model_for_task('answer_evaluation', domain='coding'),
                 temperature=0.1
             )
 
-            detected = response.strip().lower()
+            detected = result.get('response', '').strip().lower()
 
             # Map common variations
             language_map = {
@@ -1024,6 +1097,222 @@ Language:"""
                 return 'cpp'
             else:
                 return 'unknown'
+
+
+    async def bulk_import_candidates(
+        self,
+        interview_id: str,
+        candidates: List[Dict[str, Any]],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Import a list of pre-registered candidates for an interview."""
+        client = get_supabase()
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        imported = 0
+        duplicates = 0
+        inserted_rows = []
+
+        for candidate in candidates:
+            name = (candidate.get('name') or '').strip()
+            if not name:
+                continue
+
+            email = (candidate.get('email') or '').strip() or None
+            phone = (candidate.get('phone') or '').strip() or None
+
+            row = {
+                'interview_id': interview_id,
+                'name': name,
+                'email': email,
+                'phone': phone,
+            }
+
+            try:
+                result = client.table('interview_candidates').insert(row).execute()
+                if result.data:
+                    imported += 1
+                    inserted_rows.append(result.data[0])
+            except Exception as e:
+                err_str = str(e).lower()
+                if 'duplicate' in err_str or 'unique' in err_str or '23505' in err_str:
+                    duplicates += 1
+                else:
+                    logger.warning(f"Failed to insert candidate {name}: {e}")
+                    duplicates += 1
+
+        logger.info(
+            f"Bulk import for interview {interview_id}: "
+            f"{imported} imported, {duplicates} duplicates"
+        )
+        return {
+            'imported': imported,
+            'duplicates': duplicates,
+            'candidates': inserted_rows,
+        }
+
+    async def get_interview_candidates(
+        self,
+        interview_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Return a unified candidate list: imported (not yet submitted) + submitted.
+        Merges by email when possible.
+        """
+        client = get_supabase()
+
+        # Fetch pre-registered candidates
+        imported_result = client.table('interview_candidates').select('*').eq(
+            'interview_id', interview_id
+        ).order('name').execute()
+        imported = imported_result.data or []
+
+        # Fetch all submissions for this interview
+        subs_result = client.table('coding_submissions').select(
+            'id, candidate_name, candidate_email, candidate_phone, total_marks_obtained, '
+            'percentage, candidate_decision, status'
+        ).eq('interview_id', interview_id).execute()
+        submissions = subs_result.data or []
+
+        # Build email → submission map (skip null emails)
+        sub_by_email: Dict[str, Dict] = {}
+        for s in submissions:
+            email = (s.get('candidate_email') or '').strip().lower()
+            if email:
+                sub_by_email[email] = s
+
+        # Track which submission IDs are already matched
+        matched_sub_ids: set = set()
+
+        unified: List[Dict[str, Any]] = []
+
+        for cand in imported:
+            cand_email = (cand.get('email') or '').strip().lower()
+            sub = sub_by_email.get(cand_email) if cand_email else None
+            submitted = sub is not None
+
+            if sub:
+                matched_sub_ids.add(sub['id'])
+
+            unified.append({
+                'id': cand['id'],
+                'candidate_id': cand['id'],  # interview_candidates.id — present = editable/deletable
+                'name': cand['name'],
+                'email': cand.get('email'),
+                'phone': cand.get('phone'),
+                'submitted': submitted,
+                'submission_id': sub['id'] if sub else None,
+                'score': sub.get('total_marks_obtained') if sub else None,
+                'percentage': sub.get('percentage') if sub else None,
+                'decision': sub.get('candidate_decision', 'pending') if sub else 'pending',
+            })
+
+        # Walk-in submissions not in the import list
+        for s in submissions:
+            if s['id'] not in matched_sub_ids:
+                unified.append({
+                    'id': s['id'],
+                    'candidate_id': None,  # no interview_candidates record — not editable
+                    'name': s.get('candidate_name', 'Unknown'),
+                    'email': s.get('candidate_email'),
+                    'phone': s.get('candidate_phone'),  # pull from submission
+                    'submitted': True,
+                    'submission_id': s['id'],
+                    'score': s.get('total_marks_obtained'),
+                    'percentage': s.get('percentage'),
+                    'decision': s.get('candidate_decision', 'pending'),
+                })
+
+        # Sort: submitted first, then not-started alphabetically
+        unified.sort(key=lambda x: (0 if x['submitted'] else 1, x['name'].lower()))
+        return unified
+
+    async def update_interview_candidate(
+        self,
+        interview_id: str,
+        candidate_id: str,
+        name: str,
+        email: Optional[str],
+        phone: Optional[str],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Update a pre-registered candidate's details."""
+        client = get_supabase()
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        result = client.table('interview_candidates').update({
+            'name': name.strip(),
+            'email': email.strip() if email else None,
+            'phone': phone.strip() if phone else None,
+        }).eq('id', candidate_id).eq('interview_id', interview_id).execute()
+
+        if not result.data:
+            raise ValueError("Candidate not found")
+
+        return result.data[0]
+
+    async def delete_interview_candidate(
+        self,
+        interview_id: str,
+        candidate_id: str,
+        user_id: str
+    ) -> None:
+        """Delete a pre-registered candidate from the interview."""
+        client = get_supabase()
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        result = client.table('interview_candidates').delete().eq(
+            'id', candidate_id
+        ).eq('interview_id', interview_id).execute()
+
+        if not result.data:
+            raise ValueError("Candidate not found")
+
+    async def set_submission_decision(
+        self,
+        submission_id: str,
+        decision: str,
+        notes: Optional[str],
+        decided_by: str
+    ) -> Dict[str, Any]:
+        """Update the decision on a coding submission."""
+        client = get_supabase()
+        from datetime import datetime, timezone
+
+        update_data = {
+            'candidate_decision': decision,
+            'decision_notes': notes,
+            'decided_at': datetime.now(timezone.utc).isoformat(),
+            'decided_by': decided_by,
+        }
+
+        result = client.table('coding_submissions').update(update_data).eq(
+            'id', submission_id
+        ).execute()
+
+        if not result.data:
+            raise ValueError("Submission not found")
+
+        return result.data[0]
 
 
 # Singleton instance
