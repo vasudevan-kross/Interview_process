@@ -346,8 +346,8 @@ export default function CodingInterviewsPage() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/submissions`)}
-                            title="View submissions"
+                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/candidates`)}
+                            title="Candidate pipeline"
                           >
                             <Users className="h-4 w-4" />
                           </Button>

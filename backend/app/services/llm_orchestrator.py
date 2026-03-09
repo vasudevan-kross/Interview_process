@@ -967,8 +967,8 @@ Provide evaluation as JSON."""
                 }
 
             # Select model (CodeLlama for code evaluation)
-            selected_model = model or self.select_model(
-                task_type='code_generation',
+            selected_model = model or self.get_model_for_task(
+                task='answer_evaluation',
                 domain='coding'
             )
 
@@ -1010,13 +1010,13 @@ Return ONLY valid JSON."""
 
             logger.info(f"Evaluating code with {selected_model} (language: {detected_language})")
 
-            response = await self.generate(
+            result_raw = await self.generate_completion(
                 prompt=prompt,
-                task_type='code_generation',
                 model=selected_model,
                 temperature=0.2,
                 max_tokens=1000
             )
+            response = result_raw.get('response', '')
 
             # Parse JSON response
             import json
@@ -1027,16 +1027,16 @@ Return ONLY valid JSON."""
             if json_match:
                 result = json.loads(json_match.group())
             else:
-                # Fallback if no JSON found
-                logger.warning("No JSON in response, creating default result")
+                # Fallback if no JSON found - award 0, flag for manual review
+                logger.warning("No JSON in response, awarding 0 marks for manual review")
                 result = {
-                    "marks_awarded": max_marks * 0.5,  # Give 50% if we can't parse
-                    "is_correct": True,
-                    "feedback": "Code submitted but evaluation parsing failed. Manual review recommended.",
-                    "key_points_covered": ["Code provided"],
-                    "key_points_missed": ["Evaluation incomplete"],
-                    "code_quality_score": 50,
-                    "reasoning": "Automatic partial credit due to evaluation error"
+                    "marks_awarded": 0,
+                    "is_correct": False,
+                    "feedback": "Code submitted but evaluation parsing failed. Manual review required.",
+                    "key_points_covered": [],
+                    "key_points_missed": ["Evaluation incomplete - manual review required"],
+                    "code_quality_score": 0,
+                    "reasoning": "Evaluation parsing failed - 0 marks awarded pending manual review"
                 }
 
             # Add model info
@@ -1049,15 +1049,15 @@ Return ONLY valid JSON."""
 
         except Exception as e:
             logger.error(f"Error evaluating code: {e}")
-            # Return partial credit on error
+            # Return 0 marks on error - do not award partial credit for unverified code
             return {
-                "marks_awarded": max_marks * 0.5,
+                "marks_awarded": 0,
                 "is_correct": False,
-                "similarity_score": 0.5,
-                "feedback": f"Evaluation error: {str(e)}. Partial credit awarded. Manual review recommended.",
-                "key_points_covered": ["Code submitted"],
-                "key_points_missed": ["Full evaluation incomplete"],
-                "code_quality_score": 50,
+                "similarity_score": 0.0,
+                "feedback": f"Evaluation error: {str(e)}. Manual review required.",
+                "key_points_covered": [],
+                "key_points_missed": ["Full evaluation incomplete - manual review required"],
+                "code_quality_score": 0,
                 "model_used": model or "error"
             }
 

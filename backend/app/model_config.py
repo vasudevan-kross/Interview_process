@@ -24,15 +24,15 @@ class ModelConfig:
         "resume_matching": "llama3.1:8b",  # Use same model as skill_extraction to avoid model switching overhead
 
         # Specialized tasks
-        "code_evaluation": "codellama:7b",
-        "code_parsing": "codellama:7b",
+        "code_evaluation": "llama3.1:8b",
+        "code_parsing": "llama3.1:8b",
     }
 
     # Domain-specific model overrides
     DOMAIN_MODELS: Dict[str, str] = {
-        "coding": "codellama:7b",
-        "development": "codellama:7b",
-        "sql": "codellama:7b",  # Can be changed to sqlcoder if available
+        "coding": "llama3.1:8b",
+        "development": "llama3.1:8b",
+        "sql": "llama3.1:8b",  # Can be changed to sqlcoder if available
         "general": "mistral-nemo:12b",
         "testing": "mistral-nemo:12b",
         "devops": "mistral-nemo:12b",

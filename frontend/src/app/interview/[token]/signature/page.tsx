@@ -22,11 +22,25 @@ export default function SignaturePage() {
   const submissionId = searchParams.get('submission_id') || ''
 
   const signatureRef = useRef<any>(null)
+  const sigContainerRef = useRef<HTMLDivElement>(null)
+  const [sigWidth, setSigWidth] = useState(600)
   const [hasSignature, setHasSignature] = useState(false)
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [interview, setInterview] = useState<Interview | null>(null)
+
+  // Measure signature container so canvas pixel width matches displayed width
+  useEffect(() => {
+    const measure = () => {
+      if (sigContainerRef.current) {
+        setSigWidth(sigContainerRef.current.clientWidth)
+      }
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
 
   // Load interview details
   useEffect(() => {
@@ -197,13 +211,14 @@ export default function SignaturePage() {
               </Button>
             </div>
 
-            <div className="border-2 border-dashed border-amber-300 rounded-lg bg-white overflow-hidden">
+            <div ref={sigContainerRef} className="border-2 border-dashed border-amber-300 rounded-lg bg-white overflow-hidden">
               <SignatureCanvas
                 ref={signatureRef}
                 onEnd={handleSignatureEnd}
                 canvasProps={{
-                  className: 'w-full h-48 cursor-crosshair',
-                  style: { touchAction: 'none' }
+                  width: sigWidth,
+                  height: 192,
+                  style: { display: 'block', touchAction: 'none', cursor: 'crosshair' }
                 }}
                 backgroundColor="rgb(255, 255, 255)"
                 penColor="rgb(0, 0, 0)"

@@ -76,3 +76,36 @@ class TrackActivityRequest(BaseModel):
     activity_type: str
     question_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+class BulkImportResponse(BaseModel):
+    """Response for bulk candidate import."""
+    imported: int
+    duplicates: int
+    candidates: List[Dict[str, Any]]
+
+
+class InterviewCandidateResponse(BaseModel):
+    """Unified candidate record (imported + submitted)."""
+    id: str
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    submitted: bool
+    submission_id: Optional[str] = None
+    score: Optional[float] = None
+    percentage: Optional[float] = None
+    decision: str = 'pending'
+
+
+class CandidateDecisionUpdate(BaseModel):
+    """Body for updating decision on a submission."""
+    decision: str  # 'advanced' | 'rejected' | 'hold' | 'pending'
+    notes: Optional[str] = None
+
+
+class CandidateUpdate(BaseModel):
+    """Body for editing a pre-registered candidate."""
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None

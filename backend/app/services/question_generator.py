@@ -107,7 +107,8 @@ class QuestionGenerator:
 
     def __init__(self):
         self.llm = get_llm_orchestrator()
-        self.model = os.getenv('QUESTION_GENERATION_MODEL', 'codellama:7b')
+        from app.model_config import ModelConfig
+        self.model = os.getenv('QUESTION_GENERATION_MODEL', ModelConfig.DEFAULT_MODEL)
 
     async def _generate_with_llm(self, prompt: str, temperature: float = 0.8) -> str:
         """

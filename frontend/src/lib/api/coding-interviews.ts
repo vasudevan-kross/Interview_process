@@ -571,6 +571,173 @@ export async function getResumeUrl(submissionId: string): Promise<{ resume_url: 
 }
 
 // ============================================================================
+// Candidate Pipeline
+// ============================================================================
+
+export interface InterviewCandidate {
+  id: string;
+  candidate_id?: string;  // interview_candidates.id — present means editable/deletable
+  name: string;
+  email?: string;
+  phone?: string;
+  submitted: boolean;
+  submission_id?: string;
+  score?: number;
+  percentage?: number;
+  decision: 'pending' | 'advanced' | 'rejected' | 'hold';
+}
+
+export interface CandidateListResponse {
+  interview_id: string;
+  interview_title: string;
+  access_token: string;
+  candidates: InterviewCandidate[];
+  total: number;
+  submitted: number;
+  advanced: number;
+  rejected: number;
+  hold: number;
+}
+
+/**
+ * Upload Excel/CSV to pre-register candidates for an interview
+ */
+export async function bulkImportCandidates(
+  interviewId: string,
+  file: File
+): Promise<{ imported: number; duplicates: number; candidates: any[] }> {
+  const headers = await getAuthHeaders();
+  delete (headers as any)['Content-Type']; // let browser set multipart boundary
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/candidates/bulk`,
+    { method: 'POST', headers, body: formData }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to import candidates');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get all candidates (imported + submitted) for an interview
+ */
+export async function getInterviewCandidates(
+  interviewId: string
+): Promise<CandidateListResponse> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/candidates`,
+    { headers }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get candidates');
+  }
+
+  return response.json();
+}
+
+/**
+ * Edit a pre-registered candidate's details
+ */
+export async function updateCandidate(
+  interviewId: string,
+  candidateId: string,
+  data: { name: string; email?: string; phone?: string }
+): Promise<any> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/candidates/${candidateId}`,
+    { method: 'PATCH', headers, body: JSON.stringify(data) }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update candidate');
+  }
+  return response.json();
+}
+
+/**
+ * Remove a pre-registered candidate
+ */
+export async function deleteCandidate(
+  interviewId: string,
+  candidateId: string
+): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/candidates/${candidateId}`,
+    { method: 'DELETE', headers }
+  );
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete candidate');
+  }
+}
+
+/**
+ * Set recruiter decision on a submission
+ */
+export async function setSubmissionDecision(
+  submissionId: string,
+  decision: 'advanced' | 'rejected' | 'hold' | 'pending',
+  notes?: string
+): Promise<any> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/submissions/${submissionId}/decision`,
+    {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ decision, notes }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to set decision');
+  }
+
+  return response.json();
+}
+
+/**
+ * Export all submitted candidates' resumes + answers as a ZIP archive
+ */
+export async function exportSubmissions(interviewId: string, interviewTitle: string): Promise<void> {
+  const headers = await getAuthHeaders();
+  delete (headers as any)['Content-Type'];
+
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/export`,
+    { headers }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to export submissions');
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${interviewTitle}_submissions.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 

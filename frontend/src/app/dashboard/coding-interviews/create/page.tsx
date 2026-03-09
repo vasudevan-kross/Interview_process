@@ -400,10 +400,13 @@ export default function CreateInterviewPage() {
                 value={scheduledStartTime}
                 onChange={(start) => {
                   setScheduledStartTime(start)
-                  // Auto-set end time to 1 hour after start if not yet set
-                  if (start && !scheduledEndTime) {
-                    const endDate = new Date(new Date(start).getTime() + 60 * 60 * 1000)
+                  if (start) {
                     const pad = (n: number) => String(n).padStart(2, '0')
+                    // Preserve existing duration; default to 1 hour if end not set
+                    const durationMs = scheduledStartTime && scheduledEndTime
+                      ? new Date(scheduledEndTime).getTime() - new Date(scheduledStartTime).getTime()
+                      : 60 * 60 * 1000
+                    const endDate = new Date(new Date(start).getTime() + Math.max(durationMs, 60 * 60 * 1000))
                     setScheduledEndTime(
                       `${endDate.getFullYear()}-${pad(endDate.getMonth() + 1)}-${pad(endDate.getDate())}T${pad(endDate.getHours())}:${pad(endDate.getMinutes())}`
                     )
