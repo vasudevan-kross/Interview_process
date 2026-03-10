@@ -144,6 +144,10 @@ def extract_json_from_text(text: str) -> Optional[Dict]:
     return None
 
 
+# Public alias used by vision_evaluator.py
+extract_json_robust = extract_json_from_text
+
+
 class TestEvaluationService:
     """Service for automated test evaluation."""
 
@@ -253,7 +257,7 @@ class TestEvaluationService:
                     "question_number": idx,
                     "question_text": question['question'],
                     "correct_answer": question.get('answer', ''),
-                    "marks": question.get('marks', 0),
+                    "marks": int(round(question.get('marks', 0))),
                     "question_type": question.get('type', 'descriptive'),
                     "metadata": {
                         "difficulty": question.get('difficulty', 'medium'),
@@ -372,7 +376,7 @@ Return ONLY the JSON object, nothing else."""
                 # Proportionally adjust marks
                 scale_factor = total_marks / total_assigned_marks if total_assigned_marks > 0 else 1
                 for q in questions:
-                    q['marks'] = round(q.get('marks', 0) * scale_factor, 2)
+                    q['marks'] = int(round(q.get('marks', 0) * scale_factor))
 
             logger.info(f"Successfully parsed {len(questions)} questions")
 
@@ -438,10 +442,12 @@ Return ONLY the JSON object, nothing else."""
             )
 
             extracted_text = extraction['extracted_text']
+            page_images = extraction.get('page_images', [])
 
             # Log extraction details for debugging
             logger.info(f"Extracted text length: {len(extracted_text) if extracted_text else 0} chars")
-            logger.info(f"File type: {validation['file_type']}, OCR used: {extraction.get('ocr_used', False)}")
+            logger.info(f"File type: {validation['file_type']}, OCR used: {extraction.get('ocr_used', False)}, "
+                        f"page_images captured: {len(page_images)}")
             if extracted_text:
                 logger.info(f"First 200 chars: {extracted_text[:200]}")
 
@@ -509,18 +515,19 @@ Return ONLY the JSON object, nothing else."""
             total_marks_obtained = 0
 
             for question, candidate_answer in zip(questions, parsed_answers['answers']):
-                # Use HYBRID evaluation for maximum consistency:
-                # - Deterministic scoring (keyword/pattern matching)
-                # - Multi-run LLM evaluation (3 runs averaged)
-                # - Weighted combination (30% deterministic + 70% LLM)
-                evaluation = await self.llm.evaluate_answer_hybrid(
+                # Use HYBRID-VISION evaluation:
+                # - If OCR quality is good: deterministic + multi-run LLM (text path)
+                # - If OCR quality is poor and page images exist: vision model reads handwriting
+                # - Falls back gracefully when no vision model is installed
+                evaluation = await self.llm.evaluate_answer_hybrid_vision(
                     question=question['question_text'],
                     correct_answer=question['correct_answer'],
                     candidate_answer=candidate_answer['answer'],
-                    max_marks=question['marks'],
+                    max_marks=float(question['marks']),
+                    page_images=page_images,
                     model=model,
-                    domain=test_type,  # Pass test_type to select appropriate model
-                    num_runs=3  # Run LLM evaluation 3 times and average
+                    domain=test_type,
+                    num_runs=3,
                 )
 
                 marks_awarded = evaluation.get('marks_awarded', 0)
@@ -548,7 +555,8 @@ Return ONLY the JSON object, nothing else."""
                     "metadata": {
                         "max_marks": question['marks'],
                         "question_number": question['question_number'],
-                        "reasoning": evaluation.get('reasoning', '')
+                        "reasoning": evaluation.get('reasoning', ''),
+                        "evaluation_method": evaluation.get('read_from', 'text'),
                     }
                 }
 
@@ -561,7 +569,8 @@ Return ONLY the JSON object, nothing else."""
                     "marks_awarded": marks_awarded,
                     "max_marks": question['marks'],
                     "feedback": evaluation.get('feedback', ''),
-                    "percentage": (marks_awarded / question['marks'] * 100) if question['marks'] > 0 else 0
+                    "percentage": (marks_awarded / question['marks'] * 100) if question['marks'] > 0 else 0,
+                    "evaluation_method": evaluation.get('read_from', 'text'),
                 })
 
             # Get test total marks

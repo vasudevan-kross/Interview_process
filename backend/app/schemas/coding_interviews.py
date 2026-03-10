@@ -109,3 +109,46 @@ class CandidateUpdate(BaseModel):
     name: str
     email: Optional[str] = None
     phone: Optional[str] = None
+
+
+class EvaluatorNotesUpdate(BaseModel):
+    """Body for saving evaluator notes and optional score override."""
+    notes: Optional[str] = None
+    marks_override: Optional[float] = None  # None = keep existing score
+
+
+class QuestionUpdate(BaseModel):
+    """A question being updated (id present = update existing, absent = new)."""
+    id: Optional[str] = None
+    question_text: str
+    difficulty: str = 'medium'
+    marks: int
+    time_estimate_minutes: Optional[int] = None
+    starter_code: Optional[str] = None
+    topics: Optional[List[str]] = None
+
+
+class InterviewUpdate(BaseModel):
+    """Body for editing an existing interview (partial update)."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    scheduled_start_time: Optional[datetime] = None
+    scheduled_end_time: Optional[datetime] = None
+    grace_period_minutes: Optional[int] = None
+    require_signature: Optional[bool] = None
+    bond_terms: Optional[str] = None
+    bond_years: Optional[int] = None
+    bond_timing: Optional[str] = None
+    bond_document_url: Optional[str] = None
+    questions: Optional[List[QuestionUpdate]] = None
+
+
+class BulkDecisionRequest(BaseModel):
+    """Body for bulk decision on multiple submissions."""
+    submission_ids: List[str]
+    decision: str  # 'advanced' | 'rejected' | 'hold' | 'pending'
+
+
+class BulkDeleteCandidatesRequest(BaseModel):
+    """Body for bulk deleting pre-registered candidates."""
+    candidate_ids: List[str]

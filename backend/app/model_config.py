@@ -5,7 +5,7 @@ This module defines which LLM models to use for different tasks
 to optimize for speed, accuracy, or specialization.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 class ModelConfig:
@@ -40,6 +40,15 @@ class ModelConfig:
 
     # Fallback model if specified model is not available
     DEFAULT_MODEL = "llama3.1:8b"
+
+    # Vision model priority list for handwritten answer sheet evaluation
+    VISION_EVAL_MODELS: List[str] = [
+        "llava:13b",
+        "llava-llama3",
+        "llava:7b",
+        "glm-ocr:latest",
+        "MedAIBase/PaddleOCR-VL:0.9b",
+    ]
 
     @classmethod
     def get_model_for_task(cls, task: str, domain: Optional[str] = None) -> str:

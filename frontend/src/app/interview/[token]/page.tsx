@@ -87,7 +87,24 @@ export default function CandidateInterviewPage() {
   const antiCheatingRef = useRef<Awaited<ReturnType<typeof initializeEnhancedAntiCheating>> | null>(null)
   const codeChangeTrackerRef = useRef<ReturnType<typeof createCodeChangeTracker> | null>(null)
 
-  // Load interview details
+  // Performance refs — avoid stale closures in intervals and debounce hot paths
+  const codeAnswersRef = useRef<Record<string, string>>({})
+  const hasStartedRef = useRef(false)
+  const submissionIdRef = useRef('')
+  const lsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // LocalStorage keys for session persistence
+  const SESSION_KEY = `ci_session_${accessToken}`
+  const ANSWERS_KEY = `ci_answers_${accessToken}`
+
+  const clearSession = () => {
+    try {
+      localStorage.removeItem(SESSION_KEY)
+      localStorage.removeItem(ANSWERS_KEY)
+    } catch {}
+  }
+
+  // Load interview details — and restore any saved session on refresh
   useEffect(() => {
     loadInterview()
   }, [accessToken])
@@ -98,18 +115,56 @@ export default function CandidateInterviewPage() {
       const data = await joinInterview(accessToken)
       setInterview(data)
 
-      // Initialize code answers with starter code
-      const initialAnswers: Record<string, string> = {}
-      data.questions?.forEach((q, idx) => {
-        initialAnswers[q.id || idx.toString()] = q.starter_code || ''
-      })
-      setCodeAnswers(initialAnswers)
-
       // Calculate time remaining
       const expires = new Date(data.link_expires_at)
       const now = new Date()
       const diff = Math.floor((expires.getTime() - now.getTime()) / 1000)
       setTimeRemaining(Math.max(0, diff))
+
+      // Build initial answers from starter code
+      const initialAnswers: Record<string, string> = {}
+      data.questions?.forEach((q, idx) => {
+        initialAnswers[q.id || idx.toString()] = q.starter_code || ''
+      })
+
+      // Restore session from localStorage if the interview hasn't expired
+      // IMPORTANT: parse ALL data before calling any setState so that a parse
+      // error never leaves the page in a half-restored state (hasStarted=true
+      // with no code / stale submissionId), which caused Q1 to load forever.
+      try {
+        const savedSession = localStorage.getItem(SESSION_KEY)
+        const savedAnswers = localStorage.getItem(ANSWERS_KEY)
+        if (savedSession && diff > 0) {
+          const session = JSON.parse(savedSession)   // parse first — may throw
+
+          // Reject sessions saved for a different access token
+          if (session.submissionId && session.token === accessToken) {
+            // Parse answers before touching any state — if this throws the
+            // catch block runs and we fall through to the normal pre-start flow
+            const restored: Record<string, string> =
+              savedAnswers ? JSON.parse(savedAnswers) : {}
+            const mergedAnswers = { ...initialAnswers, ...restored }
+
+            // All parsing succeeded — now commit state atomically
+            codeAnswersRef.current = mergedAnswers
+            setCodeAnswers(mergedAnswers)
+            setSubmissionId(session.submissionId)
+            setCandidateName(session.candidateName || '')
+            setCandidateEmail(session.candidateEmail || '')
+            setHasStarted(true)
+
+            toast.info('Session restored — your progress has been recovered.')
+            return
+          }
+        }
+      } catch {
+        // localStorage not available or data is corrupt — clear it and
+        // continue with the normal pre-start flow
+        clearSession()
+      }
+
+      codeAnswersRef.current = initialAnswers
+      setCodeAnswers(initialAnswers)
     } catch (error: any) {
       setError(error.message || 'Failed to load interview')
       toast.error(error.message || 'Failed to load interview')
@@ -171,6 +226,16 @@ export default function CandidateInterviewPage() {
       setSubmissionId(response.submission_id)
       setHasStarted(true)
 
+      // Persist session so refresh restores the interview
+      try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify({
+          submissionId: response.submission_id,
+          candidateName,
+          candidateEmail,
+          token: accessToken,   // validated on restore to reject stale/foreign sessions
+        }))
+      } catch {}
+
       // Initialize enhanced anti-cheating
       const currentQuestionId = interview?.questions?.[0]?.id || '0'
       antiCheatingRef.current = await initializeEnhancedAntiCheating(response.submission_id, currentQuestionId)
@@ -214,28 +279,31 @@ export default function CandidateInterviewPage() {
   )
 
   // Auto-save effect (every 30 seconds)
+  // Reads from codeAnswersRef so codeAnswers state changes don't recreate the interval
   useEffect(() => {
     if (!hasStarted || !interview) return
 
     const interval = setInterval(() => {
       const currentQuestionId = interview.questions?.[currentQuestionIndex]?.id || currentQuestionIndex.toString()
-      const currentCode = codeAnswers[currentQuestionId] || ''
+      const currentCode = codeAnswersRef.current[currentQuestionId] || ''
       autoSaveCode(currentQuestionId, currentCode)
-    }, 30000) // 30 seconds
+    }, 30000)
 
     return () => clearInterval(interval)
-  }, [hasStarted, currentQuestionIndex, codeAnswers, autoSaveCode, interview])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasStarted, currentQuestionIndex, autoSaveCode, interview])
 
-  // Timer countdown - runs on both pre-start and interview screens
+  // Timer countdown - single interval created when interview loads
+  // Uses refs for hasStarted/submissionId so no need to recreate interval every second
   useEffect(() => {
-    if (!interview || timeRemaining <= 0) return
+    if (!interview) return
 
     const interval = setInterval(() => {
       setTimeRemaining((prev) => {
-        if (prev <= 1) {
+        if (prev <= 0) return 0          // already expired — no-op
+        if (prev === 1) {
           setTimerExpired(true)
-          // Only auto-submit if the interview has actually started
-          if (hasStarted) {
+          if (hasStartedRef.current) {
             handleAutoSubmit()
           }
           return 0
@@ -245,7 +313,8 @@ export default function CandidateInterviewPage() {
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [interview, hasStarted, timeRemaining])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interview])
 
   // Update anti-cheating tracker when question changes
   useEffect(() => {
@@ -268,35 +337,47 @@ export default function CandidateInterviewPage() {
     return () => window.removeEventListener('resize', measure)
   }, [])
 
+  // Keep perf refs in sync with their state counterparts
+  useEffect(() => { hasStartedRef.current = hasStarted }, [hasStarted])
+  useEffect(() => { submissionIdRef.current = submissionId }, [submissionId])
+
   // Handle code change
   const handleCodeChange = (questionId: string, code: string | undefined) => {
     if (code === undefined) return
 
-    setCodeAnswers((prev) => ({ ...prev, [questionId]: code }))
+    setCodeAnswers((prev) => {
+      const updated = { ...prev, [questionId]: code }
+      codeAnswersRef.current = updated   // keep ref in sync immediately
+      return updated
+    })
 
-    // Track code change
+    // Debounce localStorage writes — at most once every 2 s to avoid blocking the main thread
+    if (lsDebounceRef.current) clearTimeout(lsDebounceRef.current)
+    lsDebounceRef.current = setTimeout(() => {
+      try { localStorage.setItem(ANSWERS_KEY, JSON.stringify(codeAnswersRef.current)) } catch {}
+    }, 2000)
+
+    // Track code change (already debounced to 5 s inside createCodeChangeTracker)
     if (codeChangeTrackerRef.current) {
       codeChangeTrackerRef.current(code.length)
     }
   }
 
-  // Navigation
-  const handlePreviousQuestion = async () => {
+  // Navigation — save fires in the background so the question switch is instant
+  const handlePreviousQuestion = () => {
     if (currentQuestionIndex > 0) {
-      // Save current code before navigating
       const currentQuestionId =
         interview?.questions?.[currentQuestionIndex]?.id || currentQuestionIndex.toString()
-      await autoSaveCode(currentQuestionId, codeAnswers[currentQuestionId] || '')
+      autoSaveCode(currentQuestionId, codeAnswersRef.current[currentQuestionId] || '')
       setCurrentQuestionIndex(currentQuestionIndex - 1)
     }
   }
 
-  const handleNextQuestion = async () => {
+  const handleNextQuestion = () => {
     if (interview && currentQuestionIndex < interview.questions!.length - 1) {
-      // Save current code before navigating
       const currentQuestionId =
         interview?.questions?.[currentQuestionIndex]?.id || currentQuestionIndex.toString()
-      await autoSaveCode(currentQuestionId, codeAnswers[currentQuestionId] || '')
+      autoSaveCode(currentQuestionId, codeAnswersRef.current[currentQuestionId] || '')
       setCurrentQuestionIndex(currentQuestionIndex + 1)
     }
   }
@@ -346,11 +427,13 @@ export default function CandidateInterviewPage() {
           // Bond already signed before start — submit directly with the stored signature
           await submitInterview(submissionId, { signature_data: bondSignatureData || undefined, terms_accepted: true })
           antiCheatingRef.current?.cleanup()
+          clearSession()
           toast.success('Interview submitted successfully!')
           router.push(`/interview/${accessToken}/thank-you`)
         } else {
           // before_submission (default): redirect to signature page
           antiCheatingRef.current?.cleanup()
+          clearSession()
           toast.info('Please review and sign the bond agreement')
           router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}`)
         }
@@ -358,6 +441,7 @@ export default function CandidateInterviewPage() {
         // No signature required — submit directly
         await submitInterview(submissionId)
         antiCheatingRef.current?.cleanup()
+        clearSession()
         toast.success('Interview submitted successfully!')
         router.push(`/interview/${accessToken}/thank-you`)
       }
@@ -368,16 +452,16 @@ export default function CandidateInterviewPage() {
     }
   }
 
-  // Auto-submit
+  // Auto-submit — uses refs so it always has fresh code/submissionId even from timer closure
   const handleAutoSubmit = async () => {
     try {
       // Save all answers
       if (interview) {
         for (let i = 0; i < interview.questions!.length; i++) {
           const questionId = interview.questions![i].id || i.toString()
-          const code = codeAnswers[questionId] || ''
+          const code = codeAnswersRef.current[questionId] || ''
           await saveCode({
-            submission_id: submissionId,
+            submission_id: submissionIdRef.current,
             question_id: questionId,
             code,
             programming_language: interview.programming_language,
@@ -392,16 +476,19 @@ export default function CandidateInterviewPage() {
       if (interview?.require_signature) {
         if (interview.bond_timing === 'before_start') {
           // Bond already signed before start — submit directly with stored signature
-          await submitInterview(submissionId, { signature_data: bondSignatureData || undefined, terms_accepted: true })
+          await submitInterview(submissionIdRef.current, { signature_data: bondSignatureData || undefined, terms_accepted: true })
+          clearSession()
           toast.info("Time's up! Your assessment has been auto-submitted.")
           router.push(`/interview/${accessToken}/thank-you`)
         } else {
           // before_submission: redirect to signature page
+          clearSession()
           toast.info("Time's up! Please sign the bond agreement to complete your submission.")
-          router.push(`/interview/${accessToken}/signature?submission_id=${submissionId}&auto=true`)
+          router.push(`/interview/${accessToken}/signature?submission_id=${submissionIdRef.current}&auto=true`)
         }
       } else {
-        await submitInterview(submissionId)
+        await submitInterview(submissionIdRef.current)
+        clearSession()
         toast.info("Time's up! Your assessment has been auto-submitted.")
         router.push(`/interview/${accessToken}/thank-you`)
       }
@@ -759,7 +846,14 @@ export default function CandidateInterviewPage() {
             {interview.questions?.map((q, idx) => (
               <button
                 key={idx}
-                onClick={() => setCurrentQuestionIndex(idx)}
+                onClick={() => {
+                  // Save the current question's code before jumping (same as Next/Prev)
+                  if (idx !== currentQuestionIndex) {
+                    const fromId = interview.questions?.[currentQuestionIndex]?.id || currentQuestionIndex.toString()
+                    autoSaveCode(fromId, codeAnswersRef.current[fromId] || '')
+                  }
+                  setCurrentQuestionIndex(idx)
+                }}
                 className={`px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap ${idx === currentQuestionIndex
                   ? 'bg-indigo-600 text-white'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'

@@ -190,7 +190,8 @@ class DocumentProcessor:
                 "char_count": len(extracted_text),
                 "word_count": len(extracted_text.split()),
                 "format": "pdf",
-                "ocr_used": False
+                "ocr_used": False,
+                "page_images": []
             }
 
         except Exception as e:
@@ -223,6 +224,7 @@ class DocumentProcessor:
             use_paddleocr = self._should_use_paddleocr()
 
             text_content = []
+            page_images: list = []
             for i, image in enumerate(images):
                 logger.info(f"Processing page {i + 1}/{len(images)}...")
 
@@ -234,6 +236,9 @@ class DocumentProcessor:
                 img_byte_arr = io.BytesIO()
                 image.save(img_byte_arr, format='PNG')
                 img_bytes = img_byte_arr.getvalue()
+
+                # Retain page image for vision evaluation
+                page_images.append(img_bytes)
 
                 # Perform OCR with three-layer fallback
                 try:
@@ -263,6 +268,7 @@ class DocumentProcessor:
                 "word_count": len(extracted_text.split()),
                 "format": "pdf",
                 "ocr_used": True,
+                "page_images": page_images,
                 "metadata": {
                     "pages_processed": len(images),
                     "method": "PaddleOCR (Handwriting)" if use_paddleocr else "GLM-OCR via Ollama",
@@ -302,7 +308,8 @@ class DocumentProcessor:
                 "page_count": len(doc.sections) if hasattr(doc, 'sections') else 1,
                 "char_count": len(extracted_text),
                 "word_count": len(extracted_text.split()),
-                "format": "docx"
+                "format": "docx",
+                "page_images": []
             }
 
         except Exception as e:
@@ -331,7 +338,8 @@ class DocumentProcessor:
                 "page_count": 1,
                 "char_count": len(extracted_text),
                 "word_count": len(extracted_text.split()),
-                "format": "text"
+                "format": "text",
+                "page_images": []
             }
 
         except Exception as e:
@@ -368,6 +376,7 @@ class DocumentProcessor:
                 "word_count": len(extracted_text.split()),
                 "format": "image",
                 "ocr_used": True,
+                "page_images": [file_data],
                 "metadata": {
                     "image_size": image_size,
                     "image_mode": image_mode,

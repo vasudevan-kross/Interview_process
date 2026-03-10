@@ -31,6 +31,9 @@ class LLMOrchestrator:
         if ollama is None:
             logger.warning("ollama package not installed. LLM operations will fail.")
 
+        from app.services.vision_evaluator import get_vision_evaluator
+        self.vision_evaluator = get_vision_evaluator()
+
     def _format_size(self, size_bytes: int) -> str:
         """
         Format size in bytes to human-readable format.
@@ -665,6 +668,90 @@ Provide evaluation as JSON."""
                 question, correct_answer, candidate_answer,
                 max_marks, model, domain
             )
+
+    async def evaluate_answer_hybrid_vision(
+        self,
+        question: str,
+        correct_answer: str,
+        candidate_answer: str,
+        max_marks: float,
+        page_images: List[bytes],
+        model: Optional[str] = None,
+        domain: Optional[str] = None,
+        num_runs: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Evaluate an answer using the best available path:
+
+        Path A — OCR quality is good (≥ threshold): existing text-based hybrid evaluation.
+        Path B — OCR quality is poor AND page images are available: vision evaluation.
+        Path C — OCR quality is poor but no images: fall back to text evaluation if not invalid.
+        Path D — Nothing worked: return 0 marks.
+
+        Args:
+            question: Question text.
+            correct_answer: Reference answer.
+            candidate_answer: OCR-extracted candidate answer text.
+            max_marks: Maximum marks for the question.
+            page_images: Raw PNG bytes of each scanned page (may be empty).
+            model: Optional model override.
+            domain: Optional domain for model selection.
+            num_runs: Number of LLM runs for the text-based path.
+
+        Returns:
+            Evaluation dict matching the shape returned by evaluate_answer_hybrid().
+        """
+        ocr_quality = self.vision_evaluator.assess_ocr_quality(candidate_answer)
+
+        # Path A: OCR text is clean enough — use existing text path unchanged
+        if ocr_quality >= settings.VISION_EVAL_OCR_QUALITY_THRESHOLD:
+            return await self.evaluate_answer_hybrid(
+                question, correct_answer, candidate_answer, max_marks,
+                model=model, domain=domain, num_runs=num_runs,
+            )
+
+        # Path B: OCR is poor + images available → try vision evaluation
+        if page_images and settings.VISION_EVAL_ENABLED:
+            try:
+                logger.info(
+                    f"OCR quality {ocr_quality:.2f} (threshold "
+                    f"{settings.VISION_EVAL_OCR_QUALITY_THRESHOLD}) — "
+                    "using vision evaluation"
+                )
+                return await self.vision_evaluator.evaluate(
+                    question=question,
+                    correct_answer=correct_answer,
+                    max_marks=float(max_marks),
+                    page_images=page_images,
+                    ocr_hint=candidate_answer,
+                    model=model,
+                )
+            except Exception as e:
+                logger.warning(f"Vision evaluation failed: {e} — falling back to text path")
+
+        # Path C: No images (or vision failed) — try text path if answer is not pure garbage
+        if not self._is_answer_invalid(candidate_answer):
+            return await self.evaluate_answer_hybrid(
+                question, correct_answer, candidate_answer, max_marks,
+                model=model, domain=domain, num_runs=num_runs,
+            )
+
+        # Path D: Nothing usable — return 0 marks
+        logger.warning(
+            f"Answer unreadable and no images available for vision eval. "
+            f"OCR quality: {ocr_quality:.2f}"
+        )
+        return {
+            'marks_awarded': 0.0,
+            'percentage': 0.0,
+            'similarity_score': 0.0,
+            'feedback': 'Answer unreadable — OCR failed and no image available for vision evaluation.',
+            'key_points_covered': [],
+            'key_points_missed': ['All key points — answer could not be read'],
+            'reasoning': 'Automatic 0 marks — OCR quality too low and no page images available',
+            'read_from': 'failed',
+            'model_used': 'validation_check',
+        }
 
     def _is_answer_invalid(self, answer: str) -> bool:
         """

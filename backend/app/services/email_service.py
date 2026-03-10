@@ -109,3 +109,36 @@ def send_submission_confirmation(
         subject=f"Submission Received: {interview_title}",
         html=_submission_html(candidate_name, interview_title),
     )
+
+
+def _invite_html(candidate_name: str, interview_title: str, interview_link: str) -> str:
+    body = f"""
+<p>Dear <strong>{candidate_name}</strong>,</p>
+<p>You have been invited to complete the <strong>{interview_title}</strong> technical assessment.</p>
+<p>Please click the button below to access your interview:</p>
+<p style="text-align:center; margin:28px 0;">
+  <a href="{interview_link}"
+     style="background:#4f46e5; color:#fff; padding:13px 32px;
+            border-radius:6px; text-decoration:none; font-size:15px; font-weight:bold;">
+    Start Assessment
+  </a>
+</p>
+<p style="font-size:13px; color:#666;">Or copy and paste this link into your browser:<br>
+  <a href="{interview_link}" style="color:#4f46e5;">{interview_link}</a>
+</p>
+<p>Good luck!</p>"""
+    return _base_html(f"Interview Invitation: {interview_title}", body)
+
+
+def send_interview_invite(
+    candidate_email: str,
+    candidate_name: str,
+    interview_title: str,
+    interview_link: str,
+) -> bool:
+    """Send an interview invitation with access link to a candidate."""
+    return send_email(
+        to=candidate_email,
+        subject=f"Interview Invitation: {interview_title}",
+        html=_invite_html(candidate_name, interview_title, interview_link),
+    )

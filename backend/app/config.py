@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     GMAIL_SENDER: str = "vasudevan.r@krossark.com"
     GMAIL_APP_PASSWORD: Optional[str] = None   # 16-char Google App Password
 
+    # Vision-based evaluation (for handwritten answer sheets)
+    VISION_EVAL_ENABLED: bool = True
+    VISION_EVAL_OCR_QUALITY_THRESHOLD: float = 0.5
+
     @property
     def allowed_extensions_list(self) -> List[str]:
         """Get allowed extensions as a list."""

@@ -35,6 +35,27 @@ import { createInterview, generateQuestions, generateShareableLink, extractQuest
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { toast } from 'sonner'
 
+/**
+ * Convert a datetime-local string (treated as LOCAL time) to an ISO 8601
+ * string with the browser's UTC offset, so the server stores the correct
+ * wall-clock time rather than silently subtracting the UTC offset.
+ * Example (IST = UTC+5:30): "2025-03-09T16:00" → "2025-03-09T16:00:00+05:30"
+ */
+function localToIso(datetimeLocal: string): string {
+  if (!datetimeLocal) return ''
+  const d = new Date(datetimeLocal)
+  const offsetMin = -d.getTimezoneOffset()
+  const sign = offsetMin >= 0 ? '+' : '-'
+  const absMin = Math.abs(offsetMin)
+  const hh = String(Math.floor(absMin / 60)).padStart(2, '0')
+  const mm = String(absMin % 60).padStart(2, '0')
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sign}${hh}:${mm}`
+  )
+}
+
 export default function CreateInterviewPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
@@ -248,14 +269,14 @@ export default function CreateInterviewPage() {
       const effectiveLanguage = interviewType === 'testing'
         ? testFramework
         : (['devops', 'sql', 'system_design', 'data_science', 'fullstack'].includes(interviewType)
-            ? (domainTool || interviewType)
-            : programmingLanguage)  // 'any' is sent as-is — no fallback to 'python'
+          ? (domainTool || interviewType)
+          : programmingLanguage)  // 'any' is sent as-is — no fallback to 'python'
 
       const response = await createInterview({
         title,
         description,
-        scheduled_start_time: scheduledStartTime,
-        scheduled_end_time: scheduledEndTime,
+        scheduled_start_time: localToIso(scheduledStartTime),
+        scheduled_end_time: localToIso(scheduledEndTime),
         programming_language: effectiveLanguage,
         allowed_languages: interviewType === 'coding' && programmingLanguage === 'any' ? [] : undefined,
         interview_type: interviewType,

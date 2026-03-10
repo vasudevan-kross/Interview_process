@@ -662,9 +662,14 @@ class CodingInterviewService:
                         'evaluated_by_model': 'system'
                     }
 
-                    self.client.table('coding_answers').update(evaluation_data).eq(
-                        'id', answer['id'] if answer else None
-                    ).execute()
+                    if answer:
+                        # Row exists — just update it
+                        self.client.table('coding_answers').update(evaluation_data).eq(
+                            'id', answer['id']
+                        ).execute()
+                    else:
+                        # No row at all — insert one
+                        self.client.table('coding_answers').insert(evaluation_data).execute()
 
                     evaluations.append(evaluation_data)
                     continue
@@ -916,6 +921,15 @@ class CodingInterviewService:
             'ai_typing_detected': 75,  # Very suspicious - bot typing
             'right_click_attempt': 5,  # Trying to inspect element
             'multiple_tabs_detected': 50,  # Opening same interview in multiple tabs
+            'mouse_leave': 4,        # Cursor moved outside browser window
+            'idle_detected': 15,     # No interaction for 60+ seconds
+            'question_time': 0,      # Informational — time spent per question
+            'split_screen': 40,      # Mobile split-screen (ChatGPT alongside)
+            'network_offline': 20,   # Went offline (airplane mode trick)
+            'network_online': 0,     # Returned online — informational
+            'text_selection': 8,     # Selected question text to share/copy
+            'orientation_change': 5, # Screen rotation mid-exam
+            'navigation_attempt': 30, # Tried to close/leave the tab
         }
 
         try:
@@ -1280,6 +1294,33 @@ Language:"""
         if not result.data:
             raise ValueError("Candidate not found")
 
+    async def delete_submission(
+        self,
+        submission_id: str,
+        user_id: str
+    ) -> None:
+        """Delete a candidate submission (any status). Requires interview ownership."""
+        client = get_supabase()
+
+        # Fetch submission to get interview_id
+        sub_result = client.table('coding_submissions').select('id, interview_id').eq(
+            'id', submission_id
+        ).execute()
+        if not sub_result.data:
+            raise ValueError("Submission not found")
+
+        interview_id = sub_result.data[0]['interview_id']
+
+        # Verify interview ownership
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        # Delete submission (CASCADE removes coding_answers + session_activities)
+        client.table('coding_submissions').delete().eq('id', submission_id).execute()
+
     async def set_submission_decision(
         self,
         submission_id: str,
@@ -1305,6 +1346,382 @@ Language:"""
         if not result.data:
             raise ValueError("Submission not found")
 
+        return result.data[0]
+
+    # ── Evaluator Notes & Score Override ─────────────────────────────────────
+
+    async def save_evaluator_notes(
+        self,
+        submission_id: str,
+        answer_id: str,
+        notes: Optional[str],
+        marks_override: Optional[float],
+        evaluator_id: str
+    ) -> Dict[str, Any]:
+        """Save evaluator notes and optionally override the AI-assigned marks."""
+        client = get_supabase()
+
+        # Verify answer belongs to this submission
+        answer_result = client.table('coding_answers').select(
+            'id, question_id, marks_awarded'
+        ).eq('id', answer_id).eq('submission_id', submission_id).execute()
+
+        if not answer_result.data:
+            raise ValueError("Answer not found")
+
+        update_data: Dict[str, Any] = {
+            'evaluator_notes': notes,
+            'evaluator_id': evaluator_id,
+        }
+
+        if marks_override is not None:
+            question_id = answer_result.data[0]['question_id']
+            q_result = client.table('coding_questions').select('marks').eq(
+                'id', question_id
+            ).execute()
+            max_marks = float(q_result.data[0]['marks']) if q_result.data else float('inf')
+            update_data['marks_awarded'] = max(0.0, min(float(marks_override), max_marks))
+
+        result = client.table('coding_answers').update(update_data).eq(
+            'id', answer_id
+        ).execute()
+
+        if not result.data:
+            raise ValueError("Answer not found")
+
+        # Recalculate submission totals if marks changed
+        if marks_override is not None:
+            await self._recalculate_submission_score(submission_id)
+
+        return result.data[0]
+
+    async def _recalculate_submission_score(self, submission_id: str) -> None:
+        """Recalculate total marks + percentage for a submission after score override."""
+        client = get_supabase()
+
+        answers_result = client.table('coding_answers').select(
+            'marks_awarded'
+        ).eq('submission_id', submission_id).execute()
+
+        total_obtained = sum(
+            float(a.get('marks_awarded') or 0) for a in (answers_result.data or [])
+        )
+
+        sub_result = client.table('coding_submissions').select(
+            'interview_id'
+        ).eq('id', submission_id).execute()
+        if not sub_result.data:
+            return
+
+        interview_result = client.table('coding_interviews').select(
+            'total_marks'
+        ).eq('id', sub_result.data[0]['interview_id']).execute()
+        total_marks = float(interview_result.data[0]['total_marks']) if interview_result.data else 1.0
+        percentage = round((total_obtained / total_marks * 100) if total_marks > 0 else 0.0, 2)
+
+        client.table('coding_submissions').update({
+            'total_marks_obtained': total_obtained,
+            'percentage': percentage,
+        }).eq('id', submission_id).execute()
+
+    # ── Clone Interview ───────────────────────────────────────────────────────
+
+    async def clone_interview(
+        self,
+        interview_id: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Copy an interview (+ all questions) with a fresh access token."""
+        client = get_supabase()
+
+        interview_result = client.table('coding_interviews').select('*').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        src = interview_result.data[0]
+
+        questions_result = client.table('coding_questions').select('*').eq(
+            'interview_id', interview_id
+        ).order('question_number').execute()
+        questions = questions_result.data or []
+
+        new_token = str(uuid.uuid4())
+        clone_data = {
+            'title': f"Copy of {src['title']}",
+            'description': src.get('description'),
+            'scheduled_start_time': src['scheduled_start_time'],
+            'scheduled_end_time': src['scheduled_end_time'],
+            'grace_period_minutes': src.get('grace_period_minutes', 15),
+            'status': 'scheduled',
+            'access_token': new_token,
+            'link_expires_at': src['link_expires_at'],
+            'interview_type': src['interview_type'],
+            'programming_language': src['programming_language'],
+            'allowed_languages': src.get('allowed_languages'),
+            'total_marks': src['total_marks'],
+            'resume_required': src.get('resume_required', 'mandatory'),
+            'bond_terms': src.get('bond_terms'),
+            'bond_document_url': src.get('bond_document_url'),
+            'require_signature': src.get('require_signature', False),
+            'bond_years': src.get('bond_years', 2),
+            'bond_timing': src.get('bond_timing', 'before_submission'),
+            'created_by': user_id,
+        }
+
+        clone_result = client.table('coding_interviews').insert(clone_data).execute()
+        if not clone_result.data:
+            raise RuntimeError("Failed to clone interview")
+
+        new_interview_id = clone_result.data[0]['id']
+
+        for q in questions:
+            client.table('coding_questions').insert({
+                'interview_id': new_interview_id,
+                'question_number': q['question_number'],
+                'question_text': q['question_text'],
+                'difficulty': q['difficulty'],
+                'marks': q['marks'],
+                'starter_code': q.get('starter_code'),
+                'solution_code': q.get('solution_code'),
+                'test_cases': q.get('test_cases'),
+                'topics': q.get('topics', []),
+                'time_estimate_minutes': q.get('time_estimate_minutes'),
+            }).execute()
+
+        shareable_link = f"{settings.FRONTEND_URL}/interview/{new_token}"
+        return {
+            'interview_id': new_interview_id,
+            'access_token': new_token,
+            'shareable_link': shareable_link,
+            'title': clone_data['title'],
+        }
+
+    # ── Send Invites ──────────────────────────────────────────────────────────
+
+    async def send_interview_invites(
+        self,
+        interview_id: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Email the interview link to all pre-registered candidates who haven't submitted."""
+        client = get_supabase()
+
+        interview_result = client.table('coding_interviews').select(
+            'id, title, access_token'
+        ).eq('id', interview_id).eq('created_by', user_id).execute()
+
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        interview = interview_result.data[0]
+        interview_link = f"{settings.FRONTEND_URL}/interview/{interview['access_token']}"
+
+        candidates_result = client.table('interview_candidates').select('*').eq(
+            'interview_id', interview_id
+        ).execute()
+        candidates = candidates_result.data or []
+
+        subs_result = client.table('coding_submissions').select('candidate_email').eq(
+            'interview_id', interview_id
+        ).execute()
+        submitted_emails = {
+            (s.get('candidate_email') or '').strip().lower()
+            for s in (subs_result.data or [])
+        }
+
+        from app.services.email_service import send_interview_invite
+
+        sent = skipped = no_email = 0
+        for cand in candidates:
+            email = (cand.get('email') or '').strip()
+            if not email:
+                no_email += 1
+                continue
+            if email.lower() in submitted_emails:
+                skipped += 1
+                continue
+            success = send_interview_invite(
+                candidate_email=email,
+                candidate_name=cand.get('name', 'Candidate'),
+                interview_title=interview['title'],
+                interview_link=interview_link,
+            )
+            if success:
+                sent += 1
+            else:
+                skipped += 1
+
+        return {'sent': sent, 'skipped': skipped, 'no_email': no_email, 'total': len(candidates)}
+
+    # ── Bulk Decision ─────────────────────────────────────────────────────────
+
+    async def bulk_submission_decision(
+        self,
+        interview_id: str,
+        submission_ids: List[str],
+        decision: str,
+        decided_by: str
+    ) -> Dict[str, Any]:
+        """Set the same decision on multiple submissions at once."""
+        client = get_supabase()
+
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', decided_by).execute()
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        from datetime import datetime, timezone
+        update_data = {
+            'candidate_decision': decision,
+            'decided_at': datetime.now(timezone.utc).isoformat(),
+            'decided_by': decided_by,
+        }
+
+        updated = 0
+        for sub_id in submission_ids:
+            result = client.table('coding_submissions').update(update_data).eq(
+                'id', sub_id
+            ).eq('interview_id', interview_id).execute()
+            if result.data:
+                updated += 1
+
+        return {'updated': updated, 'decision': decision}
+
+    # ── Bulk Delete Candidates ────────────────────────────────────────────────
+
+    async def bulk_delete_candidates(
+        self,
+        interview_id: str,
+        candidate_ids: List[str],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Delete multiple pre-registered candidates."""
+        client = get_supabase()
+
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        deleted = 0
+        for cand_id in candidate_ids:
+            result = client.table('interview_candidates').delete().eq(
+                'id', cand_id
+            ).eq('interview_id', interview_id).execute()
+            if result.data:
+                deleted += 1
+
+        return {'deleted': deleted}
+
+    # ── Edit Interview ────────────────────────────────────────────────────────
+
+    async def update_interview(
+        self,
+        interview_id: str,
+        update_data: Dict[str, Any],
+        user_id: str
+    ) -> Dict[str, Any]:
+        """Update interview fields including bond settings and questions."""
+        client = get_supabase()
+
+        interview_result = client.table('coding_interviews').select('*').eq(
+            'id', interview_id
+        ).eq('created_by', user_id).execute()
+        if not interview_result.data:
+            raise ValueError("Interview not found or access denied")
+
+        src = interview_result.data[0]
+        patch: Dict[str, Any] = {}
+
+        if update_data.get('title'):
+            patch['title'] = update_data['title']
+        if 'description' in update_data:
+            patch['description'] = update_data['description']
+
+        new_end = update_data.get('scheduled_end_time')
+        new_grace = update_data.get('grace_period_minutes')
+
+        if update_data.get('scheduled_start_time'):
+            patch['scheduled_start_time'] = update_data['scheduled_start_time'].isoformat()
+        if new_end:
+            patch['scheduled_end_time'] = new_end.isoformat()
+        if new_grace is not None:
+            patch['grace_period_minutes'] = new_grace
+
+        # Recalculate link_expires_at if end time or grace changed
+        if new_end or new_grace is not None:
+            end_time = new_end
+            if end_time is None:
+                end_str = src['scheduled_end_time'].replace('Z', '').replace('+00:00', '')
+                end_time = datetime.fromisoformat(end_str)
+            grace = new_grace if new_grace is not None else src.get('grace_period_minutes', 15)
+            patch['link_expires_at'] = (end_time + timedelta(minutes=grace)).isoformat()
+
+        # Bond fields
+        if update_data.get('require_signature') is not None:
+            patch['require_signature'] = update_data['require_signature']
+        if 'bond_terms' in update_data:
+            patch['bond_terms'] = update_data['bond_terms']
+        if update_data.get('bond_years') is not None:
+            patch['bond_years'] = update_data['bond_years']
+        if update_data.get('bond_timing'):
+            patch['bond_timing'] = update_data['bond_timing']
+        if 'bond_document_url' in update_data:
+            patch['bond_document_url'] = update_data['bond_document_url']
+
+        # Questions
+        questions = update_data.get('questions')
+        if questions is not None:
+            # Fetch existing question IDs to detect deletions
+            existing_q = client.table('coding_questions').select('id').eq(
+                'interview_id', interview_id
+            ).execute()
+            existing_ids = {r['id'] for r in (existing_q.data or [])}
+            incoming_ids = {q.get('id') for q in questions if q.get('id')}
+
+            # Delete questions removed by the editor (only if no answers reference them)
+            ids_to_delete = existing_ids - incoming_ids
+            for qid in ids_to_delete:
+                has_answers = client.table('coding_answers').select('id').eq(
+                    'question_id', qid
+                ).limit(1).execute()
+                if not (has_answers.data):
+                    client.table('coding_questions').delete().eq('id', qid).execute()
+
+            # Upsert questions
+            total_marks = 0
+            for idx, q in enumerate(questions):
+                q_marks = q.get('marks', 0) if isinstance(q, dict) else getattr(q, 'marks', 0)
+                total_marks += q_marks
+                q_data = {
+                    'interview_id': interview_id,
+                    'question_number': idx + 1,
+                    'question_text': q.get('question_text', '') if isinstance(q, dict) else q.question_text,
+                    'difficulty': q.get('difficulty', 'medium') if isinstance(q, dict) else q.difficulty,
+                    'marks': q_marks,
+                    'time_estimate_minutes': q.get('time_estimate_minutes') if isinstance(q, dict) else getattr(q, 'time_estimate_minutes', None),
+                    'starter_code': q.get('starter_code') if isinstance(q, dict) else getattr(q, 'starter_code', None),
+                    'topics': q.get('topics') if isinstance(q, dict) else getattr(q, 'topics', None),
+                }
+                q_id = q.get('id') if isinstance(q, dict) else getattr(q, 'id', None)
+                if q_id and q_id in existing_ids:
+                    client.table('coding_questions').update(q_data).eq('id', q_id).execute()
+                else:
+                    client.table('coding_questions').insert(q_data).execute()
+
+            patch['total_marks'] = total_marks
+
+        if not patch:
+            return src
+
+        result = client.table('coding_interviews').update(patch).eq('id', interview_id).execute()
+        if not result.data:
+            raise ValueError("Update failed")
         return result.data[0]
 
 

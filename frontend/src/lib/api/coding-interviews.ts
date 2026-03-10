@@ -14,6 +14,16 @@ import { createClient } from '@/lib/supabase/client';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 const API_PREFIX = '/api/v1';
 
+/** Extract a human-readable error string from any FastAPI error shape */
+function extractErrorMessage(detail: any, fallback: string): string {
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((e: any) => (typeof e === 'string' ? e : e.msg || JSON.stringify(e))).join('; ');
+  }
+  return JSON.stringify(detail);
+}
+
 /**
  * Get auth headers with current logged-in user's token
  */
@@ -117,6 +127,8 @@ export interface Answer {
   question_marks?: number;
   question_difficulty?: string;
   question_topics?: string[];
+  evaluator_notes?: string;
+  evaluator_id?: string;
 }
 
 export interface Activity {
@@ -167,8 +179,8 @@ export async function createInterview(data: {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to create interview');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to create interview'));
   }
 
   return response.json();
@@ -194,8 +206,8 @@ export async function generateQuestions(data: {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to generate questions');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to generate questions'));
   }
 
   return response.json();
@@ -224,8 +236,8 @@ export async function extractQuestionsFromDocument(data: {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to extract questions from document');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to extract questions from document'));
   }
 
   return response.json();
@@ -250,8 +262,8 @@ export async function listInterviews(params?: {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to list interviews');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to list interviews'));
   }
 
   return response.json();
@@ -267,8 +279,8 @@ export async function getInterview(interviewId: string): Promise<Interview> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to get interview');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to get interview'));
   }
 
   return response.json();
@@ -285,8 +297,8 @@ export async function deleteInterview(interviewId: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to delete interview');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to delete interview'));
   }
 }
 
@@ -302,8 +314,8 @@ export async function listSubmissions(
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to list submissions');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to list submissions'));
   }
 
   return response.json();
@@ -319,8 +331,8 @@ export async function getSubmission(submissionId: string): Promise<Submission> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to get submission');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to get submission'));
   }
 
   return response.json();
@@ -340,8 +352,8 @@ export async function reevaluateSubmission(submissionId: string): Promise<any> {
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to re-evaluate submission');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to re-evaluate submission'));
   }
 
   return response.json();
@@ -373,8 +385,8 @@ export async function evaluateAllSubmissions(interviewId: string): Promise<{
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to evaluate submissions');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to evaluate submissions'));
   }
 
   return response.json();
@@ -390,12 +402,12 @@ export async function evaluateAllSubmissions(interviewId: string): Promise<{
 // NOTE: Public endpoints use relative URLs (no API_BASE_URL) so they route
 // through the Next.js proxy rewrite. Critical for ngrok/external access.
 
-/** Safely parse error from response (handles non-JSON responses from proxy) */
+/** Safely parse error from response (handles non-JSON and ngrok HTML pages) */
 async function safeParseError(response: Response, fallback: string): Promise<string> {
   try {
     const text = await response.text();
     const json = JSON.parse(text);
-    return json.detail || fallback;
+    return extractErrorMessage(json.detail, fallback);
   } catch {
     return `${fallback} (HTTP ${response.status})`;
   }
@@ -563,8 +575,8 @@ export async function getResumeUrl(submissionId: string): Promise<{ resume_url: 
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to get resume');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to get resume'));
   }
 
   return response.json();
@@ -591,6 +603,7 @@ export interface CandidateListResponse {
   interview_id: string;
   interview_title: string;
   access_token: string;
+  interview_total_marks?: number;
   candidates: InterviewCandidate[];
   total: number;
   submitted: number;
@@ -618,8 +631,8 @@ export async function bulkImportCandidates(
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to import candidates');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to import candidates'));
   }
 
   return response.json();
@@ -638,8 +651,8 @@ export async function getInterviewCandidates(
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to get candidates');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to get candidates'));
   }
 
   return response.json();
@@ -659,8 +672,8 @@ export async function updateCandidate(
     { method: 'PATCH', headers, body: JSON.stringify(data) }
   );
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to update candidate');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to update candidate'));
   }
   return response.json();
 }
@@ -678,8 +691,23 @@ export async function deleteCandidate(
     { method: 'DELETE', headers }
   );
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to delete candidate');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to delete candidate'));
+  }
+}
+
+/**
+ * Delete a candidate submission (in_progress or submitted)
+ */
+export async function deleteSubmission(submissionId: string): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/submissions/${submissionId}`,
+    { method: 'DELETE', headers }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to delete submission'));
   }
 }
 
@@ -702,8 +730,8 @@ export async function setSubmissionDecision(
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to set decision');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to set decision'));
   }
 
   return response.json();
@@ -740,6 +768,163 @@ export async function exportSubmissions(interviewId: string, interviewTitle: str
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+// ============================================================================
+// New API methods: Edit, Clone, Send Invites, Bulk Decision, Bulk Delete, Notes
+// ============================================================================
+
+/**
+ * Update interview details, bond settings, and questions
+ */
+export async function updateInterview(
+  interviewId: string,
+  data: {
+    title?: string;
+    description?: string;
+    scheduled_start_time?: string;
+    scheduled_end_time?: string;
+    grace_period_minutes?: number;
+    require_signature?: boolean;
+    bond_terms?: string;
+    bond_years?: number;
+    bond_timing?: string;
+    bond_document_url?: string;
+    questions?: Array<{
+      id?: string;
+      question_text: string;
+      difficulty: string;
+      marks: number;
+      time_estimate_minutes?: number;
+      starter_code?: string;
+      topics?: string[];
+    }>;
+  }
+): Promise<Interview> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to update interview'));
+  }
+  return response.json();
+}
+
+/**
+ * Clone an interview (copies all questions, generates new access token)
+ */
+export async function cloneInterview(interviewId: string): Promise<{
+  interview_id: string;
+  access_token: string;
+  shareable_link: string;
+  title: string;
+}> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/clone`, {
+    method: 'POST',
+    headers,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to clone interview'));
+  }
+  return response.json();
+}
+
+/**
+ * Send invite emails to all pre-registered candidates who haven't submitted
+ */
+export async function sendInterviewInvites(interviewId: string): Promise<{
+  sent: number;
+  skipped: number;
+  no_email: number;
+  total: number;
+}> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/send-invites`,
+    { method: 'POST', headers }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to send invites'));
+  }
+  return response.json();
+}
+
+/**
+ * Set the same decision on multiple submissions at once
+ */
+export async function bulkSubmissionDecision(
+  interviewId: string,
+  submissionIds: string[],
+  decision: 'advanced' | 'rejected' | 'hold' | 'pending'
+): Promise<{ updated: number; decision: string }> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/bulk-decision`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ submission_ids: submissionIds, decision }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to update decisions'));
+  }
+  return response.json();
+}
+
+/**
+ * Delete multiple pre-registered candidates
+ */
+export async function bulkDeleteCandidates(
+  interviewId: string,
+  candidateIds: string[]
+): Promise<{ deleted: number }> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/candidates/bulk-delete`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ candidate_ids: candidateIds }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to delete candidates'));
+  }
+  return response.json();
+}
+
+/**
+ * Save evaluator notes and optionally override AI-assigned marks for an answer
+ */
+export async function saveEvaluatorNotes(
+  submissionId: string,
+  answerId: string,
+  data: { notes?: string; marks_override?: number }
+): Promise<Answer> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/submissions/${submissionId}/answers/${answerId}/notes`,
+    {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(data),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to save notes'));
+  }
+  return response.json();
+}
 
 /**
  * Generate shareable link for candidate

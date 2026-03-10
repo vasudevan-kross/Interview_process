@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -25,8 +25,11 @@ import {
   ChevronLeft,
   Zap,
   Download,
+  Trash2,
 } from 'lucide-react'
-import { getInterview, listSubmissions, evaluateAllSubmissions, exportSubmissions, type Interview, type Submission } from '@/lib/api/coding-interviews'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { getInterview, listSubmissions, evaluateAllSubmissions, exportSubmissions, deleteSubmission, type Interview, type Submission } from '@/lib/api/coding-interviews'
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 
@@ -41,6 +44,11 @@ export default function SubmissionsPage() {
   const [evaluating, setEvaluating] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [deleteDialog, setDeleteDialog] = useState<{
+    open: boolean
+    submissionId: string
+    candidateName: string
+  }>({ open: false, submissionId: '', candidateName: '' })
 
   useEffect(() => {
     fetchData()
@@ -71,8 +79,7 @@ export default function SubmissionsPage() {
       const result = await evaluateAllSubmissions(interviewId)
 
       toast.success(
-        `Successfully evaluated ${result.evaluated} out of ${result.total} submissions${
-          result.failed > 0 ? `. ${result.failed} failed.` : ''
+        `Successfully evaluated ${result.evaluated} out of ${result.total} submissions${result.failed > 0 ? `. ${result.failed} failed.` : ''
         }`,
         { id: 'bulk-eval' }
       )
@@ -95,6 +102,22 @@ export default function SubmissionsPage() {
       toast.error(error.message || 'Failed to export submissions')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const openDeleteDialog = (submission: Submission) => {
+    setDeleteDialog({ open: true, submissionId: submission.id, candidateName: submission.candidate_name })
+  }
+
+  const confirmDelete = async () => {
+    try {
+      await deleteSubmission(deleteDialog.submissionId)
+      setSubmissions((prev) => prev.filter((s) => s.id !== deleteDialog.submissionId))
+      toast.success('Submission deleted')
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete submission')
+    } finally {
+      setDeleteDialog((d) => ({ ...d, open: false }))
     }
   }
 
@@ -126,6 +149,27 @@ export default function SubmissionsPage() {
 
   const completedCount = submissions.filter((s) => s.status === 'submitted' || s.status === 'auto_submitted').length
   const suspiciousCount = submissions.filter((s) => s.suspicious_activity).length
+
+  const scoreDistribution = useMemo(() => {
+    const evaluated = submissions.filter((s) => s.percentage != null)
+    if (evaluated.length === 0) return null
+    const buckets = [
+      { range: '0–20%', count: 0, fill: '#ef4444' },
+      { range: '20–40%', count: 0, fill: '#f97316' },
+      { range: '40–60%', count: 0, fill: '#eab308' },
+      { range: '60–80%', count: 0, fill: '#22c55e' },
+      { range: '80–100%', count: 0, fill: '#6366f1' },
+    ]
+    evaluated.forEach((s) => {
+      const p = s.percentage ?? 0
+      if (p < 20) buckets[0].count++
+      else if (p < 40) buckets[1].count++
+      else if (p < 60) buckets[2].count++
+      else if (p < 80) buckets[3].count++
+      else buckets[4].count++
+    })
+    return buckets
+  }, [submissions])
 
   return (
     <div className="space-y-6 p-8">
@@ -197,6 +241,31 @@ export default function SubmissionsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Score Distribution Chart */}
+      {scoreDistribution && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600">Score Distribution</CardTitle>
+            <CardDescription>How scores spread across evaluated submissions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={scoreDistribution} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="range" tick={{ fontSize: 11 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v) => [`${v} candidate(s)`, 'Count']} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {scoreDistribution.map((entry, index) => (
+                    <Cell key={index} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Submissions Table */}
       <Card>
@@ -294,10 +363,15 @@ export default function SubmissionsPage() {
                       </TableCell>
                       <TableCell>{getStatusBadge(submission.status)}</TableCell>
                       <TableCell>
-                        {submission.percentage !== null && submission.percentage !== undefined ? (
+                        {submission.total_marks_obtained !== null && submission.total_marks_obtained !== undefined ? (
                           <div className="flex items-center gap-2">
                             <Award className="h-4 w-4 text-yellow-600" />
-                            <span className="font-semibold">{submission.percentage.toFixed(1)}%</span>
+                            <span className="font-semibold">
+                              {submission.total_marks_obtained.toFixed(1)}
+                              {interview?.total_marks ? (
+                                <span className="text-gray-400 text-xs font-normal"> / {interview.total_marks}</span>
+                              ) : null}
+                            </span>
                           </div>
                         ) : (
                           <span className="text-gray-400">Not evaluated</span>
@@ -319,16 +393,27 @@ export default function SubmissionsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            router.push(`/dashboard/coding-interviews/submissions/${submission.id}`)
-                          }
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          Review
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              router.push(`/dashboard/coding-interviews/submissions/${submission.id}`)
+                            }
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            Review
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => openDeleteDialog(submission)}
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -338,6 +423,16 @@ export default function SubmissionsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(isOpen) => setDeleteDialog((d) => ({ ...d, open: isOpen }))}
+        onConfirm={confirmDelete}
+        title="Delete Submission"
+        description={`Delete ${deleteDialog.candidateName}'s submission and all their answers? This action cannot be undone.`}
+        confirmText="Delete"
+        variant="destructive"
+      />
     </div>
   )
 }

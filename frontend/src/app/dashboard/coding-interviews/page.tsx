@@ -29,8 +29,11 @@ import {
   Copy,
   Share2,
   ExternalLink,
+  GitFork,
+  Pencil,
+  FileText,
 } from 'lucide-react'
-import { listInterviews, deleteInterview, generateShareableLink, type Interview } from '@/lib/api/coding-interviews'
+import { listInterviews, deleteInterview, generateShareableLink, cloneInterview, type Interview } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 
@@ -42,6 +45,7 @@ export default function CodingInterviewsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [cloningId, setCloningId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchInterviews()
@@ -91,6 +95,19 @@ export default function CodingInterviewsPage() {
     const link = generateShareableLink(accessToken)
     navigator.clipboard.writeText(link)
     toast.success('Interview link copied to clipboard!')
+  }
+
+  const handleClone = async (interviewId: string) => {
+    setCloningId(interviewId)
+    try {
+      const result = await cloneInterview(interviewId)
+      toast.success(`Cloned as "${result.title}"`)
+      fetchInterviews()
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to clone interview')
+    } finally {
+      setCloningId(null)
+    }
   }
 
   const handleShareWhatsApp = (accessToken: string, title: string) => {
@@ -354,10 +371,39 @@ export default function CodingInterviewsPage() {
                           <Button
                             size="sm"
                             variant="ghost"
+                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/submissions`)}
+                            title="View Submissions"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}`)}
                             title="View details"
                           >
                             <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/edit`)}
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleClone(interview.id)}
+                            title="Clone"
+                            disabled={cloningId === interview.id}
+                          >
+                            {cloningId === interview.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <GitFork className="h-4 w-4" />
+                            )}
                           </Button>
                           <Button
                             size="sm"

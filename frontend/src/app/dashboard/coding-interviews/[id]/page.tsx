@@ -17,8 +17,10 @@ import {
     Loader2,
     Award,
     FileText,
+    GitFork,
+    Pencil,
 } from 'lucide-react'
-import { getInterview, generateShareableLink, type Interview } from '@/lib/api/coding-interviews'
+import { getInterview, generateShareableLink, cloneInterview, type Interview } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 
@@ -29,6 +31,7 @@ export default function InterviewDetailPage() {
 
     const [interview, setInterview] = useState<Interview | null>(null)
     const [loading, setLoading] = useState(true)
+    const [cloning, setCloning] = useState(false)
 
     useEffect(() => {
         fetchInterview()
@@ -51,6 +54,20 @@ export default function InterviewDetailPage() {
         const link = generateShareableLink(interview.access_token)
         navigator.clipboard.writeText(link)
         toast.success('Interview link copied to clipboard!')
+    }
+
+    const handleClone = async () => {
+        if (!interview) return
+        setCloning(true)
+        try {
+            const result = await cloneInterview(interviewId)
+            toast.success(`Cloned as "${result.title}"`)
+            router.push(`/dashboard/coding-interviews/${result.interview_id}`)
+        } catch (error: any) {
+            toast.error(error.message || 'Failed to clone interview')
+        } finally {
+            setCloning(false)
+        }
     }
 
     const handleShareWhatsApp = () => {
@@ -116,7 +133,7 @@ export default function InterviewDetailPage() {
                         <p className="text-gray-600 mt-1">{interview.description}</p>
                     )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                     <Button variant="outline" onClick={handleCopyLink}>
                         <Copy className="h-4 w-4 mr-2" />
                         Copy Link
@@ -124,6 +141,21 @@ export default function InterviewDetailPage() {
                     <Button variant="outline" onClick={handleShareWhatsApp}>
                         <Share2 className="h-4 w-4 mr-2" />
                         WhatsApp
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={() => router.push(`/dashboard/coding-interviews/${interviewId}/edit`)}
+                    >
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Edit
+                    </Button>
+                    <Button variant="outline" onClick={handleClone} disabled={cloning}>
+                        {cloning ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                            <GitFork className="h-4 w-4 mr-2" />
+                        )}
+                        Clone
                     </Button>
                     <Button
                         onClick={() => router.push(`/dashboard/coding-interviews/${interviewId}/submissions`)}

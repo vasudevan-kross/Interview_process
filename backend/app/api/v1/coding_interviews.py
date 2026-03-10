@@ -29,6 +29,10 @@ from app.schemas.coding_interviews import (
     InterviewCandidateResponse,
     CandidateDecisionUpdate,
     CandidateUpdate,
+    EvaluatorNotesUpdate,
+    InterviewUpdate,
+    BulkDecisionRequest,
+    BulkDeleteCandidatesRequest,
 )
 from app.services.coding_interview_service import get_coding_interview_service
 from app.services.question_generator import get_question_generator, DOMAIN_REGISTRY
@@ -1206,7 +1210,7 @@ async def get_interview_candidates(
         client = get_supabase()
 
         # Verify ownership
-        interview_result = client.table('coding_interviews').select('id, title, access_token').eq(
+        interview_result = client.table('coding_interviews').select('id, title, access_token, total_marks').eq(
             'id', interview_id
         ).eq('created_by', current_user_id).execute()
 
@@ -1224,6 +1228,7 @@ async def get_interview_candidates(
             'interview_id': interview_id,
             'interview_title': interview.get('title'),
             'access_token': interview.get('access_token'),
+            'interview_total_marks': interview.get('total_marks'),
             'candidates': candidates,
             'total': len(candidates),
             'submitted': sum(1 for c in candidates if c['submitted']),
@@ -1615,3 +1620,156 @@ async def export_submissions_zip(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to export submissions: {str(e)}"
         )
+
+
+# ============================================================================
+# New endpoints: Edit, Clone, Send Invites, Bulk Decision, Bulk Delete, Notes
+# ============================================================================
+
+@router.patch("/{interview_id}", summary="Edit interview details")
+async def update_interview(
+    interview_id: str,
+    body: InterviewUpdate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Update interview title, description, scheduled times, or grace period."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.update_interview(
+            interview_id=interview_id,
+            update_data=body.dict(exclude_none=True),
+            user_id=current_user_id,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating interview {interview_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update interview")
+
+
+@router.post("/{interview_id}/clone", summary="Clone interview")
+async def clone_interview(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Create a copy of an interview with all its questions and a new access token."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.clone_interview(interview_id, current_user_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error cloning interview {interview_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to clone interview")
+
+
+@router.post("/{interview_id}/send-invites", summary="Send invite emails to candidates")
+async def send_invites(
+    interview_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Email the interview link to all pre-registered candidates who haven't submitted."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.send_interview_invites(interview_id, current_user_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error sending invites for interview {interview_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send invites")
+
+
+@router.post("/{interview_id}/bulk-decision", summary="Bulk set decision on submissions")
+async def bulk_decision(
+    interview_id: str,
+    body: BulkDecisionRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Set the same decision (advanced/rejected/hold/pending) on multiple submissions at once."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.bulk_submission_decision(
+            interview_id=interview_id,
+            submission_ids=body.submission_ids,
+            decision=body.decision,
+            decided_by=current_user_id,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error bulk decision for interview {interview_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update decisions")
+
+
+@router.post("/{interview_id}/candidates/bulk-delete", summary="Bulk delete pre-registered candidates")
+async def bulk_delete_candidates(
+    interview_id: str,
+    body: BulkDeleteCandidatesRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Delete multiple pre-registered candidates from the interview pipeline."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.bulk_delete_candidates(
+            interview_id=interview_id,
+            candidate_ids=body.candidate_ids,
+            user_id=current_user_id,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error bulk deleting candidates for interview {interview_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete candidates")
+
+
+@router.patch(
+    "/submissions/{submission_id}/answers/{answer_id}/notes",
+    summary="Save evaluator notes and optional score override",
+)
+async def save_evaluator_notes(
+    submission_id: str,
+    answer_id: str,
+    body: EvaluatorNotesUpdate,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Save interviewer notes and optionally override the AI-assigned marks for a specific answer."""
+    try:
+        service = get_coding_interview_service()
+        result = await service.save_evaluator_notes(
+            submission_id=submission_id,
+            answer_id=answer_id,
+            notes=body.notes,
+            marks_override=body.marks_override,
+            evaluator_id=current_user_id,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error saving evaluator notes for answer {answer_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to save notes")
+
+
+@router.delete("/submissions/{submission_id}", summary="Delete a submission")
+async def delete_submission(
+    submission_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Delete a candidate submission (any status: in_progress, submitted, etc.). Requires interview ownership."""
+    try:
+        service = get_coding_interview_service()
+        await service.delete_submission(
+            submission_id=submission_id,
+            user_id=current_user_id
+        )
+        return {'message': 'Submission deleted successfully'}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting submission {submission_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete submission: {str(e)}")

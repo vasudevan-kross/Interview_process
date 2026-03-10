@@ -46,7 +46,8 @@
       "mcp__plugin_vapi-voice-ai_vapi-docs__searchDocs",
       "Bash(systeminfo:*)",
       "Bash(winget install:*)",
-      "Bash(\"D:/Projects/AI driven/Interview/backend/venv/Scripts/python.exe\":*)"
+      "Bash(\"D:/Projects/AI driven/Interview/backend/venv/Scripts/python.exe\":*)",
+      "Bash(\"venv\\\\Scripts\\\\python.exe\":*)"
     ]
   }
 }

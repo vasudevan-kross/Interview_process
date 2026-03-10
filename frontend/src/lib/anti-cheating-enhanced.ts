@@ -10,7 +10,9 @@
  * - Screenshot detection
  * - Right-click prevention
  * - Multiple tab detection
- * - All existing features (tab switch, copy/paste, blur/focus)
+ * - Mouse leave / idle detection / time-on-question
+ * - Mobile: split-screen detection, network offline, text selection,
+ *           orientation change, navigation intent (beforeunload)
  *
  * All activities are logged to session_activities table with NO database changes needed!
  */
@@ -86,6 +88,15 @@ export async function initializeEnhancedAntiCheating(
   const listeners: Array<() => void> = []
   const keystrokeDynamics = new KeystrokeDynamics()
   let fingerprintCache: string | null = null
+
+  // Time-on-question tracking
+  let questionStartTime = Date.now()
+  let prevQuestionId = initialQuestionId
+
+  // Idle detection
+  let lastActivityTime = Date.now()
+  const IDLE_THRESHOLD_MS = 60_000
+  let idleAlreadyFlagged = false
 
   // Initialize fingerprint
   const fpPromise = FingerprintJS.load()
@@ -188,6 +199,10 @@ export async function initializeEnhancedAntiCheating(
 
   // Screenshot detection (works in some browsers)
   const handleKeyDown = (e: KeyboardEvent) => {
+    // Reset idle timer on any keypress
+    lastActivityTime = Date.now()
+    idleAlreadyFlagged = false
+
     // Detect common screenshot shortcuts
     const isScreenshot =
       (e.key === 'PrintScreen') ||
@@ -213,6 +228,168 @@ export async function initializeEnhancedAntiCheating(
     // Track keystroke dynamics
     keystrokeDynamics.recordKey()
   }
+
+  const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+
+  // ── 1. Split-screen detection (mobile only) ──────────────────────────────
+  // On Android, opening split-screen shrinks the viewport significantly.
+  // Only meaningful on touch devices — desktop window resize is normal behaviour.
+  const initialViewportWidth = window.innerWidth
+  let splitScreenFlagged = false
+
+  const handleResize = (() => {
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    return () => {
+      if (!isTouchDevice) return
+      if (resizeTimer) clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => {
+        const ratio = window.innerWidth / (screen.width || initialViewportWidth)
+        const isSplitScreen = ratio < 0.65
+
+        if (isSplitScreen && !splitScreenFlagged) {
+          splitScreenFlagged = true
+          trackActivity({
+            submission_id: submissionId,
+            activity_type: 'split_screen',
+            question_id: currentQuestionId,
+            metadata: {
+              viewport_width: window.innerWidth,
+              screen_width: screen.width,
+              ratio: +ratio.toFixed(2),
+              timestamp: new Date().toISOString(),
+            },
+          }).catch(console.error)
+        } else if (!isSplitScreen) {
+          splitScreenFlagged = false  // reset when they exit split-screen
+        }
+      }, 300)
+    }
+  })()
+
+  // ── 2. Network offline detection ─────────────────────────────────────────
+  // Airplane mode trick: go offline → open AI app (cached) → come back.
+  let offlineAt: number | null = null
+
+  const handleOffline = () => {
+    offlineAt = Date.now()
+    trackActivity({
+      submission_id: submissionId,
+      activity_type: 'network_offline',
+      question_id: currentQuestionId,
+      metadata: { timestamp: new Date().toISOString() },
+    }).catch(console.error)
+  }
+
+  const handleOnline = () => {
+    const offlineDuration = offlineAt ? Math.floor((Date.now() - offlineAt) / 1000) : null
+    offlineAt = null
+    trackActivity({
+      submission_id: submissionId,
+      activity_type: 'network_online',
+      question_id: currentQuestionId,
+      metadata: {
+        offline_duration_seconds: offlineDuration,
+        timestamp: new Date().toISOString(),
+      },
+    }).catch(console.error)
+  }
+
+  // ── 3. Question text selection ────────────────────────────────────────────
+  // Long-press select on mobile to share question text to WhatsApp/ChatGPT.
+  // Debounced — only fires after selection settles. Ignores tiny selections.
+  let selectionTimer: ReturnType<typeof setTimeout> | null = null
+
+  const handleSelectionChange = () => {
+    if (selectionTimer) clearTimeout(selectionTimer)
+    selectionTimer = setTimeout(() => {
+      const selected = window.getSelection()?.toString() ?? ''
+      if (selected.length > 30) {
+        trackActivity({
+          submission_id: submissionId,
+          activity_type: 'text_selection',
+          question_id: currentQuestionId,
+          metadata: {
+            selected_length: selected.length,
+            timestamp: new Date().toISOString(),
+          },
+        }).catch(console.error)
+      }
+    }, 800)
+  }
+
+  // ── 4. Screen orientation change ─────────────────────────────────────────
+  // Switching to landscape mid-exam may indicate screensharing or showing
+  // the device to someone on a video call.
+  const handleOrientationChange = () => {
+    const orientation =
+      screen.orientation?.type ??
+      (window.innerWidth > window.innerHeight ? 'landscape' : 'portrait')
+
+    trackActivity({
+      submission_id: submissionId,
+      activity_type: 'orientation_change',
+      question_id: currentQuestionId,
+      metadata: {
+        orientation,
+        angle: screen.orientation?.angle ?? null,
+        timestamp: new Date().toISOString(),
+      },
+    }).catch(console.error)
+  }
+
+  // ── 5. Navigation intent (beforeunload) ───────────────────────────────────
+  // Candidate tries to close the tab or navigate away entirely.
+  // Uses sendBeacon so the request completes even as the page unloads.
+  const handleBeforeUnload = () => {
+    const payload = JSON.stringify({
+      submission_id: submissionId,
+      activity_type: 'navigation_attempt',
+      question_id: currentQuestionId,
+      metadata: { timestamp: new Date().toISOString() },
+    })
+    // sendBeacon is fire-and-forget, survives page unload
+    navigator.sendBeacon(
+      `/api/v1/coding-interviews/activity`,
+      new Blob([payload], { type: 'application/json' })
+    )
+  }
+
+  // Mouse leave — cursor exited the browser viewport (desktop only)
+  const handleMouseLeave = (e: MouseEvent) => {
+    if (e.relatedTarget === null) {
+      trackActivity({
+        submission_id: submissionId,
+        activity_type: 'mouse_leave',
+        question_id: currentQuestionId,
+        metadata: { timestamp: new Date().toISOString() },
+      }).catch(console.error)
+    }
+  }
+
+  // Reset idle on mouse movement (desktop) or any touch (mobile)
+  const handleMouseMove = () => {
+    lastActivityTime = Date.now()
+    idleAlreadyFlagged = false
+  }
+
+  const handleTouchActivity = () => {
+    lastActivityTime = Date.now()
+    idleAlreadyFlagged = false
+  }
+
+  // Idle detection — flag once per idle period, reset on activity
+  const idleCheckInterval = setInterval(() => {
+    const idleSec = Math.floor((Date.now() - lastActivityTime) / 1000)
+    if (idleSec >= IDLE_THRESHOLD_MS / 1000 && !idleAlreadyFlagged) {
+      idleAlreadyFlagged = true
+      trackActivity({
+        submission_id: submissionId,
+        activity_type: 'idle_detected',
+        question_id: currentQuestionId,
+        metadata: { idle_seconds: idleSec, timestamp: new Date().toISOString() },
+      }).catch(console.error)
+    }
+  }, 15_000) // check every 15s
 
   // Periodic keystroke analysis
   const keystrokeAnalysisInterval = setInterval(() => {
@@ -334,28 +511,72 @@ export async function initializeEnhancedAntiCheating(
   // Register all event listeners
   document.addEventListener('visibilitychange', handleVisibilityChange)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
-  window.addEventListener('blur', handleWindowBlur)
-  window.addEventListener('focus', handleWindowFocus)
-  document.addEventListener('copy', handleCopy)
-  document.addEventListener('paste', handlePaste)
+  document.addEventListener('selectionchange', handleSelectionChange)
+  window.addEventListener('blur',    handleWindowBlur)
+  window.addEventListener('focus',   handleWindowFocus)
+  window.addEventListener('resize',  handleResize,  { passive: true })
+  window.addEventListener('offline', handleOffline)
+  window.addEventListener('online',  handleOnline)
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  document.addEventListener('copy',        handleCopy)
+  document.addEventListener('paste',       handlePaste)
   document.addEventListener('contextmenu', handleContextMenu)
-  document.addEventListener('keydown', handleKeyDown)
-  window.addEventListener('storage', handleStorageChange)
+  document.addEventListener('keydown',     handleKeyDown)
+  window.addEventListener('storage',       handleStorageChange)
+
+  // Orientation: prefer screen.orientation API, fall back to window event
+  if (screen.orientation) {
+    screen.orientation.addEventListener('change', handleOrientationChange)
+  } else {
+    window.addEventListener('orientationchange', handleOrientationChange)
+  }
+
+  if (isTouchDevice) {
+    document.addEventListener('touchstart', handleTouchActivity, { passive: true })
+    document.addEventListener('touchend',   handleTouchActivity, { passive: true })
+  } else {
+    document.addEventListener('mouseleave', handleMouseLeave)
+    document.addEventListener('mousemove',  handleMouseMove, { passive: true })
+  }
 
   // Store cleanup functions
   listeners.push(
     () => document.removeEventListener('visibilitychange', handleVisibilityChange),
     () => document.removeEventListener('fullscreenchange', handleFullscreenChange),
-    () => window.removeEventListener('blur', handleWindowBlur),
-    () => window.removeEventListener('focus', handleWindowFocus),
-    () => document.removeEventListener('copy', handleCopy),
-    () => document.removeEventListener('paste', handlePaste),
+    () => document.removeEventListener('selectionchange',  handleSelectionChange),
+    () => window.removeEventListener('blur',    handleWindowBlur),
+    () => window.removeEventListener('focus',   handleWindowFocus),
+    () => window.removeEventListener('resize',  handleResize),
+    () => window.removeEventListener('offline', handleOffline),
+    () => window.removeEventListener('online',  handleOnline),
+    () => window.removeEventListener('beforeunload', handleBeforeUnload),
+    () => document.removeEventListener('copy',        handleCopy),
+    () => document.removeEventListener('paste',       handlePaste),
     () => document.removeEventListener('contextmenu', handleContextMenu),
-    () => document.removeEventListener('keydown', handleKeyDown),
-    () => window.removeEventListener('storage', handleStorageChange),
+    () => document.removeEventListener('keydown',     handleKeyDown),
+    () => window.removeEventListener('storage',       handleStorageChange),
     () => clearInterval(keystrokeAnalysisInterval),
+    () => clearInterval(idleCheckInterval),
     () => localStorage.removeItem(`interview_${submissionId}`)
   )
+
+  if (screen.orientation) {
+    listeners.push(() => screen.orientation.removeEventListener('change', handleOrientationChange))
+  } else {
+    listeners.push(() => window.removeEventListener('orientationchange', handleOrientationChange))
+  }
+
+  if (isTouchDevice) {
+    listeners.push(
+      () => document.removeEventListener('touchstart', handleTouchActivity),
+      () => document.removeEventListener('touchend',   handleTouchActivity),
+    )
+  } else {
+    listeners.push(
+      () => document.removeEventListener('mouseleave', handleMouseLeave),
+      () => document.removeEventListener('mousemove',  handleMouseMove),
+    )
+  }
 
   // Fullscreen helpers
   const checkFullscreen = (): boolean => {
@@ -384,6 +605,21 @@ export async function initializeEnhancedAntiCheating(
   // Return enhanced tracker interface
   return {
     updateQuestionId: (questionId: string) => {
+      // Log time spent on the previous question before switching
+      const timeSpentSec = Math.floor((Date.now() - questionStartTime) / 1000)
+      trackActivity({
+        submission_id: submissionId,
+        activity_type: 'question_time',
+        question_id: prevQuestionId,
+        metadata: {
+          time_spent_seconds: timeSpentSec,
+          next_question_id: questionId,
+          timestamp: new Date().toISOString(),
+        },
+      }).catch(console.error)
+
+      questionStartTime = Date.now()
+      prevQuestionId = questionId
       currentQuestionId = questionId
     },
     cleanup: () => {
