@@ -20,6 +20,7 @@ from collections import deque
 from app.db.supabase_client import get_supabase
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.services.hybrid_scorer import HybridScorer
+from app.services.user_service import get_user_service
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class CodingInterviewService:
     def __init__(self):
         self.client = get_supabase()
         self.hybrid_scorer = HybridScorer()
+        self.user_service = get_user_service()
         # Activity buffer for batch inserts (optimization)
         self.activity_buffer = deque(maxlen=10)
 
@@ -135,7 +137,8 @@ class CodingInterviewService:
         bond_document_url: Optional[str] = None,
         require_signature: bool = False,
         bond_years: int = 2,
-        bond_timing: str = 'before_submission'
+        bond_timing: str = 'before_submission',
+        job_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create a new coding interview with questions.
@@ -158,6 +161,8 @@ class CodingInterviewService:
             dict with interview_id, access_token, link_expires_at, questions
         """
         try:
+            # Resolve raw user ID to internal UUID
+            user_id = self.user_service.resolve_user_id(user_id)
             # Generate unique access token
             access_token = str(uuid.uuid4())
 
@@ -197,7 +202,8 @@ class CodingInterviewService:
                 'require_signature': require_signature,
                 'bond_years': bond_years,
                 'bond_timing': bond_timing,
-                'created_by': user_id
+                'created_by': user_id,
+                'job_id': job_id
             }
 
             interview_result = self.client.table('coding_interviews').insert(interview_data).execute()
@@ -760,18 +766,33 @@ class CodingInterviewService:
             # Calculate percentage
             percentage = (total_marks_obtained / total_marks * 100) if total_marks > 0 else 0
 
-            # Update submission with final scores
+            # Update submission with final scores and set status to 'evaluated'
             self.client.table('coding_submissions').update({
+                'status': 'evaluated',
                 'total_marks_obtained': total_marks_obtained,
                 'percentage': round(percentage, 2)
             }).eq('id', submission_id).execute()
+
+            # Run suspicious activity check
+            await self.check_suspicious_activity(submission_id)
 
             logger.info(
                 f"Evaluation complete for {submission_id}: "
                 f"{total_marks_obtained}/{total_marks} ({percentage:.2f}%)"
             )
 
-
+            # Sync to pipeline if candidate exists there
+            try:
+                from app.services.pipeline_service import get_pipeline_service
+                pipeline = get_pipeline_service()
+                candidate_email = submission.get('candidate_email', '')
+                if candidate_email:
+                    pipeline.sync_coding_results(
+                        submission_id, candidate_email,
+                        total_marks_obtained, round(percentage, 2)
+                    )
+            except Exception as pe:
+                logger.debug(f"Pipeline sync skipped: {pe}")
 
             return {
                 'submission_id': submission_id,
@@ -1098,6 +1119,9 @@ Language:"""
         user_id: str
     ) -> Dict[str, Any]:
         """Import a list of pre-registered candidates for an interview."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         # Verify interview ownership
@@ -1251,6 +1275,9 @@ Language:"""
         user_id: str
     ) -> Dict[str, Any]:
         """Update a pre-registered candidate's details."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         # Verify interview ownership
@@ -1278,6 +1305,9 @@ Language:"""
         user_id: str
     ) -> None:
         """Delete a pre-registered candidate from the interview."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         # Verify interview ownership
@@ -1300,6 +1330,9 @@ Language:"""
         user_id: str
     ) -> None:
         """Delete a candidate submission (any status). Requires interview ownership."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         # Fetch submission to get interview_id
@@ -1329,6 +1362,9 @@ Language:"""
         decided_by: str
     ) -> Dict[str, Any]:
         """Update the decision on a coding submission."""
+        # Resolve raw user ID to internal UUID
+        decided_by = self.user_service.resolve_user_id(decided_by)
+        
         client = get_supabase()
         from datetime import datetime, timezone
 
@@ -1359,6 +1395,9 @@ Language:"""
         evaluator_id: str
     ) -> Dict[str, Any]:
         """Save evaluator notes and optionally override the AI-assigned marks."""
+        # Resolve raw user ID to internal UUID
+        evaluator_id = self.user_service.resolve_user_id(evaluator_id)
+
         client = get_supabase()
 
         # Verify answer belongs to this submission
@@ -1432,6 +1471,9 @@ Language:"""
         user_id: str
     ) -> Dict[str, Any]:
         """Copy an interview (+ all questions) with a fresh access token."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         interview_result = client.table('coding_interviews').select('*').eq(
@@ -1507,6 +1549,9 @@ Language:"""
         user_id: str
     ) -> Dict[str, Any]:
         """Email the interview link to all pre-registered candidates who haven't submitted."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         interview_result = client.table('coding_interviews').select(
@@ -1566,6 +1611,9 @@ Language:"""
         decided_by: str
     ) -> Dict[str, Any]:
         """Set the same decision on multiple submissions at once."""
+        # Resolve raw user ID to internal UUID
+        decided_by = self.user_service.resolve_user_id(decided_by)
+        
         client = get_supabase()
 
         interview_result = client.table('coding_interviews').select('id').eq(
@@ -1600,6 +1648,9 @@ Language:"""
         user_id: str
     ) -> Dict[str, Any]:
         """Delete multiple pre-registered candidates."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         interview_result = client.table('coding_interviews').select('id').eq(
@@ -1627,6 +1678,9 @@ Language:"""
         user_id: str
     ) -> Dict[str, Any]:
         """Update interview fields including bond settings and questions."""
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         interview_result = client.table('coding_interviews').select('*').eq(

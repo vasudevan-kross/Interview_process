@@ -324,10 +324,10 @@ export default function SubmissionReviewPage() {
             Back
           </Button>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+            <h1 className="text-xl font-semibold text-slate-900">
               Submission Review
             </h1>
-            <p className="text-gray-600 mt-1">{submission.candidate_name}</p>
+            <p className="text-slate-500 mt-0.5 text-sm">{submission.candidate_name}</p>
           </div>
         </div>
         <Button

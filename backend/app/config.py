@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     DEFAULT_OLLAMA_MODEL: str = "llama3.1:8b"
 
     # Ollama OCR Models (for fallback layers)
-    OLLAMA_OCR_MODEL: str = "MedAIBase/PaddleOCR-VL:0.9b"
-    OLLAMA_FALLBACK_MODEL: str = "glm-ocr:latest"
+    OLLAMA_OCR_MODEL: str = "llava:7b"
+    OLLAMA_FALLBACK_MODEL: str = "llava:7b"
 
     # PaddleOCR - Free Handwriting OCR
     PADDLEOCR_ENABLED: bool = True
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     CODING_INTERVIEW_DEFAULT_GRACE_PERIOD: int = 15  # minutes
     CODING_INTERVIEW_AUTO_SAVE_INTERVAL: int = 30    # seconds
     CODING_INTERVIEW_MAX_DURATION: int = 240         # minutes (4 hours max)
-    QUESTION_GENERATION_MODEL: str = "codellama:7b"
+    QUESTION_GENERATION_MODEL: str = "llama3.1:8b"
     QUESTION_GENERATION_TEMPERATURE: float = 0.7
 
     # Vapi Voice Screening

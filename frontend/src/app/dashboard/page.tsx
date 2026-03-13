@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users, FileText, Briefcase, ArrowRight, Sparkles, Clock, Award } from 'lucide-react'
+import { Users, FileText, Briefcase, ArrowRight, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonStatCards } from '@/components/ui/skeleton'
+import { toast } from 'sonner'
 
 interface DashboardStats {
   jobsCount: number
@@ -28,7 +31,6 @@ export default function DashboardPage() {
     recentJobs: [],
   })
   const [loading, setLoading] = useState(true)
-  const [userName, setUserName] = useState('')
 
   useEffect(() => {
     fetchDashboardData()
@@ -40,8 +42,6 @@ export default function DashboardPage() {
 
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-
-      setUserName(user.user_metadata?.full_name || user.email || '')
 
       const { data: userRecord } = await supabase
         .from('users')
@@ -118,6 +118,7 @@ export default function DashboardPage() {
       })
     } catch (error) {
       console.error('Error fetching dashboard data:', error)
+      toast.error('Failed to load dashboard data.')
     } finally {
       setLoading(false)
     }
@@ -129,7 +130,6 @@ export default function DashboardPage() {
       value: stats.jobsCount.toString(),
       description: 'Job descriptions posted',
       icon: Briefcase,
-      gradient: 'from-blue-500 to-cyan-500',
       href: '/dashboard/resume-matching/jobs',
     },
     {
@@ -137,15 +137,13 @@ export default function DashboardPage() {
       value: stats.resumesCount.toString(),
       description: 'Resumes processed',
       icon: Users,
-      gradient: 'from-purple-500 to-pink-500',
       href: '/dashboard/resume-matching/jobs',
     },
     {
       title: 'Avg Match Score',
       value: `${stats.avgScore}%`,
       description: 'Resume matching',
-      icon: Award,
-      gradient: 'from-green-500 to-emerald-500',
+      icon: ArrowRight,
       href: '/dashboard/resume-matching/jobs',
     },
     {
@@ -153,148 +151,97 @@ export default function DashboardPage() {
       value: stats.testsCount.toString(),
       description: 'Tests created',
       icon: FileText,
-      gradient: 'from-orange-500 to-red-500',
       href: '/dashboard/test-evaluation/tests',
     },
   ]
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mx-auto"></div>
-          <p className="text-muted-foreground">Loading dashboard...</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-8">
-      {/* Clean Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-8 shadow-sm">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-primary to-primary/80">
-                <Sparkles className="h-4 w-4 text-white" />
-              </div>
-              <span className="text-sm font-medium text-muted-foreground">Welcome back</span>
-            </div>
-            <h1 className="text-4xl font-bold text-slate-900 mb-2">{userName}</h1>
-            <p className="text-lg text-slate-600">
-              Here's what's happening with your hiring process today
-            </p>
-          </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Dashboard"
+        description="Here's what's happening with your hiring process today."
+      />
+
+      {loading ? (
+        <SkeletonStatCards />
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {statCards.map((stat) => {
+            const Icon = stat.icon
+            return (
+              <Link key={stat.title} href={stat.href} className="group">
+                <Card className="relative transition-all duration-200 hover:shadow-card-hover border border-slate-200 bg-white">
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <CardTitle className="text-sm font-medium text-slate-500">
+                      {stat.title}
+                    </CardTitle>
+                    <Icon className="h-4 w-4 text-slate-300" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-semibold tabular-nums text-slate-900">
+                      {stat.value}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">{stat.description}</p>
+                  </CardContent>
+                </Card>
+              </Link>
+            )
+          })}
         </div>
-      </div>
+      )}
 
-      {/* Stats Grid */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        {statCards.map((stat, index) => {
-          const Icon = stat.icon
-          return (
-            <Link
-              key={stat.title}
-              href={stat.href}
-              className="group"
-              style={{ animationDelay: `${index * 100}ms` }}
-            >
-              <Card className="relative overflow-hidden transition-all duration-200 hover:shadow-lg border border-slate-200 bg-white">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    {stat.title}
-                  </CardTitle>
-                  <div className={`p-2.5 rounded-xl bg-gradient-to-br ${stat.gradient} shadow-sm`}>
-                    <Icon className="h-4 w-4 text-white" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-slate-900">
-                    {stat.value}
-                  </div>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                    {stat.description}
-                    <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
-                  </p>
-                </CardContent>
-              </Card>
-            </Link>
-          )
-        })}
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2">
         {/* Quick Actions */}
-        <Card className="border border-slate-200 shadow-sm bg-white">
+        <Card className="border border-slate-200 shadow-card bg-white">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-slate-900">
-              <Sparkles className="h-5 w-5 text-primary" />
-              Quick Actions
-            </CardTitle>
+            <CardTitle className="text-slate-900">Quick Actions</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-2">
             <Link
               href="/dashboard/resume-matching"
-              className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-primary/40 hover:bg-slate-50 transition-all group"
+              className="flex items-center justify-between p-3 rounded-md border border-slate-100 hover:border-slate-200 hover:bg-slate-50 transition-all group"
             >
               <div>
-                <h3 className="font-semibold mb-1 flex items-center gap-2 text-slate-900">
-                  <Briefcase className="h-4 w-4 text-primary" />
-                  Upload Job Description
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Start a new resume matching round
-                </p>
+                <h3 className="font-medium text-sm text-slate-900">Upload Job Description</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Start a new resume matching round</p>
               </div>
-              <ArrowRight className="h-5 w-5 text-primary opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+              <ArrowRight className="h-4 w-4 text-slate-300 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
             </Link>
 
             <Link
               href="/dashboard/test-evaluation"
-              className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-orange-500/40 hover:bg-slate-50 transition-all group"
+              className="flex items-center justify-between p-3 rounded-md border border-slate-100 hover:border-slate-200 hover:bg-slate-50 transition-all group"
             >
               <div>
-                <h3 className="font-semibold mb-1 flex items-center gap-2 text-slate-900">
-                  <FileText className="h-4 w-4 text-orange-500" />
-                  Create Test
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Upload a question paper for evaluation
-                </p>
+                <h3 className="font-medium text-sm text-slate-900">Create Test</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Upload a question paper for evaluation</p>
               </div>
-              <ArrowRight className="h-5 w-5 text-orange-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+              <ArrowRight className="h-4 w-4 text-slate-300 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
             </Link>
           </CardContent>
         </Card>
 
         {/* Recent Activity */}
-        <Card className="border border-slate-200 shadow-sm bg-white">
+        <Card className="border border-slate-200 shadow-card bg-white">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-slate-900">
-              <Clock className="h-5 w-5 text-primary" />
-              Recent Activity
-            </CardTitle>
+            <CardTitle className="text-slate-900">Recent Activity</CardTitle>
           </CardHeader>
           <CardContent>
             {stats.recentJobs && stats.recentJobs.length > 0 ? (
-              <div className="space-y-3">
-                {stats.recentJobs.map((job, index) => (
+              <div className="space-y-2">
+                {stats.recentJobs.map((job) => (
                   <Link
                     key={job.id}
                     href={`/dashboard/resume-matching/${job.id}/candidates`}
-                    className="flex items-center justify-between p-4 rounded-lg border border-slate-200 hover:border-primary/40 hover:bg-slate-50 transition-all group"
-                    style={{ animationDelay: `${index * 100}ms` }}
+                    className="flex items-center justify-between p-3 rounded-md border border-slate-100 hover:border-slate-200 hover:bg-slate-50 transition-all group"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-primary/10">
-                        <Briefcase className="h-4 w-4 text-primary" />
-                      </div>
+                      <Clock className="h-4 w-4 text-slate-300 shrink-0" />
                       <div>
-                        <div className="font-medium text-sm text-slate-900 group-hover:text-primary transition-colors">
+                        <div className="font-medium text-sm text-slate-900">
                           {job.title}
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs text-slate-400">
                           {new Date(job.created_at).toLocaleDateString('en-US', {
                             month: 'short',
                             day: 'numeric',
@@ -303,22 +250,16 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     </div>
-                    <ArrowRight className="h-4 w-4 text-primary opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                    <ArrowRight className="h-4 w-4 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </Link>
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8">
-                <div className="mb-3 inline-flex p-4 rounded-full bg-slate-100">
-                  <Clock className="h-8 w-8 text-slate-400" />
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  No recent activity yet. Start by uploading a job description!
-                </p>
-                <Button asChild className="mt-4" variant="outline">
-                  <Link href="/dashboard/resume-matching">
-                    Get Started
-                  </Link>
+              <div className="py-10 text-center">
+                <p className="text-sm font-medium text-slate-900 mb-1">No recent activity</p>
+                <p className="text-sm text-slate-400 mb-4">Start by uploading a job description.</p>
+                <Button asChild variant="outline" size="sm">
+                  <Link href="/dashboard/resume-matching">Get Started</Link>
                 </Button>
               </div>
             )}

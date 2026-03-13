@@ -69,6 +69,7 @@ class APIClient {
   async uploadMultipleResumes(formData: FormData) {
     const response = await this.client.post('/api/v1/resume-matching/resumes/batch', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000, // 10 minutes — LLM batch processing is slow
     })
     return response.data
   }

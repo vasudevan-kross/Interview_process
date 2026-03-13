@@ -38,22 +38,9 @@ Comprehensive metrics and insights
 
 ## 📚 Documentation
 
-All documentation has been organized in the `docs/` folder:
+All documentation has been consolidated into a single comprehensive guide:
 
-### Setup Guides
-- **[Complete Setup](docs/setup/COMPLETE_SETUP.md)** - Full installation guide
-- **[Backend Setup](docs/setup/backend-setup.md)** - Backend configuration
-- **[Frontend Setup](docs/setup/frontend-setup.md)** - Frontend configuration
-- **[Database Setup](docs/setup/database-setup.md)** - Supabase setup
-- **[Role Setup](docs/setup/role-setup.md)** - User permissions
-
-### Feature Documentation
-- **[Resume Matching](docs/features/resume-matching.md)** - Resume analysis workflow
-- **[Test Evaluation](docs/features/test-evaluation.md)** - Answer sheet processing
-- **[Video Interviews](docs/features/video-interviews.md)** - Live interviews with Daily.co
-
-### Migration & How-To Guides
-- **[Daily.co Migration](docs/guides/daily-co-migration.md)** - Video platform migration guide
+- **[Agent Context & Full Documentation](docs/AGENT_CONTEXT.md)** - Contains the complete project architecture, technical skills reference, detailed setup guides, feature integration details (Daily.co, Vapi.ai), and all troubleshooting/debugging steps.
 
 ---
 
@@ -99,7 +86,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 ## 📖 Learn More
 
-See the **[docs/](docs/)** folder for comprehensive documentation on setup, features, and development.
+See **[docs/AGENT_CONTEXT.md](docs/AGENT_CONTEXT.md)** for comprehensive documentation on setup, features, troubleshooting, and development.
 
 ---
 

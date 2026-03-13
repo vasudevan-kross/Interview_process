@@ -1,12 +1,11 @@
-import { Loader2 } from 'lucide-react'
+import { SkeletonPageHeader, SkeletonStatCards, SkeletonTable } from '@/components/ui/skeleton'
 
 export default function CodingInterviewsLoading() {
   return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="text-center">
-        <Loader2 className="h-12 w-12 animate-spin text-indigo-600 mx-auto mb-4" />
-        <p className="text-gray-600 text-sm">Loading interviews...</p>
-      </div>
+    <div className="space-y-6">
+      <SkeletonPageHeader />
+      <SkeletonStatCards />
+      <SkeletonTable rows={5} cols={7} />
     </div>
   )
 }

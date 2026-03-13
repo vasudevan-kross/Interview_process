@@ -52,6 +52,7 @@ import {
   type InterviewCandidate,
 } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
+import { SkeletonPageHeader, SkeletonTable } from '@/components/ui/skeleton'
 
 type Decision = 'advanced' | 'rejected' | 'hold' | 'pending'
 
@@ -230,12 +231,56 @@ export default function CandidatesPage() {
   const handleEvaluateAll = async () => {
     try {
       setEvaluating(true)
+      toast.loading('Starting evaluation...', { id: 'bulk-eval' })
+
       const result = await evaluateAllSubmissions(interviewId)
-      toast.success(`Evaluated ${result.evaluated} of ${result.total} submissions`)
-      await fetchCandidates()
+      if (result.status === 'processing') {
+        toast.info(
+          `Evaluation started for ${result.total} submissions. Viewing progress...`,
+          { id: 'bulk-eval', duration: 4000 }
+        )
+
+        // Start polling for 2 minutes or until all done
+        let attempts = 0
+        const maxAttempts = 12 // 12 * 10s = 2 minutes
+
+        const pollInterval = setInterval(async () => {
+          attempts++
+          try {
+            const result = await getInterviewCandidates(interviewId)
+            setData(result)
+
+            const stillEvaluating = result.candidates.some(
+              (c) => c.submitted && (c.score === null || c.score === undefined)
+            )
+
+            if (!stillEvaluating || attempts >= maxAttempts) {
+              clearInterval(pollInterval)
+              setEvaluating(false)
+              if (!stillEvaluating) {
+                toast.success('Evaluation complete', { id: 'bulk-eval' })
+              } else {
+                toast.info('Evaluation is taking longer than expected. Please refresh later.', {
+                  id: 'bulk-eval',
+                })
+              }
+            }
+          } catch (e) {
+            console.error('Polling failed:', e)
+            clearInterval(pollInterval)
+            setEvaluating(false)
+          }
+        }, 10000)
+      } else {
+        toast.success(
+          result.total === 0 ? 'No submissions to evaluate' : `Evaluated ${result.evaluated} submission(s)`,
+          { id: 'bulk-eval' }
+        )
+        await fetchCandidates()
+        setEvaluating(false)
+      }
     } catch (error: any) {
-      toast.error(error.message || 'Failed to evaluate')
-    } finally {
+      toast.error(error.message || 'Failed to evaluate', { id: 'bulk-eval' })
       setEvaluating(false)
     }
   }
@@ -413,23 +458,38 @@ export default function CandidatesPage() {
   // ── Helpers ───────────────────────────────────────────────
   const getDecisionBadge = (decision: Decision) => {
     switch (decision) {
-      case 'advanced': return <Badge className="bg-green-100 text-green-800">Advanced</Badge>
-      case 'rejected': return <Badge className="bg-red-100 text-red-800">Rejected</Badge>
-      case 'hold': return <Badge className="bg-yellow-100 text-yellow-800">Hold</Badge>
-      default: return <Badge className="bg-gray-100 text-gray-600">Pending</Badge>
+      case 'advanced': return <Badge className="bg-green-50 text-green-700 border border-green-200 rounded-md">Advanced</Badge>
+      case 'rejected': return <Badge className="bg-red-50 text-red-700 border border-red-200 rounded-md">Rejected</Badge>
+      case 'hold': return <Badge className="bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-md">Hold</Badge>
+      default: return <Badge className="bg-slate-100 text-slate-600 border border-slate-200 rounded-md">Pending</Badge>
     }
   }
 
-  const getStatusBadge = (submitted: boolean) =>
-    submitted ? (
-      <span className="flex items-center gap-1 text-green-700 text-sm font-medium">
-        <CheckCircle2 className="h-4 w-4" /> Submitted
-      </span>
-    ) : (
-      <span className="flex items-center gap-1 text-gray-400 text-sm">
-        <Clock className="h-4 w-4" /> Not Yet
-      </span>
+  const getStatusBadge = (candidate: InterviewCandidate) => {
+    if (candidate.submitted) {
+      const isEvaluated = candidate.score !== null && candidate.score !== undefined
+
+      if (isEvaluated) {
+        return (
+          <Badge className="bg-green-50 text-green-700 border border-green-200 rounded-md">
+            <CheckCircle2 className="h-4 w-4 mr-1" /> EVALUATED
+          </Badge>
+        )
+      }
+
+      return (
+        <Badge className="bg-amber-50 text-amber-700 border border-amber-200 rounded-md">
+          <Clock className="h-4 w-4 mr-1" /> {evaluating ? 'EVALUATING...' : 'SUBMITTED'}
+        </Badge>
+      )
+    }
+
+    return (
+      <Badge className="bg-slate-100 text-slate-500 border border-slate-200 rounded-md">
+        <Clock className="h-4 w-4 mr-1" /> NOT STARTED
+      </Badge>
     )
+  }
 
   const notStarted = data ? data.total - data.submitted : 0
 
@@ -450,21 +510,21 @@ export default function CandidatesPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid gap-4 md:grid-cols-6">
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
         {[
-          { label: 'Total', value: data?.total ?? 0, color: 'border-l-blue-500' },
-          { label: 'Submitted', value: data?.submitted ?? 0, color: 'border-l-indigo-500' },
-          { label: 'Advanced', value: data?.advanced ?? 0, color: 'border-l-green-500' },
-          { label: 'Rejected', value: data?.rejected ?? 0, color: 'border-l-red-500' },
-          { label: 'Hold', value: data?.hold ?? 0, color: 'border-l-yellow-500' },
-          { label: 'Not Started', value: notStarted, color: 'border-l-gray-400' },
-        ].map(({ label, value, color }) => (
-          <Card key={label} className={`border-l-4 ${color}`}>
+          { label: 'Total', value: data?.total ?? 0 },
+          { label: 'Submitted', value: data?.submitted ?? 0 },
+          { label: 'Advanced', value: data?.advanced ?? 0 },
+          { label: 'Rejected', value: data?.rejected ?? 0 },
+          { label: 'Hold', value: data?.hold ?? 0 },
+          { label: 'Not Started', value: notStarted },
+        ].map(({ label, value }) => (
+          <Card key={label} className="border border-slate-200 bg-white">
             <CardHeader className="pb-1 pt-3 px-4">
-              <CardTitle className="text-xs font-medium text-gray-500">{label}</CardTitle>
+              <CardTitle className="text-xs font-medium text-slate-500">{label}</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-3">
-              <div className="text-2xl font-bold">{value}</div>
+              <div className="text-2xl font-semibold tabular-nums text-slate-900">{value}</div>
             </CardContent>
           </Card>
         ))}
@@ -473,10 +533,13 @@ export default function CandidatesPage() {
       {/* Action bar */}
       <div className="flex items-center gap-3 flex-wrap">
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileUpload} />
-        <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-          {uploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-          Upload Excel / CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            {uploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+            Upload Excel / CSV
+          </Button>
+          <a href="/samples/voice-screening/sample_voice_candidates.csv" download="sample_candidates.csv" className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">Download Sample CSV</a>
+        </div>
         <Button variant="outline" onClick={handleCopyLink}>
           <Copy className="h-4 w-4 mr-2" />
           Copy Interview Link
@@ -488,7 +551,6 @@ export default function CandidatesPage() {
         <Button
           onClick={handleEvaluateAll}
           disabled={evaluating}
-          className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
         >
           {evaluating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Zap className="h-4 w-4 mr-2" />}
           Evaluate All
@@ -537,16 +599,16 @@ export default function CandidatesPage() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
+            <SkeletonTable rows={5} cols={8} />
           ) : !data || filteredCandidates.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-500">
-              <Users className="h-12 w-12 text-gray-300 mb-4" />
-              <p>
+            <div className="py-16 text-center">
+              <p className="text-sm font-medium text-slate-900 mb-1">
+                {data?.candidates.length === 0 ? 'No candidates yet' : 'No candidates match your search'}
+              </p>
+              <p className="text-sm text-slate-400 mb-4">
                 {data?.candidates.length === 0
-                  ? 'No candidates yet. Upload an Excel/CSV file to get started.'
-                  : 'No candidates match your search.'}
+                  ? 'Upload an Excel/CSV file to get started.'
+                  : 'Try adjusting your search or filter.'}
               </p>
             </div>
           ) : (
@@ -648,7 +710,7 @@ export default function CandidatesPage() {
                           )}
                         </TableCell>
 
-                        <TableCell>{getStatusBadge(candidate.submitted)}</TableCell>
+                        <TableCell>{getStatusBadge(candidate)}</TableCell>
 
                         <TableCell>
                           {candidate.score != null ? (

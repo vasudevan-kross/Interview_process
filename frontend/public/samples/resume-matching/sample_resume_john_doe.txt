@@ -1,0 +1,26 @@
+John Doe
+Senior Software Engineer
+Email: john.doe@example.com | Phone: 555-010-2020
+
+Summary:
+Results-driven software engineer with over 6 years of experience building highly scalable backend systems and APIs. Passionate about system architecture and reducing latency.
+
+Experience:
+
+Backend Tech Lead @ TechNova Inc. (2020 - Present)
+- Designed and implemented microservices using Python and FastAPI, resulting in a 40% reduction in API response times.
+- Managed and scaled PostgreSQL databases handling over 1 million daily requests.
+- Containerized the entire application stack using Docker and orchestrated deployments via Kubernetes.
+- Mentored a team of 4 junior developers and led daily stand-ups.
+
+Software Developer @ WebSolutions (2017 - 2020)
+- Built robust RESTful APIs using Django and Flask.
+- Maintained legacy codebase and migrated core monolith into microservices.
+
+Education:
+B.S. in Computer Science - University of Technology, 2017
+
+Skills:
+- Languages: Python, JavaScript, SQL
+- Frameworks: FastAPI, Django
+- Tools/Infrastructure: Docker, Kubernetes, PostgreSQL, Git, AWS

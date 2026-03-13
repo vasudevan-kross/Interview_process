@@ -86,8 +86,11 @@ class VAPIPromptGenerator:
                 }
             )
 
-            # Extract and parse JSON response
-            response_text = response["message"]["content"]
+            # Extract and parse JSON response (handle both dict and Pydantic response)
+            if hasattr(response, 'message'):
+                response_text = response.message.content or ''
+            else:
+                response_text = response["message"]["content"]
             logger.debug(f"Ollama response length: {len(response_text)} characters")
 
             generated_config = self._extract_json_from_response(response_text)

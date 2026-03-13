@@ -1,0 +1,5 @@
+question_text,difficulty,marks
+"Write a function to reverse a string in place without using built-in reverse methods.",Medium,10
+"Implement a binary search algorithm to find a target value in a sorted array.",Easy,5
+"Design an LRU (Least Recently Used) cache. It should support get and put operations in O(1) time.",Hard,20
+"Given an array of integers, find two numbers such that they add up to a specific target number.",Easy,5

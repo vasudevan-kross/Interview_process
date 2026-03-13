@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { getCampaign, regenerateCampaignPrompt, deleteCampaign, deleteCandidate, updateCandidate, getCallHistory, getCandidateByToken, startCall, Campaign, type VoiceCandidate, type VoiceCandidatePublic, type CallHistory } from '@/lib/api/voice-screening'
 import { ArrowLeft, RefreshCw, Loader2, Copy, Check, Plus, Users, Eye, Download, Phone as PhoneIcon, Edit, Trash2, Mic, MicOff } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { formatDistanceToNow } from 'date-fns'
 import { apiClient } from '@/lib/api/client'
@@ -402,55 +403,47 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="container mx-auto py-8 max-w-5xl">
-      <div className="flex items-center gap-4 mb-8">
-        <Link href="/dashboard/voice-screening/campaigns">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-3xl font-bold">{campaign.name}</h1>
-          <p className="text-muted-foreground">{campaign.job_role}</p>
-        </div>
-        <div className="flex gap-2">
-          <Link href={`/dashboard/voice-screening/campaigns/${resolvedParams.id}/edit`}>
-            <Button variant="outline">
-              <Edit className="mr-2 h-4 w-4" />
-              Edit Campaign
+      <PageHeader
+        title={campaign.name}
+        description={campaign.job_role}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => setShowAddModal(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Candidate
             </Button>
-          </Link>
-          <Button onClick={handleDelete} disabled={deleting} variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50">
-            {deleting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Deleting...
-              </>
-            ) : (
-              <>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </>
-            )}
-          </Button>
-          <Button onClick={() => setShowAddModal(true)} className="bg-gradient-to-r from-teal-500 to-green-500">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Candidate
-          </Button>
-          <Button onClick={handleRegenerate} disabled={regenerating} variant="outline">
-            {regenerating ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Regenerating...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Regenerate Prompt
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
+            <Link href={`/dashboard/voice-screening/campaigns/${resolvedParams.id}/edit`}>
+              <Button variant="outline">
+                <Edit className="mr-2 h-4 w-4" />
+                Edit Campaign
+              </Button>
+            </Link>
+            <Button onClick={handleRegenerate} disabled={regenerating} variant="outline">
+              {regenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Regenerating...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Regenerate Prompt
+                </>
+              )}
+            </Button>
+            <Button onClick={handleDelete} disabled={deleting} variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50">
+              {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete
+            </Button>
+            <Link href="/dashboard/voice-screening/campaigns">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+            </Link>
+          </div>
+        }
+      />
 
       <div className="grid gap-6">
         {/* Campaign Details */}
@@ -755,7 +748,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                   Candidates using this campaign's interview configuration
                 </CardDescription>
               </div>
-              <Button onClick={() => setShowAddModal(true)} size="sm" className="bg-gradient-to-r from-teal-500 to-green-500">
+              <Button onClick={() => setShowAddModal(true)} size="sm">
                 <Plus className="mr-2 h-4 w-4" />
                 Add Candidate
               </Button>
@@ -976,8 +969,8 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
 
                       {/* Structured Data Extraction - VAPI Template Style */}
                       {call.structured_data && Object.keys(call.structured_data).length > 0 && (
-                        <div className="bg-gradient-to-r from-teal-50 to-emerald-50 rounded-lg p-5 border border-teal-200">
-                          <h4 className="font-semibold mb-4 flex items-center gap-2 text-teal-700 text-lg">
+                        <div className="bg-slate-50 rounded-lg p-5 border border-slate-200">
+                          <h4 className="font-semibold mb-4 flex items-center gap-2 text-slate-700 text-base">
                             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
@@ -1100,7 +1093,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                 <Button
                   onClick={handleAddCandidate}
                   disabled={addLoading}
-                  className="flex-1 bg-gradient-to-r from-teal-500 to-green-500"
+                  className="flex-1"
                 >
                   {addLoading ? (
                     <>
@@ -1170,7 +1163,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                 <Button
                   onClick={handleUpdateCandidate}
                   disabled={editLoading}
-                  className="flex-1 bg-gradient-to-r from-orange-500 to-amber-500"
+                  className="flex-1"
                 >
                   {editLoading ? (
                     <>

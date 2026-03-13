@@ -72,6 +72,9 @@ class CampaignCreateRequest(BaseModel):
     # VAPI knowledge base (file IDs from VAPI file upload)
     knowledge_base_file_ids: List[str] = Field(default_factory=list, description="VAPI file IDs for knowledge base")
 
+    # Pipeline link
+    job_id: Optional[str] = Field(None, description="Link to job_descriptions for pipeline")
+
 
 class CampaignResponse(BaseModel):
     """Schema for campaign response."""
@@ -188,7 +191,7 @@ class CallHistoryResponse(BaseModel):
     status: str
 
     # Timing
-    started_at: str
+    started_at: Optional[str] = None
     ended_at: Optional[str] = None
     duration_seconds: Optional[int] = None
 

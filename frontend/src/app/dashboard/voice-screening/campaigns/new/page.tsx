@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { createCampaign, uploadFileToVapi, deleteVapiFile } from '@/lib/api/voice-screening'
 import { ArrowLeft, Plus, Trash2, Loader2, Upload, Sparkles, FileText, X } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { apiClient } from '@/lib/api/client'
@@ -42,6 +43,8 @@ const AVAILABLE_FIELDS = [
 
 export default function CreateCampaignPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const pipelineJobId = searchParams.get('job_id')
   const [loading, setLoading] = useState(false)
   const [generatingQuestions, setGeneratingQuestions] = useState(false)
   const [showAIDialog, setShowAIDialog] = useState(false)
@@ -268,8 +271,16 @@ export default function CreateCampaignPage() {
 
       const campaign = await createCampaign({
         ...formData,
-        custom_questions: cleanedQuestions
+        custom_questions: cleanedQuestions,
+        ...(pipelineJobId ? { job_id: pipelineJobId } : {})
       })
+
+      // If created from pipeline, navigate back to pipeline
+      if (pipelineJobId) {
+        toast.success('Campaign created! Returning to pipeline...')
+        router.push('/dashboard/pipeline')
+        return
+      }
 
       toast.success('Campaign created successfully!')
       router.push(`/dashboard/voice-screening/campaigns/${campaign.id}`)
@@ -283,14 +294,17 @@ export default function CreateCampaignPage() {
 
   return (
     <div className="container mx-auto py-8 max-w-4xl">
-      <div className="flex items-center gap-4 mb-8">
-        <Link href="/dashboard/voice-screening">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <h1 className="text-3xl font-bold">Create Voice Screening Campaign</h1>
-      </div>
+      <PageHeader
+        title="Create Voice Screening Campaign"
+        action={
+          <Link href="/dashboard/voice-screening">
+            <Button variant="ghost" size="sm">
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </Button>
+          </Link>
+        }
+      />
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Basic Info */}

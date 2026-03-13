@@ -5,7 +5,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ArrowLeft, Mail, Phone, Calendar, Award, CheckCircle2, XCircle } from 'lucide-react'
+import { ArrowLeft, Mail, Phone, Calendar, Award, CheckCircle2, XCircle, ThumbsUp, ThumbsDown, Minus, Briefcase, GraduationCap } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -20,6 +20,12 @@ interface CandidateDetails {
     key_matches: string[]
     missing_requirements: string[]
     reasoning: string
+    recommendation: string
+    overall_assessment: string
+    experience_match: string
+    education_match: string
+    strengths: string[]
+    weaknesses: string[]
   }
   parsed_data: {
     skills_extracted: {
@@ -109,7 +115,23 @@ export default function CandidateDetailPage() {
   }
 
   const skills = candidate.parsed_data?.skills_extracted || {}
-  const matchDetails = candidate.skill_match || { key_matches: [], missing_requirements: [], reasoning: '' }
+  const matchDetails = candidate.skill_match || { key_matches: [], missing_requirements: [], reasoning: '', recommendation: '', overall_assessment: '', experience_match: '', education_match: '', strengths: [], weaknesses: [] }
+
+  const getRecommendationDisplay = (rec: string) => {
+    const r = (rec || '').toLowerCase()
+    if (r.includes('strong recommend'))
+      return { label: 'Strong Fit — Advance to Next Round', icon: ThumbsUp, className: 'bg-green-50 text-green-700 border-green-200' }
+    if (r.includes('recommend'))
+      return { label: 'Good Fit — Recommend for Next Round', icon: ThumbsUp, className: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    if (r.includes('consider'))
+      return { label: 'Consider — Review Before Proceeding', icon: Minus, className: 'bg-amber-50 text-amber-700 border-amber-200' }
+    if (r.includes('not recommended') || r.includes('not a fit'))
+      return { label: 'Not a Fit — Do Not Advance', icon: ThumbsDown, className: 'bg-red-50 text-red-700 border-red-200' }
+    return { label: 'Pending Review', icon: Minus, className: 'bg-slate-50 text-slate-500 border-slate-200' }
+  }
+
+  const recDisplay = getRecommendationDisplay(matchDetails.recommendation)
+  const RecIcon = recDisplay.icon
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -124,12 +146,12 @@ export default function CandidateDetailPage() {
       </div>
 
       {/* Header Card */}
-      <Card>
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <CardTitle className="text-3xl mb-2">{candidate.candidate_name}</CardTitle>
-              <div className="space-y-1 text-sm text-muted-foreground">
+              <CardTitle className="text-2xl font-semibold mb-2">{candidate.candidate_name}</CardTitle>
+              <div className="space-y-1 text-sm text-slate-500">
                 {candidate.candidate_email && (
                   <div className="flex items-center gap-2">
                     <Mail className="h-4 w-4" />
@@ -161,52 +183,114 @@ export default function CandidateDetailPage() {
         </CardHeader>
       </Card>
 
+      {/* Recommendation Verdict */}
+      <Card className={`border ${recDisplay.className}`}>
+        <CardContent className="py-4">
+          <div className="flex items-center gap-3">
+            <RecIcon className="h-6 w-6 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="font-semibold text-base">{recDisplay.label}</p>
+              {matchDetails.overall_assessment && (
+                <p className="text-sm mt-0.5 opacity-80">{matchDetails.overall_assessment}</p>
+              )}
+            </div>
+          </div>
+          {/* Experience & Education match tags */}
+          {(matchDetails.experience_match || matchDetails.education_match) && (
+            <div className="flex flex-wrap gap-3 mt-3 ml-9">
+              {matchDetails.experience_match && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md bg-white/60 border border-current/10">
+                  <Briefcase className="h-3.5 w-3.5" />
+                  Experience: {matchDetails.experience_match}
+                </span>
+              )}
+              {matchDetails.education_match && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md bg-white/60 border border-current/10">
+                  <GraduationCap className="h-3.5 w-3.5" />
+                  Education: {matchDetails.education_match}
+                </span>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Match Analysis */}
       <div className="grid md:grid-cols-2 gap-6">
-        <Card>
+        <Card className="border border-slate-200 bg-white">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-green-600">
+            <CardTitle className="flex items-center gap-2 text-green-700 text-base">
               <CheckCircle2 className="h-5 w-5" />
-              Key Matches
+              Matching Skills
             </CardTitle>
             <CardDescription>Skills and qualifications that match the job</CardDescription>
           </CardHeader>
           <CardContent>
             {matchDetails.key_matches && matchDetails.key_matches.length > 0 ? (
-              <ul className="space-y-2">
-                {matchDetails.key_matches.map((match, index) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
-                    <span className="text-sm">{match}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {matchDetails.key_matches.map((match, index) => (
+                    <span key={index} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                      <CheckCircle2 className="h-3 w-3" />
+                      {match}
+                    </span>
+                  ))}
+                </div>
+                {matchDetails.strengths && matchDetails.strengths.length > 0 && (
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wider">Strengths</p>
+                    <ul className="space-y-1.5">
+                      {matchDetails.strengths.map((s, i) => (
+                        <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-500 mt-0.5 flex-shrink-0" />
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No specific matches identified</p>
+              <p className="text-sm text-slate-400">No specific matches identified</p>
             )}
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border border-slate-200 bg-white">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-orange-600">
+            <CardTitle className="flex items-center gap-2 text-red-600 text-base">
               <XCircle className="h-5 w-5" />
-              Missing Requirements
+              Skill Gaps
             </CardTitle>
-            <CardDescription>Skills or qualifications not found</CardDescription>
+            <CardDescription>Missing skills and areas of concern</CardDescription>
           </CardHeader>
           <CardContent>
             {matchDetails.missing_requirements && matchDetails.missing_requirements.length > 0 ? (
-              <ul className="space-y-2">
-                {matchDetails.missing_requirements.map((requirement, index) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <XCircle className="h-4 w-4 text-orange-600 mt-0.5 flex-shrink-0" />
-                    <span className="text-sm">{requirement}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {matchDetails.missing_requirements.map((requirement, index) => (
+                    <span key={index} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-600 border border-red-200">
+                      <XCircle className="h-3 w-3" />
+                      {requirement}
+                    </span>
+                  ))}
+                </div>
+                {matchDetails.weaknesses && matchDetails.weaknesses.length > 0 && (
+                  <div className="border-t border-slate-100 pt-3">
+                    <p className="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wider">Weaknesses</p>
+                    <ul className="space-y-1.5">
+                      {matchDetails.weaknesses.map((w, i) => (
+                        <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                          <XCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+                          {w}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             ) : (
-              <p className="text-sm text-muted-foreground">All requirements met</p>
+              <p className="text-sm text-green-600">All requirements met</p>
             )}
           </CardContent>
         </Card>
@@ -214,21 +298,21 @@ export default function CandidateDetailPage() {
 
       {/* AI Analysis */}
       {matchDetails.reasoning && (
-        <Card>
+        <Card className="border border-slate-200 bg-white">
           <CardHeader>
-            <CardTitle>AI Analysis</CardTitle>
+            <CardTitle className="text-base">AI Analysis</CardTitle>
             <CardDescription>Detailed reasoning for the match score</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm whitespace-pre-wrap">{matchDetails.reasoning}</p>
+            <p className="text-sm whitespace-pre-wrap text-slate-700">{matchDetails.reasoning}</p>
           </CardContent>
         </Card>
       )}
 
       {/* Skills Breakdown */}
-      <Card>
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
-          <CardTitle>Extracted Skills</CardTitle>
+          <CardTitle className="text-base">Extracted Skills</CardTitle>
           <CardDescription>Skills identified from the resume</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -290,14 +374,14 @@ export default function CandidateDetailPage() {
       </Card>
 
       {/* Resume Text */}
-      <Card>
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
-          <CardTitle>Resume Text</CardTitle>
+          <CardTitle className="text-base">Resume Text</CardTitle>
           <CardDescription>Full extracted resume content</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="bg-muted p-4 rounded-lg">
-            <pre className="whitespace-pre-wrap text-sm font-mono">{candidate.raw_text}</pre>
+          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <pre className="whitespace-pre-wrap text-sm font-mono text-slate-700">{candidate.raw_text}</pre>
           </div>
         </CardContent>
       </Card>

@@ -46,6 +46,8 @@ import {
 } from '@/lib/api/voice-screening'
 import { toast } from 'sonner'
 import Vapi from '@vapi-ai/web'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonTable } from '@/components/ui/skeleton'
 
 const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || ''
 const VAPI_ASSISTANT_ID = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID || ''
@@ -458,28 +460,26 @@ export default function VoiceScreeningPage() {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold bg-gradient-to-r from-teal-600 to-green-600 bg-clip-text text-transparent">
-                        Voice Screening
-                    </h1>
-                    <p className="text-gray-500 mt-1">AI-powered voice interviews via Vapi</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                    <Button onClick={() => setShowAddModal(true)} className="bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600">
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add Candidate
-                    </Button>
-                    <Button variant="outline" onClick={() => setShowImportModal(true)}>
-                        <Upload className="h-4 w-4 mr-2" />
-                        Import CSV/Excel
-                    </Button>
-                    <Button variant="outline" onClick={handleExport} disabled={candidates.length === 0}>
-                        <Download className="h-4 w-4 mr-2" />
-                        Export Excel
-                    </Button>
-                </div>
-            </div>
+            <PageHeader
+                title="Voice Screening"
+                description="AI-powered voice interviews via Vapi."
+                action={
+                    <div className="flex items-center gap-2">
+                        <Button onClick={() => setShowAddModal(true)}>
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add Candidate
+                        </Button>
+                        <Button variant="outline" onClick={() => setShowImportModal(true)}>
+                            <Upload className="h-4 w-4 mr-2" />
+                            Import
+                        </Button>
+                        <Button variant="outline" onClick={handleExport} disabled={candidates.length === 0}>
+                            <Download className="h-4 w-4 mr-2" />
+                            Export
+                        </Button>
+                    </div>
+                }
+            />
 
             {/* Navigation Tabs */}
             <div className="flex gap-2 border-b">
@@ -534,14 +534,13 @@ export default function VoiceScreeningPage() {
             <Card>
                 <CardContent className="p-0">
                     {loading ? (
-                        <div className="flex items-center justify-center py-20">
-                            <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
+                        <div className="p-4">
+                            <SkeletonTable rows={4} cols={6} />
                         </div>
                     ) : filteredCandidates.length === 0 ? (
-                        <div className="text-center py-20 text-gray-500">
-                            <Phone className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                            <p className="text-lg font-medium">No candidates yet</p>
-                            <p className="text-sm mt-1">Add candidates manually or import from CSV/Excel</p>
+                        <div className="py-16 text-center">
+                            <p className="text-sm font-medium text-slate-900 mb-1">No candidates yet</p>
+                            <p className="text-sm text-slate-400">Add candidates manually or import from CSV/Excel.</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
@@ -701,7 +700,7 @@ export default function VoiceScreeningPage() {
                                 <Label>Phone</Label>
                                 <Input value={addForm.phone} onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })} placeholder="+91 98765 43210" />
                             </div>
-                            <Button onClick={handleAddCandidate} disabled={addLoading} className="w-full bg-gradient-to-r from-teal-500 to-green-500">
+                            <Button onClick={handleAddCandidate} disabled={addLoading} className="w-full">
                                 {addLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                                 Add Candidate
                             </Button>
@@ -830,8 +829,8 @@ export default function VoiceScreeningPage() {
 
                                                 {/* AI Interview Summary */}
                                                 {call.interview_summary ? (
-                                                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-5 border border-purple-200">
-                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-purple-700 text-lg">
+                                                    <div className="bg-slate-50 rounded-lg p-5 border border-slate-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-slate-700 text-base">
                                                             <Briefcase className="h-5 w-5" /> AI Interview Summary
                                                         </h3>
                                                         <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
@@ -847,8 +846,8 @@ export default function VoiceScreeningPage() {
 
                                                 {/* Key Points */}
                                                 {call.key_points && call.key_points.length > 0 && (
-                                                    <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg p-5 border border-blue-200">
-                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-blue-700 text-lg">
+                                                    <div className="bg-slate-50 rounded-lg p-5 border border-slate-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-slate-700 text-base">
                                                             <CheckCircle className="h-5 w-5" /> Key Points
                                                         </h3>
                                                         <ul className="space-y-2">
@@ -864,8 +863,8 @@ export default function VoiceScreeningPage() {
 
                                                 {/* Technical Assessment */}
                                                 {call.technical_assessment && (
-                                                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-5 border border-green-200">
-                                                        <h3 className="font-semibold mb-4 flex items-center gap-2 text-green-700 text-lg">
+                                                    <div className="bg-slate-50 rounded-lg p-5 border border-slate-200">
+                                                        <h3 className="font-semibold mb-4 flex items-center gap-2 text-slate-700 text-base">
                                                             <AlertCircle className="h-5 w-5" /> Technical Assessment
                                                         </h3>
                                                         <div className="space-y-4">
@@ -958,8 +957,8 @@ export default function VoiceScreeningPage() {
 
                                                 {/* Recording */}
                                                 {call.recording_url && (
-                                                    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 border border-indigo-200">
-                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-indigo-700">
+                                                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-slate-700">
                                                             <Play className="h-5 w-5" /> Call Recording
                                                         </h3>
                                                         <audio controls className="w-full" src={call.recording_url}>
@@ -970,8 +969,8 @@ export default function VoiceScreeningPage() {
 
                                                 {/* Transcript */}
                                                 {call.transcript && (
-                                                    <div className="bg-gradient-to-r from-gray-50 to-slate-50 rounded-lg p-4 border border-gray-200">
-                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-gray-700">
+                                                    <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                                                        <h3 className="font-semibold mb-3 flex items-center gap-2 text-slate-700">
                                                             <FileText className="h-5 w-5" /> Full Transcript
                                                         </h3>
                                                         <div className="bg-white rounded-lg p-4 max-h-60 overflow-y-auto text-sm whitespace-pre-wrap border border-gray-100 shadow-inner">
@@ -982,8 +981,8 @@ export default function VoiceScreeningPage() {
 
                                                 {/* Structured Data (Dynamic) - VAPI Template Style */}
                                                 {call.structured_data && Object.keys(call.structured_data).length > 0 && (
-                                                    <div className="bg-gradient-to-r from-teal-50 to-emerald-50 rounded-lg p-5 border border-teal-200">
-                                                        <h3 className="font-semibold mb-4 flex items-center gap-2 text-teal-700 text-lg">
+                                                    <div className="bg-slate-50 rounded-lg p-5 border border-slate-200">
+                                                        <h3 className="font-semibold mb-4 flex items-center gap-2 text-slate-700 text-base">
                                                             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                                             </svg>
@@ -1130,7 +1129,7 @@ export default function VoiceScreeningPage() {
                                 <Button
                                     onClick={handleUpdateCandidate}
                                     disabled={editLoading}
-                                    className="flex-1 bg-gradient-to-r from-orange-500 to-amber-500"
+                                    className="flex-1"
                                 >
                                     {editLoading ? (
                                         <>
@@ -1212,7 +1211,7 @@ export default function VoiceScreeningPage() {
                                 <Button
                                     onClick={handleManualFetchData}
                                     disabled={fetchingData || !fetchCallId.trim()}
-                                    className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-500"
+                                    className="flex-1"
                                 >
                                     {fetchingData ? (
                                         <>

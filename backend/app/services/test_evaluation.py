@@ -13,6 +13,7 @@ from app.services.storage_service import get_storage_service
 from app.services.document_processor import get_document_processor
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.db.supabase_client import get_supabase
+from app.services.user_service import get_user_service
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,7 @@ class TestEvaluationService:
         self.doc_processor = get_document_processor()
         self.llm = get_llm_orchestrator()
         self.client = get_supabase()
+        self.user_service = get_user_service()
 
     async def process_question_paper(
         self,
@@ -175,7 +177,7 @@ class TestEvaluationService:
         Args:
             file_data: File content as bytes
             filename: Original filename
-            user_id: User ID who uploaded the file
+            user_id: Raw Auth user ID
             test_title: Title of the test
             test_type: Type (development, testing, devops, etc.)
             total_marks: Total marks for the test
@@ -186,6 +188,8 @@ class TestEvaluationService:
             dict with test_id, questions, and metadata
         """
         try:
+            # Resolve raw user ID to internal UUID
+            internal_user_id = self.user_service.resolve_user_id(user_id)
             # Validate file
             validation = await self.doc_processor.validate_file(
                 file_data,
@@ -234,7 +238,7 @@ class TestEvaluationService:
                 "duration_minutes": duration_minutes,
                 "question_paper_path": storage_result['file_path'],
                 "question_paper_name": filename,
-                "created_by": user_id,
+                "created_by": internal_user_id,
                 "metadata": {
                     "file_type": validation['file_type'],
                     "file_size": validation['file_size'],
@@ -424,6 +428,8 @@ Return ONLY the JSON object, nothing else."""
             dict with answer_sheet_id, evaluations, and scores
         """
         try:
+            # Resolve raw user ID to internal UUID
+            internal_user_id = self.user_service.resolve_user_id(user_id) if user_id else None
             # Validate file
             validation = await self.doc_processor.validate_file(
                 file_data,
@@ -464,7 +470,7 @@ Return ONLY the JSON object, nothing else."""
                 file_data=file_data,
                 filename=filename,
                 bucket_type="answer_sheets",
-                user_id=user_id or "system",
+                user_id=internal_user_id or "system",
                 content_type=f"application/{validation['file_type']}"
             )
 
@@ -497,7 +503,7 @@ Return ONLY the JSON object, nothing else."""
                 "candidate_email": candidate_email,
                 "answer_sheet_path": storage_result['file_path'],
                 "answer_sheet_name": filename,
-                "submitted_by": user_id,
+                "submitted_by": internal_user_id,
                 "status": "evaluated",
                 "metadata": {
                     "file_type": validation['file_type'],

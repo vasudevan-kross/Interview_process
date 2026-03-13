@@ -15,6 +15,12 @@ const nextConfig: NextConfig = {
     // Enable experimental features for performance
     experimental: {
         optimizePackageImports: ['lucide-react'],
+        proxyTimeout: 600000, // 10 min — LLM batch processing needs time
+    },
+
+    // Keep proxy connections alive for long-running requests
+    httpAgentOptions: {
+        keepAlive: true,
     },
 
     webpack: (config) => {

@@ -2,15 +2,18 @@
 LLM Orchestrator service for managing Ollama models and prompt execution.
 Handles model selection, prompt formatting, and response parsing.
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
+import asyncio
 import logging
 import json
 from datetime import datetime
 
 try:
     import ollama
+    from ollama import AsyncClient as OllamaAsyncClient
 except ImportError:
     ollama = None
+    OllamaAsyncClient = None
 
 from app.config import settings
 from app.model_config import model_config
@@ -27,9 +30,12 @@ class LLMOrchestrator:
         self.client = get_supabase()
         self.ollama_base_url = settings.OLLAMA_BASE_URL
         self.default_model = settings.DEFAULT_OLLAMA_MODEL
+        self._model_cache: Set[str] = set()
 
         if ollama is None:
             logger.warning("ollama package not installed. LLM operations will fail.")
+        else:
+            self._async_client = OllamaAsyncClient(host=self.ollama_base_url)
 
         from app.services.vision_evaluator import get_vision_evaluator
         self.vision_evaluator = get_vision_evaluator()
@@ -53,6 +59,39 @@ class LLMOrchestrator:
         else:
             return f"{size_bytes / (1024 ** 3):.1f} GB"
 
+    @staticmethod
+    def _parse_model_list(models_response) -> List[Dict[str, Any]]:
+        """Parse ollama list() response into a list of dicts (handles both dict and Pydantic)."""
+        if isinstance(models_response, dict):
+            return models_response.get('models', [])
+        # ollama >= 0.4 returns a ListResponse Pydantic model
+        if hasattr(models_response, 'models'):
+            result = []
+            for m in models_response.models:
+                if isinstance(m, dict):
+                    result.append(m)
+                else:
+                    result.append({
+                        'name': getattr(m, 'model', None) or getattr(m, 'name', 'Unknown'),
+                        'size': getattr(m, 'size', 0),
+                        'modified_at': str(getattr(m, 'modified_at', '')),
+                        'digest': getattr(m, 'digest', ''),
+                    })
+            return result
+        return []
+
+    async def _get_cached_models(self) -> Set[str]:
+        """Return cached set of available model names, fetching once per instance."""
+        if not self._model_cache:
+            try:
+                models_response = await self._async_client.list()
+                raw = self._parse_model_list(models_response)
+                self._model_cache = {m.get('name', '') for m in raw if m.get('name')}
+                logger.info(f"Model cache populated: {self._model_cache}")
+            except Exception as e:
+                logger.warning(f"Failed to populate model cache: {e}")
+        return self._model_cache
+
     async def list_available_models(self) -> List[Dict[str, Any]]:
         """
         List available Ollama models.
@@ -66,11 +105,10 @@ class LLMOrchestrator:
                 raise RuntimeError("ollama package not installed")
 
             logger.info("Fetching models from Ollama...")
-            models_response = ollama.list()
+            models_response = await self._async_client.list()
             logger.info(f"Raw Ollama response type: {type(models_response)}")
-            logger.info(f"Raw Ollama response: {models_response}")
 
-            models = models_response.get('models', []) if isinstance(models_response, dict) else []
+            models = self._parse_model_list(models_response)
             logger.info(f"Found {len(models)} models")
 
             # Format the models to match frontend expectations
@@ -95,18 +133,17 @@ class LLMOrchestrator:
 
     async def check_model_availability(self, model_name: str) -> bool:
         """
-        Check if a model is available locally.
+        Check if a model is available locally (uses cached model list).
 
         Args:
-            model_name: Name of the model (e.g., "mistral:7b")
+            model_name: Name of the model (e.g., "llama3.1:8b")
 
         Returns:
             True if model is available
         """
         try:
-            models = await self.list_available_models()
-            return any(model.get('name') == model_name for model in models)
-
+            cached = await self._get_cached_models()
+            return model_name in cached
         except Exception as e:
             logger.error(f"Error checking model availability: {e}")
             return False
@@ -138,7 +175,7 @@ class LLMOrchestrator:
 
             model = model or self.default_model
 
-            # Check if model is available
+            # Check if model is available (cached — no extra list() call)
             if not await self.check_model_availability(model):
                 logger.warning(f"Model {model} not found locally. Attempting to use anyway...")
 
@@ -151,28 +188,53 @@ class LLMOrchestrator:
             # Generate completion
             options = {
                 "temperature": temperature,
+                "num_ctx": 4096,
             }
             if max_tokens:
                 options["num_predict"] = max_tokens
 
-            response = ollama.chat(
+            response = await self._async_client.chat(
                 model=model,
                 messages=messages,
                 options=options
             )
 
-            return {
-                "response": response.get('message', {}).get('content', ''),
-                "model": model,
-                "total_duration": response.get('total_duration'),
-                "load_duration": response.get('load_duration'),
-                "prompt_eval_count": response.get('prompt_eval_count'),
-                "eval_count": response.get('eval_count'),
-            }
+            # ollama >= 0.4 returns ChatResponse (Pydantic), older returns dict
+            if hasattr(response, 'message'):
+                content = response.message.content or ''
+                return {
+                    "response": content,
+                    "model": model,
+                    "total_duration": getattr(response, 'total_duration', None),
+                    "load_duration": getattr(response, 'load_duration', None),
+                    "prompt_eval_count": getattr(response, 'prompt_eval_count', None),
+                    "eval_count": getattr(response, 'eval_count', None),
+                }
+            elif response and isinstance(response, dict):
+                return {
+                    "response": response.get('message', {}).get('content', ''),
+                    "model": model,
+                    "total_duration": response.get('total_duration'),
+                    "load_duration": response.get('load_duration'),
+                    "prompt_eval_count": response.get('prompt_eval_count'),
+                    "eval_count": response.get('eval_count'),
+                }
+            else:
+                logger.error(f"Unexpected response type from Ollama: {type(response)}")
+                return {
+                    "response": "",
+                    "model": model,
+                    "error": "Malformed response from Ollama"
+                }
 
         except Exception as e:
             logger.error(f"Error generating completion: {e}")
-            raise
+            # Ensure we ALWAYS return a valid dict even on failure
+            return {
+                "response": "",
+                "model": model or "unknown",
+                "error": str(e)
+            }
 
     async def extract_skills_from_text(
         self,
@@ -426,7 +488,7 @@ Provide a detailed match analysis as JSON."""
     ) -> Dict[str, Any]:
         """
         Evaluate a candidate's answer against the correct answer.
-        Uses more capable models (mistral-nemo:12b, codellama:7b) for better reasoning.
+        Uses llama3.1:8b for reasoning.
 
         Args:
             question: The question text
@@ -488,7 +550,7 @@ CANDIDATE'S ANSWER:
 
 Provide evaluation as JSON."""
 
-            # Use capable model for evaluation (mistral-nemo:12b or codellama:7b for code)
+            # Use llama3.1:8b for evaluation (domain-aware model selection)
             result = await self.evaluate_with_capable_model(
                 prompt=user_prompt,
                 domain=domain,
@@ -516,13 +578,15 @@ Provide evaluation as JSON."""
             try:
                 evaluation = json.loads(response_text)
             except json.JSONDecodeError:
-                # Try cleaning common issues: escape newlines and other control characters
-                import re
-                # Replace literal newlines with escaped newlines in JSON strings
-                cleaned_text = response_text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                # LLM may include code snippets with invalid escape sequences (\s, \d, etc.)
+                # or literal control characters inside JSON string values.
+                # Step 1: fix invalid backslash escapes (keep valid ones: " \ / b f n r t u)
+                sanitized = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', response_text)
+                # Step 2: escape any remaining literal control characters
+                sanitized = sanitized.replace('\r', '\\r').replace('\t', '\\t')
                 try:
-                    evaluation = json.loads(cleaned_text)
-                    logger.warning("JSON parsing succeeded after cleaning control characters")
+                    evaluation = json.loads(sanitized)
+                    logger.warning("JSON parsing succeeded after sanitizing escape sequences")
                 except json.JSONDecodeError:
                     # Still failed, re-raise original error
                     raise
@@ -616,19 +680,13 @@ Provide evaluation as JSON."""
             )
             deterministic_score = det_result['deterministic_score']
 
-            # Step 2: Multi-run LLM evaluation
-            logger.info(f"Running LLM evaluation {num_runs} times...")
-            llm_scores = []
-            llm_results = []
-
-            for run in range(num_runs):
-                logger.info(f"  LLM run {run + 1}/{num_runs}")
-                result = await self.evaluate_answer(
-                    question, correct_answer, candidate_answer,
-                    max_marks, model, domain
-                )
-                llm_scores.append(result.get('marks_awarded', 0))
-                llm_results.append(result)
+            # Step 2: Multi-run LLM evaluation (parallel)
+            logger.info(f"Running LLM evaluation {num_runs} times in parallel...")
+            llm_results = await asyncio.gather(*[
+                self.evaluate_answer(question, correct_answer, candidate_answer, max_marks, model, domain)
+                for _ in range(num_runs)
+            ])
+            llm_scores = [r.get('marks_awarded', 0) for r in llm_results]
 
             # Calculate average LLM score
             avg_llm_score = sum(llm_scores) / len(llm_scores) if llm_scores else 0
@@ -875,16 +933,16 @@ Provide evaluation as JSON."""
     async def extract_text_from_image_with_ocr(
         self,
         image_data: bytes,
-        model: str = "glm-ocr:latest",
+        model: str = "llava:7b",
         num_runs: int = 3
     ) -> str:
         """
-        Extract text from image using GLM-OCR with multi-run for consistency.
-        Runs OCR multiple times and selects the best (longest) result.
+        Extract text from image using a vision model with parallel multi-run for consistency.
+        Runs OCR multiple times in parallel and selects the best (longest) result.
 
         Args:
             image_data: Image data as bytes
-            model: OCR model to use (default: glm-ocr:latest)
+            model: OCR model to use (default: llava:7b)
             num_runs: Number of OCR runs (default: 3 for consistency)
 
         Returns:
@@ -899,33 +957,32 @@ Provide evaluation as JSON."""
             # Encode image to base64
             image_base64 = base64.b64encode(image_data).decode('utf-8')
 
-            logger.info(f"Extracting text from image using {model} ({num_runs} runs)...")
+            logger.info(f"Extracting text from image using {model} ({num_runs} parallel runs)...")
 
-            # Run OCR multiple times
-            all_results = []
-            for run in range(num_runs):
+            async def _single_ocr_run(run_idx: int) -> str:
                 try:
-                    # Use Ollama's vision model for OCR
-                    response = ollama.generate(
+                    response = await self._async_client.generate(
                         model=model,
                         prompt="Extract all text from this image. Return only the extracted text, without any additional commentary or formatting.",
                         images=[image_base64],
                         options={
-                            "temperature": 0.1,  # Low temperature for accurate OCR
-                            "seed": 42 + run,  # Different seed for each run to get variations
+                            "temperature": 0.1,
+                            "seed": 42 + run_idx,
                         }
                     )
-
-                    extracted_text = response.get('response', '').strip()
-                    if extracted_text:
-                        all_results.append(extracted_text)
-                        logger.info(f"  Run {run + 1}/{num_runs}: Extracted {len(extracted_text)} characters")
+                    # ollama >= 0.4 returns GenerateResponse (Pydantic), older returns dict
+                    if hasattr(response, 'response'):
+                        text = (response.response or '').strip()
                     else:
-                        logger.warning(f"  Run {run + 1}/{num_runs}: No text extracted")
-
+                        text = response.get('response', '').strip()
+                    logger.info(f"  OCR run {run_idx + 1}/{num_runs}: Extracted {len(text)} characters")
+                    return text
                 except Exception as e:
-                    logger.warning(f"  Run {run + 1}/{num_runs}: Error - {e}")
-                    continue
+                    logger.warning(f"  OCR run {run_idx + 1}/{num_runs}: Error - {e}")
+                    return ""
+
+            raw_results = await asyncio.gather(*[_single_ocr_run(i) for i in range(num_runs)])
+            all_results = [r for r in raw_results if r]
 
             if not all_results:
                 logger.warning(f"No text extracted from image after {num_runs} attempts")
@@ -938,7 +995,6 @@ Provide evaluation as JSON."""
             lengths = [len(r) for r in all_results]
             logger.info(f"OCR results - Lengths: {lengths}, Best: {len(best_result)} chars")
 
-            # Calculate consistency
             if len(all_results) > 1:
                 avg_len = sum(lengths) / len(lengths)
                 std_dev = (sum((l - avg_len) ** 2 for l in lengths) / len(lengths)) ** 0.5
@@ -948,9 +1004,9 @@ Provide evaluation as JSON."""
             return best_result
 
         except Exception as e:
-            logger.error(f"Error extracting text with GLM-OCR: {e}")
+            logger.error(f"Error extracting text with OCR: {e}")
             raise RuntimeError(
-                f"Failed to extract text using GLM-OCR. "
+                f"Failed to extract text using {model}. "
                 f"Ensure the model is installed: ollama pull {model}\n"
                 f"Error: {str(e)}"
             )
@@ -987,30 +1043,34 @@ Provide evaluation as JSON."""
 
             logger.info(f"🔄 Layer 2: Extracting text using {model}...")
 
-            # Use Ollama's PaddleOCR-VL model for OCR
-            response = ollama.generate(
+            # Use Ollama's vision model for OCR (async)
+            response = await self._async_client.generate(
                 model=model,
                 prompt="Extract all text from this image. Return only the extracted text, without any additional commentary or formatting.",
                 images=[image_base64],
                 options={
-                    "temperature": 0.1,  # Low temperature for accurate OCR
+                    "temperature": 0.1,
                 }
             )
 
-            extracted_text = response.get('response', '').strip()
+            # ollama >= 0.4 returns GenerateResponse (Pydantic), older returns dict
+            if hasattr(response, 'response'):
+                extracted_text = (response.response or '').strip()
+            else:
+                extracted_text = response.get('response', '').strip()
 
             if extracted_text:
-                logger.info(f"✅ Layer 2: PaddleOCR-VL extracted {len(extracted_text)} characters")
+                logger.info(f"✅ Layer 2: Vision OCR extracted {len(extracted_text)} characters")
             else:
-                logger.warning("⚠️ Layer 2: PaddleOCR-VL extracted no text")
+                logger.warning("⚠️ Layer 2: Vision OCR extracted no text")
 
             return extracted_text
 
         except Exception as e:
-            logger.error(f"❌ Layer 2 failed (PaddleOCR-VL): {e}")
+            logger.error(f"❌ Layer 2 failed (vision OCR): {e}")
             raise RuntimeError(
-                f"Failed to extract text using PaddleOCR-VL. "
-                f"Ensure the model is installed: ollama pull {model if model else 'MedAIBase/PaddleOCR-VL:0.9b'}\n"
+                f"Failed to extract text using vision OCR. "
+                f"Ensure the model is installed: ollama pull {model if model else 'llava:7b'}\n"
                 f"Error: {str(e)}"
             )
     async def evaluate_code_answer(
@@ -1112,7 +1172,22 @@ Return ONLY valid JSON."""
             # Try to extract JSON from response
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
-                result = json.loads(json_match.group())
+                raw_json = json_match.group()
+                try:
+                    result = json.loads(raw_json)
+                except json.JSONDecodeError:
+                    # LLM embeds code snippets with invalid JSON escapes (\s, \d, \w)
+                    # or raw newlines/tabs inside string values.
+                    # Step 1: double any \ not followed by a valid JSON escape char
+                    sanitized = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw_json)
+                    # Step 2: replace literal control characters inside strings
+                    sanitized = sanitized.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                    try:
+                        result = json.loads(sanitized)
+                    except json.JSONDecodeError:
+                        result = None
+                if result is None:
+                    raise ValueError("Could not parse JSON from LLM response")
             else:
                 # Fallback if no JSON found - award 0, flag for manual review
                 logger.warning("No JSON in response, awarding 0 marks for manual review")

@@ -11,6 +11,7 @@ This module provides REST endpoints for:
 import logging
 import secrets
 import asyncio
+import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import httpx
@@ -19,6 +20,7 @@ from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
+from app.services.user_service import get_user_service
 from postgrest import APIError
 
 from app.db.supabase_client import get_supabase
@@ -99,9 +101,13 @@ async def create_campaign(
             }
         ]
 
+        # Get user service for ID resolution
+        user_service = get_user_service()
+        resolved_user_id = user_service.resolve_user_id(current_user["id"])
+
         # Insert campaign into database
         campaign_data = {
-            "created_by": current_user["id"],
+            "created_by": resolved_user_id,
             "name": request.name,
             "job_role": request.job_role,
             "description": request.description,
@@ -122,7 +128,8 @@ async def create_campaign(
                 "expected_questions": generated_config.get("expected_questions", []),
                 "conversation_flow": generated_config.get("conversation_flow", "")
             },
-            "is_active": True
+            "is_active": True,
+            "job_id": request.job_id
         }
 
         result = supabase.table("voice_screening_campaigns").insert(campaign_data).execute()
@@ -150,11 +157,15 @@ async def list_campaigns(
 ):
     """List all voice screening campaigns for current user."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         query = (supabase.table("voice_screening_campaigns")
             .select("*")
-            .eq("created_by", current_user["id"])
+            .eq("created_by", current_internal_id)
             .order("created_at", desc=True))
 
         if is_active is not None:
@@ -176,12 +187,16 @@ async def get_campaign(
 ):
     """Get campaign details by ID."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         result = supabase.table("voice_screening_campaigns") \
             .select("*") \
             .eq("id", campaign_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -207,13 +222,17 @@ async def update_campaign(
 ):
     """Update campaign details. If system prompt is changed, vapi_config is rebuilt."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         # Verify ownership and get current data
         existing_result = supabase.table("voice_screening_campaigns") \
             .select("*") \
             .eq("id", campaign_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -266,12 +285,16 @@ async def delete_campaign(
 ):
     """Delete campaign (cascades to candidates and call history)."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         result = supabase.table("voice_screening_campaigns") \
             .delete() \
             .eq("id", campaign_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .execute()
 
         if not result.data:
@@ -296,25 +319,29 @@ async def create_candidate(
 ):
     """Create a single voice screening candidate."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         # Verify campaign exists and belongs to user
         campaign_check = supabase.table("voice_screening_campaigns") \
             .select("id") \
             .eq("id", request.campaign_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
         if not campaign_check.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        # Generate unique interview token
-        interview_token = secrets.token_urlsafe(32)
+        # Generate unique interview token (12 chars)
+        interview_token = uuid.uuid4().hex[:12]
 
         # Insert candidate
         candidate_data = {
-            "created_by": current_user["id"],
+            "created_by": current_internal_id,
             "campaign_id": request.campaign_id,
             "interview_token": interview_token,
             "name": request.name,
@@ -347,13 +374,17 @@ async def bulk_create_candidates(
 ):
     """Bulk create candidates for a campaign."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         # Verify campaign
         campaign_check = supabase.table("voice_screening_campaigns") \
             .select("id") \
             .eq("id", request.campaign_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -364,9 +395,9 @@ async def bulk_create_candidates(
         candidates_data = []
         for candidate in request.candidates:
             candidates_data.append({
-                "created_by": current_user["id"],
+                "created_by": current_internal_id,
                 "campaign_id": request.campaign_id,
-                "interview_token": secrets.token_urlsafe(32),
+                "interview_token": uuid.uuid4().hex[:12],
                 "name": candidate.get("name", ""),
                 "email": candidate.get("email"),
                 "phone": candidate.get("phone"),
@@ -395,12 +426,16 @@ async def upload_candidates_file(
 ):
     """Upload CSV/Excel file to bulk create candidates."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         # Verify campaign
         supabase = get_supabase()
         campaign_check = supabase.table("voice_screening_campaigns") \
             .select("id") \
             .eq("id", campaign_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -426,9 +461,9 @@ async def upload_candidates_file(
         candidates_data = []
         for _, row in df.iterrows():
             candidates_data.append({
-                "created_by": current_user["id"],
+                "created_by": current_internal_id,
                 "campaign_id": campaign_id,
-                "interview_token": secrets.token_urlsafe(32),
+                "interview_token": uuid.uuid4().hex[:12],
                 "name": str(row.get("name", "")),
                 "email": str(row.get("email", "")) if pd.notna(row.get("email")) else None,
                 "phone": str(row.get("phone", "")) if pd.notna(row.get("phone")) else None,
@@ -460,12 +495,16 @@ async def list_candidates(
 ):
     """List all candidates for current user with campaign name."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         # Select with campaign name join
         query = supabase.table("voice_candidates") \
             .select("*, voice_screening_campaigns(name)") \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .order("created_at", desc=True)
 
         if campaign_id:
@@ -506,6 +545,18 @@ async def get_candidate_by_token(token: str):
             .eq("interview_token", token) \
             .single() \
             .execute()
+
+        # FALLBACK: Partial match for legacy links if exact match fails
+        if not result.data:
+            logger.info(f"Exact match failed for token {token[:10]}... trying partial match")
+            fallback_result = supabase.table("voice_candidates") \
+                .select("*") \
+                .like("interview_token", f"{token}%") \
+                .execute()
+            
+            if fallback_result.data and len(fallback_result.data) == 1:
+                result = type('obj', (object,), {'data': fallback_result.data[0]})
+                logger.info(f"✅ Found candidate via fallback partial match: {result.data['id']}")
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Interview not found")
@@ -550,12 +601,16 @@ async def get_candidate(
 ):
     """Get candidate details."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         result = supabase.table("voice_candidates") \
             .select("*") \
             .eq("id", candidate_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -579,13 +634,17 @@ async def update_candidate(
 ):
     """Update candidate details (name, email, phone)."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         # Verify ownership
         existing = supabase.table("voice_candidates") \
             .select("id, status") \
             .eq("id", candidate_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -630,12 +689,16 @@ async def delete_candidate(
 ):
     """Delete candidate (cascades to call history)."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         result = supabase.table("voice_candidates") \
             .delete() \
             .eq("id", candidate_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .execute()
 
         if not result.data:
@@ -669,8 +732,10 @@ async def start_call(token: str, call_id: Optional[str] = None):
         if not result.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
 
-        # Update status to in_progress
+        # Update status to in_progress and save call_id if provided
         update_data: Dict[str, Any] = {"status": "in_progress"}
+        if call_id:
+            update_data["latest_call_id"] = call_id
 
         supabase.table("voice_candidates") \
             .update(update_data) \
@@ -766,6 +831,20 @@ async def fetch_call_data(
 
         candidate = candidate_result.data
 
+        # Dedup: check if call data already saved (e.g. by webhook)
+        existing = supabase.table("voice_call_history") \
+            .select("id") \
+            .eq("call_id", request.call_id) \
+            .execute()
+
+        if existing.data:
+            logger.info(f"ℹ️ Call {request.call_id} already saved, returning existing record")
+            return FetchCallDataResponse(
+                success=True,
+                message="Call data already saved (by webhook)",
+                call_history_id=existing.data[0]["id"]
+            )
+
         # Fetch call data from VAPI
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -793,9 +872,14 @@ async def fetch_call_data(
         duration = call_data.get("duration")  # seconds
         cost = call_data.get("cost")
 
-        # Map VAPI status to allowed DB values (pending, in_progress, completed, failed)
+        # Map VAPI status to allowed DB values (in_progress, completed, failed)
         vapi_status = call_data.get("status", "completed")
-        status_map = {"ended": "completed", "queued": "pending", "ringing": "pending", "in-progress": "in_progress"}
+        status_map = {
+            "ended": "completed",
+            "queued": "completed",
+            "ringing": "in_progress",
+            "in-progress": "in_progress",
+        }
         db_status = status_map.get(vapi_status, "completed")
 
         # Insert into call_history
@@ -915,13 +999,17 @@ async def get_call_history(
 ):
     """Get all calls for a candidate."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+        
         supabase = get_supabase()
 
         # Verify candidate belongs to user
         candidate_check = supabase.table("voice_candidates") \
             .select("id") \
             .eq("id", candidate_id) \
-            .eq("created_by", current_user["id"]) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -968,8 +1056,12 @@ async def re_evaluate_interview(
 
         call_data = call_result.data
 
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user["id"])
+
         # Verify ownership
-        if call_data["voice_candidates"]["created_by"] != current_user["id"]:
+        if call_data["voice_candidates"]["created_by"] != current_internal_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
         # Check if transcript exists
@@ -1036,6 +1128,10 @@ async def upload_file_to_vapi(
     current_user: dict = Depends(get_current_user)
 ):
     """Upload file to VAPI for knowledge base."""
+    # Resolve raw user ID to internal UUID (even if not strictly used for ownership on VAPI side, good for consistency)
+    user_service = get_user_service()
+    _ = user_service.resolve_user_id(current_user["id"])
+    
     import tempfile
     import os
 
@@ -1073,6 +1169,10 @@ async def upload_file_to_vapi(
 async def list_vapi_files(current_user: dict = Depends(get_current_user)):
     """List all files in VAPI."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        _ = user_service.resolve_user_id(current_user["id"])
+        
         vapi_file_service = get_vapi_file_service()
         files = await vapi_file_service.list_files()
 
@@ -1090,6 +1190,10 @@ async def delete_vapi_file(
 ):
     """Delete file from VAPI."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        _ = user_service.resolve_user_id(current_user["id"])
+        
         vapi_file_service = get_vapi_file_service()
         success = await vapi_file_service.delete_file(file_id)
 
@@ -1114,6 +1218,10 @@ async def generate_questions(
 ):
     """Generate interview questions using Ollama."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        _ = user_service.resolve_user_id(current_user["id"])
+        
         import ollama
 
         # Build context based on question_basis
@@ -1215,7 +1323,7 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
 # ============================================================================
 
 @router.post("/webhook")
-async def vapi_webhook(request: Request):
+async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle VAPI webhooks (end-of-call reports, function calls, etc.)."""
     try:
         # Log raw request for debugging
@@ -1234,18 +1342,104 @@ async def vapi_webhook(request: Request):
         logger.info(f"📨 Message type: {message_type}")
 
         if message_type == "end-of-call-report":
-            # Extract call data
+            # Extract call data from the webhook payload
             call_data = message.get("call", {})
             call_id = call_data.get("id")
-            transcript = call_data.get("transcript", "")
-            recording_url = call_data.get("recordingUrl")
+            transcript = message.get("transcript", "") or call_data.get("transcript", "")
+            recording_url = message.get("recordingUrl") or call_data.get("recordingUrl")
+            structured_data = message.get("analysis", {}).get("structuredData", {}) or {}
 
             logger.info(f"✅ Received end-of-call report for call {call_id}")
             logger.info(f"📝 Transcript length: {len(transcript)} chars")
             logger.info(f"🎙️ Recording URL: {recording_url}")
 
-            # You can process this immediately or let the fetch-call-data endpoint handle it
-            # For now, just log it
+            if call_id:
+                supabase = get_supabase()
+
+                # Dedup: check if already saved
+                existing = supabase.table("voice_call_history") \
+                    .select("id") \
+                    .eq("call_id", call_id) \
+                    .execute()
+
+                if existing.data:
+                    logger.info(f"ℹ️ Call {call_id} already saved in voice_call_history, skipping webhook save")
+                else:
+                    # Find candidate by latest_call_id
+                    candidate_result = supabase.table("voice_candidates") \
+                        .select("id, campaign_id") \
+                        .eq("latest_call_id", call_id) \
+                        .single() \
+                        .execute()
+
+                    if candidate_result.data:
+                        candidate = candidate_result.data
+
+                        started_at = call_data.get("startedAt")
+                        ended_at = call_data.get("endedAt")
+                        duration = call_data.get("duration")
+                        cost = call_data.get("cost")
+
+                        vapi_status = call_data.get("status", "completed")
+                        status_map = {
+                            "ended": "completed",
+                            "queued": "completed",
+                            "ringing": "in_progress",
+                            "in-progress": "in_progress",
+                        }
+                        db_status = status_map.get(vapi_status, "completed")
+
+                        call_history_data = {
+                            "candidate_id": candidate["id"],
+                            "call_id": call_id,
+                            "status": db_status,
+                            "started_at": started_at,
+                            "ended_at": ended_at,
+                            "duration_seconds": duration,
+                            "transcript": transcript,
+                            "recording_url": recording_url,
+                            "structured_data": structured_data,
+                            "call_type": "actual",
+                            "vapi_cost_cents": int(cost * 100) if cost else None,
+                            "vapi_duration_minutes": round(duration / 60, 2) if duration else None,
+                            "vapi_metadata": {"source": "webhook", "raw_message": message}
+                        }
+
+                        history_result = supabase.table("voice_call_history").insert(call_history_data).execute()
+
+                        if history_result.data:
+                            call_history_id = history_result.data[0]["id"]
+                            logger.info(f"✅ Webhook saved call data for {call_id}, history_id: {call_history_id}")
+
+                            # Update candidate status
+                            supabase.table("voice_candidates") \
+                                .update({"status": "completed"}) \
+                                .eq("id", candidate["id"]) \
+                                .execute()
+
+                            # Generate summary in background
+                            if transcript:
+                                campaign_result = supabase.table("voice_screening_campaigns") \
+                                    .select("job_role, technical_requirements") \
+                                    .eq("id", candidate.get("campaign_id")) \
+                                    .single() \
+                                    .execute()
+
+                                job_role = campaign_result.data.get("job_role") if campaign_result.data else None
+                                tech_req = campaign_result.data.get("technical_requirements") if campaign_result.data else None
+
+                                background_tasks.add_task(
+                                    generate_and_save_summary,
+                                    call_history_id,
+                                    transcript,
+                                    structured_data,
+                                    job_role,
+                                    tech_req
+                                )
+                        else:
+                            logger.error(f"❌ Webhook failed to insert call history for {call_id}")
+                    else:
+                        logger.warning(f"⚠️ No candidate found with latest_call_id={call_id}, webhook data not saved")
 
         elif message_type == "function-call":
             # Handle function calling (e.g., end_call)
@@ -1253,8 +1447,6 @@ async def vapi_webhook(request: Request):
             function_name = function_call.get("name")
 
             logger.info(f"📞 Function called: {function_name}")
-
-            # You can trigger actions here based on function_name
 
         return {"status": "received"}
 

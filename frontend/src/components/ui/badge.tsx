@@ -3,7 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
@@ -13,11 +13,22 @@ const badgeVariants = cva(
           "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
         destructive:
           "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
+        outline: "text-foreground border-slate-200",
         success:
-          "border-transparent bg-green-500 text-white hover:bg-green-600",
+          "border-green-200 bg-green-50 text-green-700",
         warning:
-          "border-transparent bg-yellow-500 text-white hover:bg-yellow-600",
+          "border-yellow-200 bg-yellow-50 text-yellow-700",
+        // Semantic status variants
+        "status-active":
+          "border-green-200 bg-green-50 text-green-700",
+        "status-pending":
+          "border-blue-200 bg-blue-50 text-blue-700",
+        "status-inactive":
+          "border-slate-200 bg-slate-50 text-slate-600",
+        "status-error":
+          "border-red-200 bg-red-50 text-red-700",
+        "status-info":
+          "border-indigo-200 bg-indigo-50 text-indigo-700",
       },
     },
     defaultVariants: {

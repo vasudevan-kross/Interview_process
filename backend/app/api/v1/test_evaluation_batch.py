@@ -10,6 +10,8 @@ import logging
 import hashlib
 
 from app.db.supabase_client import get_supabase
+from app.auth.dependencies import get_current_user_id
+from app.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +23,10 @@ batch_status = {}
 
 
 async def process_single_paper(
-    file_data: bytes,
-    filename: str,
     test_id: str,
     candidate_name: str,
-    batch_id: str
+    batch_id: str,
+    user_id: str
 ):
     """Process a single answer sheet using the same logic as single upload"""
     try:
@@ -44,7 +45,7 @@ async def process_single_paper(
             test_id=test_id,
             candidate_name=candidate_name,
             candidate_email=None,
-            user_id=None,
+            user_id=user_id,
             model=None
         )
 
@@ -72,7 +73,8 @@ async def process_single_paper(
 async def process_batch(
     batch_id: str,
     files_data: List[tuple],
-    test_id: str
+    test_id: str,
+    user_id: str
 ):
     """Process all papers in background"""
     try:
@@ -93,7 +95,8 @@ async def process_batch(
                     filename=file_info[1],
                     test_id=test_id,
                     candidate_name=file_info[2],
-                    batch_id=batch_id
+                    batch_id=batch_id,
+                    user_id=user_id
                 )
                 batch_status[batch_id]["processed"] += 1
                 batch_status[batch_id]["results"].append(result)
@@ -119,7 +122,8 @@ async def process_batch(
 async def batch_upload_papers(
     background_tasks: BackgroundTasks,
     test_id: str = Form(...),
-    files: List[UploadFile] = File(...)
+    files: List[UploadFile] = File(...),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Upload and process multiple answer sheets at once.
@@ -136,6 +140,16 @@ async def batch_upload_papers(
 
         if len(files) == 0:
             raise HTTPException(400, "No files provided")
+
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
+        # Verify test ownership
+        client = get_supabase()
+        test_check = client.table("tests").select("id").eq("id", test_id).eq("created_by", current_internal_id).single().execute()
+        if not test_check.data:
+            raise HTTPException(status_code=404, detail="Test not found")
 
         # Generate batch ID
         batch_id = str(uuid.uuid4())
@@ -162,7 +176,8 @@ async def batch_upload_papers(
             process_batch,
             batch_id=batch_id,
             files_data=files_data,
-            test_id=test_id
+            test_id=test_id,
+            user_id=current_user_id
         )
 
         return {
@@ -178,7 +193,10 @@ async def batch_upload_papers(
 
 
 @router.get("/status/{batch_id}")
-async def get_batch_status(batch_id: str):
+async def get_batch_status(
+    batch_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """Get batch processing status and results"""
     if batch_id not in batch_status:
         raise HTTPException(404, "Batch not found")
@@ -196,7 +214,10 @@ async def get_batch_status(batch_id: str):
 
 
 @router.get("/results/{batch_id}")
-async def get_batch_results(batch_id: str):
+async def get_batch_results(
+    batch_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """Get detailed results for a batch"""
     if batch_id not in batch_status:
         raise HTTPException(404, "Batch not found")

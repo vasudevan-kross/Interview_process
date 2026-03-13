@@ -53,7 +53,7 @@ class BatchResumeResponse(BaseModel):
     total_processed: int
     total_failed: int
     results: List[ResumeResponse]
-    failed: List[Dict[str, str]]
+    failed: List[Dict[str, Optional[str]]]
     top_candidates: List[ResumeResponse]
     summary: Dict[str, float]
 
@@ -66,6 +66,11 @@ class CandidateInfo(BaseModel):
     match_score: Optional[float]
     match_details: Optional[Dict[str, Any]]
     skills_extracted: Dict[str, List[str]]
+    recommendation: Optional[str] = None
+    overall_assessment: Optional[str] = None
+    experience_match: Optional[str] = None
+    key_matches: List[str] = []
+    missing_requirements: List[str] = []
     created_at: datetime
 
 

@@ -13,12 +13,12 @@ class InterviewSummaryService:
     """
     Service for generating AI-powered interview summaries and technical assessments.
 
-    Uses mistral-nemo:12b for superior reasoning, analysis, and 20% faster performance.
+    Uses llama3.1:8b for reasoning and analysis.
     """
 
     def __init__(self):
         self.settings = get_settings()
-        self.model = "mistral-nemo:12b"  # Upgraded for better analysis + faster
+        self.model = "llama3.1:8b"
         self.temperature = 0.3  # Lower temperature for more consistent analysis
         self.base_url = self.settings.OLLAMA_BASE_URL
 
@@ -73,8 +73,11 @@ class InterviewSummaryService:
                 }
             )
 
-            # Extract and parse JSON response
-            response_text = response["message"]["content"]
+            # Extract and parse JSON response (handle both dict and Pydantic response)
+            if hasattr(response, 'message'):
+                response_text = response.message.content or ''
+            else:
+                response_text = response["message"]["content"]
             logger.debug(f"Ollama response length: {len(response_text)} characters")
 
             summary_data = self._extract_json_from_response(response_text)

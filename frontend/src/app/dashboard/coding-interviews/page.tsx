@@ -28,14 +28,17 @@ import {
   Filter,
   Copy,
   Share2,
-  ExternalLink,
   GitFork,
   Pencil,
   FileText,
+  Bot,
 } from 'lucide-react'
+import { VoiceCreateModal } from '@/components/coding-interviews/VoiceCreateModal'
 import { listInterviews, deleteInterview, generateShareableLink, cloneInterview, type Interview } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonTable } from '@/components/ui/skeleton'
 
 export default function CodingInterviewsPage() {
   const router = useRouter()
@@ -46,6 +49,7 @@ export default function CodingInterviewsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [cloningId, setCloningId] = useState<string | null>(null)
+  const [voiceModalOpen, setVoiceModalOpen] = useState(false)
 
   useEffect(() => {
     fetchInterviews()
@@ -54,15 +58,10 @@ export default function CodingInterviewsPage() {
   const fetchInterviews = async () => {
     try {
       setLoading(true)
-      const params: any = {
-        limit: 50,
-        offset: 0,
-      }
-
+      const params: any = { limit: 50, offset: 0 }
       if (statusFilter !== 'all') {
         params.status_filter = statusFilter
       }
-
       const response = await listInterviews(params)
       setInterviews(response.interviews)
     } catch (error: any) {
@@ -72,7 +71,7 @@ export default function CodingInterviewsPage() {
     }
   }
 
-  const handleDelete = async (interviewId: string) => {
+  const handleDelete = (interviewId: string) => {
     setPendingDeleteId(interviewId)
     setDeleteDialogOpen(true)
   }
@@ -118,65 +117,58 @@ export default function CodingInterviewsPage() {
   }
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: any; className: string }> = {
-      scheduled: { variant: 'default', className: 'bg-blue-600 text-white' },
-      in_progress: { variant: 'default', className: 'bg-green-600 text-white' },
-      completed: { variant: 'default', className: 'bg-gray-600 text-white' },
-      expired: { variant: 'default', className: 'bg-red-600 text-white' },
+    const styles: Record<string, string> = {
+      scheduled: 'border-blue-200 bg-blue-50 text-blue-700',
+      in_progress: 'border-green-200 bg-green-50 text-green-700',
+      completed: 'border-slate-200 bg-slate-50 text-slate-600',
+      expired: 'border-red-200 bg-red-50 text-red-700',
     }
 
-    const config = variants[status] || variants.scheduled
-
     return (
-      <Badge className={config.className}>
-        {status.replace('_', ' ').toUpperCase()}
+      <Badge className={styles[status] || styles.scheduled}>
+        {status.replace('_', ' ')}
       </Badge>
     )
   }
 
   const getInterviewTypeBadge = (type: string) => {
-    const variants: Record<string, string> = {
-      coding: 'bg-purple-100 text-purple-800',
-      testing: 'bg-orange-100 text-orange-800',
-      both: 'bg-indigo-100 text-indigo-800',
-      devops: 'bg-amber-100 text-amber-800',
-      sql: 'bg-green-100 text-green-800',
-      system_design: 'bg-pink-100 text-pink-800',
-      fullstack: 'bg-cyan-100 text-cyan-800',
-      data_science: 'bg-teal-100 text-teal-800',
+    const styles: Record<string, string> = {
+      coding: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+      testing: 'border-amber-200 bg-amber-50 text-amber-700',
+      both: 'border-purple-200 bg-purple-50 text-purple-700',
+      devops: 'border-orange-200 bg-orange-50 text-orange-700',
+      sql: 'border-green-200 bg-green-50 text-green-700',
+      system_design: 'border-pink-200 bg-pink-50 text-pink-700',
+      fullstack: 'border-cyan-200 bg-cyan-50 text-cyan-700',
+      data_science: 'border-teal-200 bg-teal-50 text-teal-700',
     }
 
     const labels: Record<string, string> = {
-      coding: 'CODING',
-      testing: 'TESTING',
-      both: 'BOTH',
-      devops: 'DEVOPS',
+      coding: 'Coding',
+      testing: 'Testing',
+      both: 'Both',
+      devops: 'DevOps',
       sql: 'SQL',
-      system_design: 'SYS DESIGN',
-      fullstack: 'FULLSTACK',
-      data_science: 'DATA SCI',
+      system_design: 'Sys Design',
+      fullstack: 'Fullstack',
+      data_science: 'Data Sci',
     }
 
     return (
-      <Badge className={variants[type] || variants.coding}>
-        {labels[type] || type.toUpperCase()}
+      <Badge className={styles[type] || styles.coding}>
+        {labels[type] || type}
       </Badge>
     )
   }
 
-  // Compute effective status based on current time
   const computeEffectiveStatus = (interview: Interview): string => {
     const now = new Date()
     const endTime = new Date(interview.scheduled_end_time)
     const graceMs = (interview.grace_period_minutes || 0) * 60 * 1000
     const effectiveEnd = new Date(endTime.getTime() + graceMs)
 
-    if (interview.status === 'scheduled' && now > effectiveEnd) {
-      return 'expired'
-    }
-    if (interview.status === 'in_progress' && now > effectiveEnd) {
-      return 'completed'
-    }
+    if (interview.status === 'scheduled' && now > effectiveEnd) return 'expired'
+    if (interview.status === 'in_progress' && now > effectiveEnd) return 'completed'
     return interview.status
   }
 
@@ -184,82 +176,61 @@ export default function CodingInterviewsPage() {
     interview.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
+  const counts = {
+    total: interviews.length,
+    inProgress: interviews.filter((i) => computeEffectiveStatus(i) === 'in_progress').length,
+    completed: interviews.filter((i) => computeEffectiveStatus(i) === 'completed').length,
+    scheduled: interviews.filter((i) => computeEffectiveStatus(i) === 'scheduled').length,
+  }
+
   return (
-    <div className="space-y-6 p-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            Technical Assessments
-          </h1>
-          <p className="text-gray-600 mt-2">
-            Create and manage time-bound technical assessments across all domains
-          </p>
-        </div>
-        <Button
-          onClick={() => router.push('/dashboard/coding-interviews/create')}
-          className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Create Interview
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Technical Assessments"
+        description="Create and manage time-bound technical assessments across all domains."
+        action={
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setVoiceModalOpen(true)}>
+              <Bot className="mr-2 h-4 w-4" />
+              AI Assistant
+            </Button>
+            <Button onClick={() => router.push('/dashboard/coding-interviews/create')}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Interview
+            </Button>
+          </div>
+        }
+      />
 
-      {/* Stats Cards */}
+      {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="border-l-4 border-l-blue-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Interviews</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{interviews.length}</div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-green-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">In Progress</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {interviews.filter((i) => computeEffectiveStatus(i) === 'in_progress').length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-gray-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Completed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {interviews.filter((i) => computeEffectiveStatus(i) === 'completed').length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-blue-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Scheduled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {interviews.filter((i) => computeEffectiveStatus(i) === 'scheduled').length}
-            </div>
-          </CardContent>
-        </Card>
+        {[
+          { label: 'Total', value: counts.total },
+          { label: 'In Progress', value: counts.inProgress },
+          { label: 'Completed', value: counts.completed },
+          { label: 'Scheduled', value: counts.scheduled },
+        ].map((s) => (
+          <Card key={s.label} className="border border-slate-200 bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-500">{s.label}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold tabular-nums text-slate-900">{s.value}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      {/* Filters and Search */}
-      <Card>
+      {/* Table Card */}
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
           <CardTitle>Interviews</CardTitle>
           <CardDescription>Manage your coding and testing interviews</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
                 placeholder="Search interviews..."
                 value={searchQuery}
@@ -267,13 +238,12 @@ export default function CodingInterviewsPage() {
                 className="pl-10"
               />
             </div>
-
             <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-gray-400" />
+              <Filter className="h-4 w-4 text-slate-400" />
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="h-10 rounded-md border border-gray-300 bg-white px-3 text-sm"
+                className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700"
               >
                 <option value="all">All Status</option>
                 <option value="scheduled">Scheduled</option>
@@ -284,52 +254,51 @@ export default function CodingInterviewsPage() {
             </div>
           </div>
 
-          {/* Table */}
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
+            <SkeletonTable rows={5} cols={7} />
           ) : filteredInterviews.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Code className="h-12 w-12 text-gray-300 mb-4" />
-              <p className="text-gray-500 text-center">
-                {searchQuery ? 'No interviews found matching your search' : 'No interviews yet'}
+            <div className="py-16 text-center">
+              <p className="text-sm font-medium text-slate-900 mb-1">
+                {searchQuery ? 'No interviews match your search' : 'No interviews yet'}
+              </p>
+              <p className="text-sm text-slate-400 mb-4">
+                {searchQuery ? 'Try a different search term.' : 'Create your first technical assessment.'}
               </p>
               {!searchQuery && (
                 <Button
-                  onClick={() => router.push('/dashboard/coding-interviews/create')}
-                  className="mt-4"
                   variant="outline"
+                  size="sm"
+                  onClick={() => router.push('/dashboard/coding-interviews/create')}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Create your first interview
+                  Create Interview
                 </Button>
               )}
             </div>
           ) : (
-            <div className="border rounded-lg">
+            <div className="border rounded-lg overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Title</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>Scheduled Time</TableHead>
+                    <TableHead>Scheduled</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Language</TableHead>
-                    <TableHead>Total Marks</TableHead>
+                    <TableHead>Marks</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredInterviews.map((interview) => (
                     <TableRow key={interview.id}>
-                      <TableCell className="font-medium">{interview.title}</TableCell>
+                      <TableCell className="font-medium text-slate-900">{interview.title}</TableCell>
                       <TableCell>{getInterviewTypeBadge(interview.interview_type)}</TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2 text-sm">
-                          <Calendar className="h-4 w-4 text-gray-400" />
+                        <div className="flex items-center gap-1.5 text-sm text-slate-600">
+                          <Calendar className="h-3.5 w-3.5 text-slate-400" />
                           {format(new Date(interview.scheduled_start_time), 'MMM dd, yyyy')}
-                          <Clock className="h-4 w-4 text-gray-400 ml-2" />
+                          <Clock className="h-3.5 w-3.5 text-slate-400 ml-1" />
                           {format(new Date(interview.scheduled_start_time), 'HH:mm')}
                         </div>
                       </TableCell>
@@ -337,81 +306,39 @@ export default function CodingInterviewsPage() {
                       <TableCell>
                         <Badge variant="outline">
                           {interview.programming_language === 'any' || (interview.allowed_languages && interview.allowed_languages.length === 0)
-                            ? 'Any Language'
+                            ? 'Any'
                             : interview.programming_language}
                         </Badge>
                       </TableCell>
-                      <TableCell>{interview.total_marks}</TableCell>
+                      <TableCell className="text-slate-600">{interview.total_marks}</TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleCopyLink(interview.access_token)}
-                            title="Copy link"
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleShareWhatsApp(interview.access_token, interview.title)}
-                            title="Share on WhatsApp"
-                          >
-                            <Share2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/candidates`)}
-                            title="Candidate pipeline"
-                          >
-                            <Users className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/submissions`)}
-                            title="View Submissions"
-                          >
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}`)}
-                            title="View details"
-                          >
+                        <div className="flex items-center justify-end gap-1">
+                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}`)} title="View details">
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/edit`)}
-                            title="Edit"
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => handleCopyLink(interview.access_token)} title="Copy link">
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/submissions`)} title="View Submissions">
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/candidates`)} title="Candidate pipeline">
+                            <Users className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/edit`)} title="Edit">
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleClone(interview.id)}
-                            title="Clone"
-                            disabled={cloningId === interview.id}
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => handleClone(interview.id)} title="Clone" disabled={cloningId === interview.id}>
                             {cloningId === interview.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <GitFork className="h-4 w-4" />
                             )}
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleDelete(interview.id)}
-                            title="Delete"
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => handleShareWhatsApp(interview.access_token, interview.title)} title="Share on WhatsApp">
+                            <Share2 className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleDelete(interview.id)} title="Delete" className="text-red-500 hover:text-red-600 hover:bg-red-50">
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -433,6 +360,15 @@ export default function CodingInterviewsPage() {
         description="Are you sure you want to delete this interview? This action cannot be undone and will remove all associated questions and submissions."
         confirmText="Delete"
         variant="destructive"
+      />
+
+      <VoiceCreateModal
+        open={voiceModalOpen}
+        onClose={() => setVoiceModalOpen(false)}
+        onCreated={() => {
+          fetchInterviews()
+          setVoiceModalOpen(false)
+        }}
       />
     </div>
   )

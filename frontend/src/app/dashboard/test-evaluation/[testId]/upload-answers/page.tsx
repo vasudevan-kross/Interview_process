@@ -12,6 +12,7 @@ import { BatchUpload } from '@/components/test/BatchUpload'
 import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
 import { Loader2, Upload, FileStack } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
 
 export default function UploadAnswersPage() {
   const router = useRouter()
@@ -64,23 +65,10 @@ export default function UploadAnswersPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      {/* Clean Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-8 shadow-sm">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500">
-                <Upload className="h-5 w-5 text-white" />
-              </div>
-              <span className="text-sm font-medium text-muted-foreground">Answer Sheet Submission</span>
-            </div>
-            <h1 className="text-4xl font-bold text-slate-900 mb-2">Upload Answer Sheets</h1>
-            <p className="text-lg text-slate-600">
-              Upload single or multiple candidate answer sheets for automated AI-powered evaluation
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Upload Answer Sheets"
+        description="Upload single or multiple candidate answer sheets for automated AI-powered evaluation."
+      />
 
       {/* Tabs for Single/Batch */}
       <Tabs defaultValue="single" className="w-full">
@@ -97,104 +85,105 @@ export default function UploadAnswersPage() {
 
         {/* Single Upload Tab */}
         <TabsContent value="single" className="mt-6">
-          <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-all">
-        <CardHeader>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500">
-              <Upload className="h-5 w-5 text-white" />
-            </div>
-            <CardTitle className="text-xl text-slate-900">Candidate Information</CardTitle>
-          </div>
-          <CardDescription className="text-base">
-            Enter candidate details and upload their answer sheet for instant grading
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="candidateName" className="text-sm font-semibold">Candidate Name *</Label>
-                <Input
-                  id="candidateName"
-                  value={candidateName}
-                  onChange={(e) => setCandidateName(e.target.value)}
-                  placeholder="John Doe"
-                  required
-                  disabled={loading}
-                />
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader>
+              <div className="flex items-center gap-3 mb-2">
+                <Upload className="h-5 w-5 text-slate-400" />
+                <CardTitle className="text-xl text-slate-900">Candidate Information</CardTitle>
               </div>
+              <CardDescription className="text-base">
+                Enter candidate details and upload their answer sheet for instant grading
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="candidateName" className="text-sm font-semibold">Candidate Name *</Label>
+                    <Input
+                      id="candidateName"
+                      value={candidateName}
+                      onChange={(e) => setCandidateName(e.target.value)}
+                      placeholder="John Doe"
+                      required
+                      disabled={loading}
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="candidateEmail" className="text-sm font-semibold">Candidate Email (Optional)</Label>
-                <Input
-                  id="candidateEmail"
-                  type="email"
-                  value={candidateEmail}
-                  onChange={(e) => setCandidateEmail(e.target.value)}
-                  placeholder="john@example.com"
-                  disabled={loading}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-sm font-semibold">Answer Sheet File *</Label>
-              <FileUpload
-                onFilesSelected={(files) => setAnswerFile(files[0] || null)}
-                maxFiles={1}
-                multiple={false}
-                disabled={loading}
-              />
-              {answerFile && (
-                <div className="text-xs text-slate-600 flex items-center gap-1 bg-orange-50 px-3 py-2 rounded-md border border-orange-100">
-                  <Upload className="h-3 w-3 text-orange-600" />
-                  {answerFile.name}
+                  <div className="space-y-2">
+                    <Label htmlFor="candidateEmail" className="text-sm font-semibold">Candidate Email (Optional)</Label>
+                    <Input
+                      id="candidateEmail"
+                      type="email"
+                      value={candidateEmail}
+                      onChange={(e) => setCandidateEmail(e.target.value)}
+                      placeholder="john@example.com"
+                      disabled={loading}
+                    />
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {loading && (
-              <div className="p-4 rounded-lg bg-orange-50 border border-orange-200">
-                <div className="flex items-center gap-3 mb-2">
-                  <Loader2 className="h-5 w-5 animate-spin text-orange-600" />
-                  <p className="font-semibold text-orange-900">Evaluating answer sheet...</p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold">Answer Sheet File *</Label>
+                    <a href="/samples/test-evaluation/sample_answer_sheet.txt" download className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">Download Sample Answer</a>
+                  </div>
+                  <FileUpload
+                    onFilesSelected={(files) => setAnswerFile(files[0] || null)}
+                    maxFiles={1}
+                    multiple={false}
+                    disabled={loading}
+                  />
+                  {answerFile && (
+                    <div className="text-xs text-slate-600 flex items-center gap-1 bg-slate-50 px-3 py-2 rounded-md border border-slate-100">
+                      <Upload className="h-3 w-3 text-slate-400" />
+                      {answerFile.name}
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-orange-700">
-                  AI is analyzing the answers and calculating the score. This may take a few moments.
-                </p>
-              </div>
-            )}
 
-            <div className="flex gap-4">
-              <Button
-                type="submit"
-                disabled={loading || !answerFile}
-                className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Evaluating...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="mr-2 h-4 w-4" />
-                    Upload & Evaluate
-                  </>
+                {loading && (
+                  <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
+                      <p className="font-semibold text-slate-900">Evaluating answer sheet...</p>
+                    </div>
+                    <p className="text-sm text-slate-600">
+                      AI is analyzing the answers and calculating the score. This may take a few moments.
+                    </p>
+                  </div>
                 )}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.push(`/dashboard/test-evaluation/${testId}/results`)}
-                disabled={loading}
-              >
-                View Results
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+
+                <div className="flex gap-4">
+                  <Button
+                    type="submit"
+                    disabled={loading || !answerFile}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Evaluating...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload & Evaluate
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => router.push(`/dashboard/test-evaluation/${testId}/results`)}
+                    disabled={loading}
+                  >
+                    View Results
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Batch Upload Tab */}

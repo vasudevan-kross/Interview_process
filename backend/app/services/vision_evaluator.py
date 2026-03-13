@@ -1,10 +1,8 @@
 """
 Vision-based answer evaluation for handwritten exam sheets.
 
-Uses a vision-capable Ollama model (llava, glm-ocr, etc.) to read handwriting
+Uses a vision-capable Ollama model (llava:7b) to read handwriting
 directly from scanned page images, bypassing OCR quality limitations.
-
-Model priority: llava:13b → llava-llama3 → llava:7b → glm-ocr:latest → MedAIBase/PaddleOCR-VL:0.9b
 """
 import base64
 import io
@@ -45,6 +43,12 @@ class VisionEvaluator:
                 models_response = ollama.list()
                 if isinstance(models_response, dict):
                     names = {m.get('name', '') for m in models_response.get('models', [])}
+                elif hasattr(models_response, 'models'):
+                    # ollama >= 0.4 returns ListResponse Pydantic object
+                    names = {
+                        getattr(m, 'model', None) or getattr(m, 'name', '')
+                        for m in models_response.models
+                    }
                 else:
                     names = set()
                 for candidate in model_config.VISION_EVAL_MODELS:
@@ -178,7 +182,11 @@ Instructions:
             images=images_b64,
             options={"temperature": 0.1, "seed": 42},
         )
-        text = response.get('response', '')
+        # ollama >= 0.4 returns GenerateResponse Pydantic object
+        if hasattr(response, 'response'):
+            text = response.response or ''
+        else:
+            text = response.get('response', '')
 
         # Use the robust JSON extractor from test_evaluation
         from app.services.test_evaluation import extract_json_from_text

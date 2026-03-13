@@ -19,7 +19,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: 'AI Interview Platform | Transform Your Hiring Process',
-  description: 'AI-powered recruitment platform with intelligent resume matching, automated test evaluation, and live video interviews. Hire faster, smarter, better.',
+  description: 'AI-powered recruitment platform with intelligent resume matching, automated test evaluation, and automated voice screening. Hire faster, smarter, better.',
 }
 
 export default function RootLayout({

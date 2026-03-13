@@ -22,7 +22,7 @@ export default async function DashboardLayout({
     <div className="min-h-screen bg-slate-50">
       <DashboardNav />
       {/* Main content area - adjust padding for fixed sidebar */}
-      <div className="transition-all duration-300 md:pl-72">
+      <div className="transition-all duration-300 md:pl-64">
         <DashboardHeader user={user} />
         <main className="min-h-[calc(100vh-4rem)] p-4 md:p-6 max-w-full overflow-x-hidden">
           {children}

@@ -6,7 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
-import { Loader2, ArrowLeft, Award, User, Mail, Calendar, CheckCircle2, XCircle, MinusCircle } from 'lucide-react'
+import { ArrowLeft, Award, User, Mail, Calendar, CheckCircle2, XCircle, MinusCircle } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonPageHeader } from '@/components/ui/skeleton'
 import { formatDateTime } from '@/lib/utils'
 
 interface QuestionEvaluation {
@@ -59,11 +61,11 @@ export default function AnswerSheetDetailPage() {
     }
   }
 
-  const getScoreColor = (percentage: number) => {
-    if (percentage >= 80) return 'from-green-500 to-emerald-500'
-    if (percentage >= 60) return 'from-blue-500 to-cyan-500'
-    if (percentage >= 40) return 'from-orange-500 to-yellow-500'
-    return 'from-red-500 to-pink-500'
+  const getScoreStyle = (percentage: number) => {
+    if (percentage >= 80) return 'bg-green-50 text-green-700 border border-green-200'
+    if (percentage >= 60) return 'bg-blue-50 text-blue-700 border border-blue-200'
+    if (percentage >= 40) return 'bg-orange-50 text-orange-700 border border-orange-200'
+    return 'bg-red-50 text-red-700 border border-red-200'
   }
 
   const getStatusIcon = (isCorrect: boolean | null, percentage: number) => {
@@ -81,8 +83,8 @@ export default function AnswerSheetDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="max-w-7xl mx-auto space-y-6">
+        <SkeletonPageHeader />
       </div>
     )
   }
@@ -107,90 +109,65 @@ export default function AnswerSheetDetailPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Gradient Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-orange-500/90 to-red-600 p-8 text-white shadow-xl">
-        <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
-        <div className="relative z-10">
-          <Button
-            variant="ghost"
-            onClick={() => router.push(`/dashboard/test-evaluation/${answerSheet.test_id}/results`)}
-            className="mb-4 text-white hover:bg-white/20 -ml-2"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Results
-          </Button>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Award className="h-6 w-6" />
-                <span className="text-sm font-medium opacity-90">Detailed Evaluation</span>
-              </div>
-              <h1 className="text-4xl font-bold mb-2">{answerSheet.candidate_name}</h1>
-              <p className="text-lg opacity-90">
-                {answerSheet.test_title}
-              </p>
+      <PageHeader
+        title={answerSheet.candidate_name}
+        description={answerSheet.test_title}
+        action={
+          <div className="flex items-center gap-3">
+            <div className={`px-4 py-2 rounded-md text-sm font-semibold ${getScoreStyle(answerSheet.percentage)}`}>
+              {answerSheet.percentage.toFixed(1)}% — {answerSheet.total_marks_obtained} / {answerSheet.evaluations.reduce((sum, e) => sum + e.max_marks, 0)} marks
             </div>
-            <div className="text-right">
-              <div className={`inline-block px-6 py-3 rounded-2xl bg-gradient-to-r ${getScoreColor(answerSheet.percentage)} text-white shadow-xl`}>
-                <div className="text-4xl font-bold">{answerSheet.percentage.toFixed(1)}%</div>
-                <div className="text-sm opacity-90 mt-1">
-                  {answerSheet.total_marks_obtained} / {answerSheet.evaluations.reduce((sum, e) => sum + e.max_marks, 0)} marks
-                </div>
-              </div>
-            </div>
+            <Button
+              variant="outline"
+              onClick={() => router.push(`/dashboard/test-evaluation/${answerSheet.test_id}/results`)}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Results
+            </Button>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       {/* Candidate Information */}
       <div className="grid md:grid-cols-3 gap-4">
-        <Card className="border-0 shadow-lg overflow-hidden relative">
-          <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent"></div>
-          <CardHeader className="pb-3 relative">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 shadow-md">
-                <User className="h-4 w-4 text-white" />
-              </div>
-              <CardTitle className="text-sm font-medium">Candidate Name</CardTitle>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium text-slate-500">Candidate Name</CardTitle>
+              <User className="h-4 w-4 text-slate-300" />
             </div>
           </CardHeader>
-          <CardContent className="relative">
-            <p className="text-lg font-semibold text-slate-900">{answerSheet.candidate_name}</p>
+          <CardContent>
+            <p className="text-base font-semibold text-slate-900">{answerSheet.candidate_name}</p>
             {answerSheet.candidate_id && (
-              <p className="text-xs text-slate-600 mt-1">ID: {answerSheet.candidate_id}</p>
+              <p className="text-xs text-slate-500 mt-1">ID: {answerSheet.candidate_id}</p>
             )}
           </CardContent>
         </Card>
 
         {answerSheet.candidate_email && (
-          <Card className="border-0 shadow-lg overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent"></div>
-            <CardHeader className="pb-3 relative">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 shadow-md">
-                  <Mail className="h-4 w-4 text-white" />
-                </div>
-                <CardTitle className="text-sm font-medium">Email</CardTitle>
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium text-slate-500">Email</CardTitle>
+                <Mail className="h-4 w-4 text-slate-300" />
               </div>
             </CardHeader>
-            <CardContent className="relative">
-              <p className="text-lg font-semibold text-slate-900 break-all">{answerSheet.candidate_email}</p>
+            <CardContent>
+              <p className="text-base font-semibold text-slate-900 break-all">{answerSheet.candidate_email}</p>
             </CardContent>
           </Card>
         )}
 
-        <Card className="border-0 shadow-lg overflow-hidden relative">
-          <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent"></div>
-          <CardHeader className="pb-3 relative">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 shadow-md">
-                <Calendar className="h-4 w-4 text-white" />
-              </div>
-              <CardTitle className="text-sm font-medium">Submitted</CardTitle>
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium text-slate-500">Submitted</CardTitle>
+              <Calendar className="h-4 w-4 text-slate-300" />
             </div>
           </CardHeader>
-          <CardContent className="relative">
-            <p className="text-lg font-semibold text-slate-900">
+          <CardContent>
+            <p className="text-base font-semibold text-slate-900">
               {answerSheet.submitted_at ? formatDateTime(answerSheet.submitted_at) : 'N/A'}
             </p>
           </CardContent>
@@ -198,28 +175,17 @@ export default function AnswerSheetDetailPage() {
       </div>
 
       {/* Question-by-Question Evaluation */}
-      <Card className="border-0 shadow-lg overflow-hidden relative">
-        <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent"></div>
-        <CardHeader className="relative">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 shadow-md">
-              <Award className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <CardTitle className="text-xl">Question-by-Question Evaluation</CardTitle>
-              <CardDescription>AI-powered assessment with detailed feedback</CardDescription>
-            </div>
-          </div>
+      <Card className="border border-slate-200 bg-white">
+        <CardHeader>
+          <CardTitle>Question-by-Question Evaluation</CardTitle>
+          <CardDescription>AI-powered assessment with detailed feedback</CardDescription>
         </CardHeader>
-        <CardContent className="relative">
-          <div className="space-y-6">
+        <CardContent>
+          <div className="space-y-4">
             {answerSheet.evaluations.length === 0 ? (
               <div className="text-center py-16">
-                <div className="p-6 rounded-2xl bg-gradient-to-br from-orange-500 to-red-500 mb-4 inline-block shadow-lg">
-                  <Award className="h-12 w-12 text-white" />
-                </div>
-                <p className="text-lg font-medium text-slate-900 mb-2">No evaluations found</p>
-                <p className="text-slate-600">This answer sheet hasn't been evaluated yet</p>
+                <p className="text-sm font-medium text-slate-900 mb-1">No evaluations found</p>
+                <p className="text-sm text-slate-400">This answer sheet hasn't been evaluated yet</p>
               </div>
             ) : (
               answerSheet.evaluations.map((evaluation, index) => {
@@ -227,15 +193,15 @@ export default function AnswerSheetDetailPage() {
                 return (
                   <div
                     key={evaluation.id}
-                    className="border border-slate-200 rounded-xl p-6 hover:border-orange-300 hover:bg-orange-50/30 transition-all"
+                    className="border border-slate-200 rounded-lg p-5 hover:bg-slate-50/50 transition-colors"
                   >
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-start gap-3 flex-1">
-                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-white font-bold shadow-md flex-shrink-0">
+                        <div className="w-7 h-7 rounded-md bg-slate-100 text-slate-600 font-semibold text-xs flex items-center justify-center flex-shrink-0">
                           {evaluation.question_number || index + 1}
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-semibold text-slate-900 mb-2 text-lg">
+                          <h3 className="font-semibold text-slate-900 mb-2">
                             {evaluation.question_text}
                           </h3>
                         </div>
@@ -243,25 +209,22 @@ export default function AnswerSheetDetailPage() {
                       <div className="flex items-center gap-3 ml-4">
                         {getStatusIcon(evaluation.is_correct, percentage)}
                         <div className="text-right">
-                          <div className="font-bold text-lg bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent">
+                          <div className="font-semibold text-slate-900">
                             {evaluation.marks_awarded} / {evaluation.max_marks}
                           </div>
-                          <div className="text-xs text-slate-600">
+                          <div className="text-xs text-slate-500">
                             {percentage.toFixed(0)}%
                           </div>
                         </div>
                       </div>
                     </div>
 
-                    <div className="space-y-4 ml-13">
+                    <div className="space-y-3 ml-10">
                       {/* Candidate's Answer */}
                       <div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="h-1 w-1 rounded-full bg-orange-500"></div>
-                          <p className="text-sm font-semibold text-slate-700">Candidate's Answer:</p>
-                        </div>
-                        <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-                          <p className="text-slate-800 whitespace-pre-wrap">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Candidate's Answer</p>
+                        <div className="bg-slate-50 rounded-md p-3 border border-slate-200">
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap">
                             {evaluation.candidate_answer || <span className="text-slate-400 italic">No answer provided</span>}
                           </p>
                         </div>
@@ -270,12 +233,9 @@ export default function AnswerSheetDetailPage() {
                       {/* AI Feedback */}
                       {evaluation.feedback && (
                         <div>
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className="h-1 w-1 rounded-full bg-orange-500"></div>
-                            <p className="text-sm font-semibold text-slate-700">AI Feedback:</p>
-                          </div>
-                          <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-lg p-4 border border-orange-200">
-                            <p className="text-slate-800 whitespace-pre-wrap leading-relaxed">
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">AI Feedback</p>
+                          <div className="bg-indigo-50/50 rounded-md p-3 border border-indigo-100">
+                            <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">
                               {evaluation.feedback}
                             </p>
                           </div>
@@ -284,12 +244,9 @@ export default function AnswerSheetDetailPage() {
 
                       {/* Similarity Score */}
                       {evaluation.similarity_score !== null && (
-                        <div className="flex items-center gap-2">
-                          <div className="h-1 w-1 rounded-full bg-orange-500"></div>
-                          <p className="text-sm text-slate-600">
-                            Similarity Score: <span className="font-semibold text-slate-900">{(evaluation.similarity_score * 100).toFixed(1)}%</span>
-                          </p>
-                        </div>
+                        <p className="text-xs text-slate-500">
+                          Similarity Score: <span className="font-semibold text-slate-700">{(evaluation.similarity_score * 100).toFixed(1)}%</span>
+                        </p>
                       )}
                     </div>
                   </div>
@@ -305,7 +262,6 @@ export default function AnswerSheetDetailPage() {
         <Button
           variant="outline"
           onClick={() => router.push(`/dashboard/test-evaluation/${answerSheet.test_id}/results`)}
-          className="border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300"
         >
           Back to Results
         </Button>

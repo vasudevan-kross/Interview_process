@@ -94,7 +94,7 @@ export interface Submission {
   preferred_language?: string;  // Language chosen by candidate
   started_at: string;
   submitted_at?: string;
-  status: 'in_progress' | 'submitted' | 'auto_submitted' | 'abandoned';
+  status: 'in_progress' | 'submitted' | 'auto_submitted' | 'abandoned' | 'evaluated';
   total_marks_obtained?: number;
   percentage?: number;
   late_submission: boolean;
@@ -164,6 +164,7 @@ export async function createInterview(data: {
   require_signature?: boolean;  // Whether signature is required
   bond_years?: number;  // Number of years for bond
   bond_timing?: 'before_start' | 'before_submission';
+  job_id?: string;  // Link to job_descriptions for pipeline
   questions: Question[];
 }): Promise<{
   interview_id: string;
@@ -367,6 +368,7 @@ export async function evaluateAllSubmissions(interviewId: string): Promise<{
   total: number;
   evaluated: number;
   failed: number;
+  status?: string;
   results: Array<{
     submission_id: string;
     status: 'success' | 'failed';
@@ -962,4 +964,62 @@ export function isInterviewActive(interview: Interview): boolean {
   const expires = new Date(interview.link_expires_at);
 
   return now >= start && now <= expires;
+}
+
+// ============================================================================
+// Voice Interview Creation
+// ============================================================================
+
+export interface VoiceSessionResponse {
+  reply: string;
+  session_state: Record<string, any>;
+  done: boolean;
+  interview_id?: string;
+  access_token?: string;
+  shareable_link?: string;
+}
+
+/**
+ * Get the opening greeting and initial session state for voice interview creation.
+ * Call this once when the voice modal opens.
+ */
+export async function getVoiceSessionStart(): Promise<VoiceSessionResponse> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/voice-session/start`,
+    { method: 'GET', headers }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to start voice session'));
+  }
+  return response.json();
+}
+
+/**
+ * Send one voice turn (speech transcript) to the server and get the agent's reply.
+ */
+export async function voiceSession(data: {
+  message: string;
+  session_state: Record<string, any>;
+  user_timezone_offset?: number;
+}): Promise<VoiceSessionResponse> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/voice-session`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        message: data.message,
+        session_state: data.session_state,
+        user_timezone_offset: data.user_timezone_offset ?? -new Date().getTimezoneOffset(),
+      }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Voice session failed'));
+  }
+  return response.json();
 }

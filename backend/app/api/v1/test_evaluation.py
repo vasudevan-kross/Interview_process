@@ -1,7 +1,7 @@
 """
 API endpoints for test evaluation functionality.
 """
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Body, Depends
 from typing import Optional, List
 import logging
 from pydantic import BaseModel
@@ -25,6 +25,8 @@ class DeleteAnswerSheetsRequest(BaseModel):
 
 from app.services.test_evaluation import get_test_evaluation_service
 from app.db.supabase_client import get_supabase
+from app.auth.dependencies import get_current_user_id
+from app.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,9 @@ async def upload_question_paper(
     test_title: str = Form(..., description="Test title"),
     test_type: str = Form(..., description="Test type (development, testing, devops, etc.)"),
     total_marks: float = Form(..., gt=0, description="Total marks for the test"),
-    user_id: str = Form(..., description="User ID"),
     duration_minutes: Optional[int] = Form(None, description="Test duration in minutes"),
-    model: Optional[str] = Form(None, description="LLM model to use")
+    model: Optional[str] = Form(None, description="LLM model to use"),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Upload and process a question paper.
@@ -65,7 +67,7 @@ async def upload_question_paper(
         result = await service.process_question_paper(
             file_data=file_data,
             filename=file.filename,
-            user_id=user_id,
+            user_id=current_user_id,
             test_title=test_title,
             test_type=test_type,
             total_marks=total_marks,
@@ -96,8 +98,8 @@ async def upload_answer_sheet(
     test_id: str = Form(..., description="Test ID"),
     candidate_name: str = Form(..., description="Candidate name"),
     candidate_email: Optional[str] = Form(None, description="Candidate email"),
-    user_id: Optional[str] = Form(None, description="User ID (optional)"),
-    model: Optional[str] = Form(None, description="LLM model to use")
+    model: Optional[str] = Form(None, description="LLM model to use"),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Upload and evaluate an answer sheet.
@@ -122,7 +124,7 @@ async def upload_answer_sheet(
             test_id=test_id,
             candidate_name=candidate_name,
             candidate_email=candidate_email,
-            user_id=user_id,
+            user_id=current_user_id,
             model=model
         )
 
@@ -145,7 +147,8 @@ async def upload_answer_sheet(
 )
 async def get_test_results(
     test_id: str,
-    limit: int = 100
+    limit: int = 100,
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Get all results for a test, ranked by score.
@@ -153,8 +156,17 @@ async def get_test_results(
     Returns list of answer sheets with scores, sorted by percentage (highest first).
     """
     try:
-        service = get_test_evaluation_service()
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
+        client = get_supabase()
+        # Verify test ownership
+        test_check = client.table("tests").select("id").eq("id", test_id).eq("created_by", current_internal_id).single().execute()
+        if not test_check.data:
+            raise HTTPException(status_code=404, detail="Test not found")
 
+        service = get_test_evaluation_service()
         results = await service.get_test_results(test_id=test_id, limit=limit)
 
         return TestResultsResponse(
@@ -176,7 +188,10 @@ async def get_test_results(
     response_model=TestStatistics,
     summary="Get statistics for a test"
 )
-async def get_test_statistics(test_id: str):
+async def get_test_statistics(
+    test_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """
     Get statistics for a test.
 
@@ -187,8 +202,17 @@ async def get_test_statistics(test_id: str):
     - Count of passed/failed candidates
     """
     try:
-        service = get_test_evaluation_service()
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
+        client = get_supabase()
+        # Verify test ownership
+        test_check = client.table("tests").select("id").eq("id", test_id).eq("created_by", current_internal_id).single().execute()
+        if not test_check.data:
+            raise HTTPException(status_code=404, detail="Test not found")
 
+        service = get_test_evaluation_service()
         stats = await service.get_test_statistics(test_id=test_id)
 
         return TestStatistics(
@@ -211,7 +235,8 @@ async def get_test_statistics(test_id: str):
 )
 async def get_test_details(
     test_id: str,
-    include_questions: bool = True
+    include_questions: bool = True,
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Get detailed information about a test.
@@ -219,10 +244,14 @@ async def get_test_details(
     Optionally includes all questions with answers.
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
 
         # Get test details
-        test_result = client.table("tests").select("*").eq("id", test_id).single().execute()
+        test_result = client.table("tests").select("*").eq("id", test_id).eq("created_by", current_internal_id).single().execute()
 
         if not test_result.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test not found")
@@ -259,7 +288,10 @@ async def get_test_details(
     response_model=EvaluationDetailResponse,
     summary="Get detailed evaluation for an answer sheet"
 )
-async def get_answer_sheet_evaluation(answer_sheet_id: str):
+async def get_answer_sheet_evaluation(
+    answer_sheet_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """
     Get detailed evaluation for a specific answer sheet.
 
@@ -269,12 +301,19 @@ async def get_answer_sheet_evaluation(answer_sheet_id: str):
     - Marks breakdown
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
 
-        # Get answer sheet details
+        # Get answer sheet details (verify ownership via test)
         sheet_result = client.table("answer_sheets").select(
-            "*"
+            "*, tests(created_by)"
         ).eq("id", answer_sheet_id).single().execute()
+
+        if not sheet_result.data or sheet_result.data.get('tests', {}).get('created_by') != current_internal_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer sheet not found")
 
         if not sheet_result.data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Answer sheet not found")
@@ -343,15 +382,20 @@ async def get_answer_sheet_evaluation(answer_sheet_id: str):
 async def list_tests(
     test_type: Optional[str] = None,
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     List all tests with optional filtering by type.
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
 
-        query = client.table("tests").select("*")
+        query = client.table("tests").select("*").eq("created_by", current_internal_id)
 
         if test_type:
             query = query.eq("test_type", test_type)
@@ -376,7 +420,8 @@ async def list_tests(
     summary="Delete multiple answer sheets"
 )
 async def delete_answer_sheets(
-    request: DeleteAnswerSheetsRequest = Body(...)
+    request: DeleteAnswerSheetsRequest = Body(...),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Delete multiple answer sheets by their IDs.
@@ -387,8 +432,20 @@ async def delete_answer_sheets(
     - Deletes uploaded answer sheet files from storage
     """
     try:
-        service = get_test_evaluation_service()
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
+        client = get_supabase()
+        
+        # Verify ownership of all requested sheets
+        if request.answer_sheet_ids:
+            check_result = client.table("answer_sheets").select("id, tests(created_by)").in_("id", request.answer_sheet_ids).execute()
+            for item in check_result.data:
+                if item.get('tests', {}).get('created_by') != current_internal_id:
+                    raise HTTPException(status_code=403, detail="Unauthorized to delete some answer sheets")
 
+        service = get_test_evaluation_service()
         result = await service.delete_answer_sheets(answer_sheet_ids=request.answer_sheet_ids)
 
         return {

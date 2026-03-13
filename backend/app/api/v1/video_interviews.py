@@ -29,11 +29,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/video-interviews", tags=["Video Interviews"])
 
 
-# Helper function to get current user (simplified - implement proper auth)
-async def get_current_user_id() -> str:
-    """Get current authenticated user ID. TODO: Implement proper auth."""
-    # This should be replaced with actual auth dependency
-    return "user-id-placeholder"
+from app.auth.dependencies import get_current_user_id
+from app.services.user_service import get_user_service
 
 
 @router.post(
@@ -61,6 +58,10 @@ async def schedule_interview(
     - **questions**: Optional pre-loaded interview questions
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(user_id)
+        
         service = get_video_interview_service()
 
         result = await service.schedule_interview(
@@ -77,7 +78,7 @@ async def schedule_interview(
                 }
                 for interviewer in request.interviewers
             ],
-            created_by=user_id,
+            created_by=current_internal_id,
             resume_id=request.resume_id,
             title=request.title,
             description=request.description,
@@ -121,10 +122,17 @@ async def list_interviews(
     - **page_size**: Items per page (default: 20)
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         # Build query
         query = client.table("video_interviews").select("*", count="exact")
+        
+        # Filter by owner
+        query = query.eq("created_by", current_internal_id)
 
         # Apply filters
         if status_filter:
@@ -171,11 +179,15 @@ async def get_interview(
     Includes participants, questions, and evaluations.
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(user_id)
+        
         service = get_video_interview_service()
 
         # Get interview
         interview = await service.get_interview_by_id(interview_id)
-        if not interview:
+        if not interview or interview["created_by"] != current_internal_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Interview not found"
@@ -221,6 +233,10 @@ async def update_interview(
 ):
     """Update interview details (scheduled time, duration, status)."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
         # Build update data
@@ -238,6 +254,7 @@ async def update_interview(
         result = client.table("video_interviews") \
             .update(update_data) \
             .eq("id", interview_id) \
+            .eq("created_by", current_internal_id) \
             .execute()
 
         if not result.data:
@@ -269,12 +286,17 @@ async def delete_interview(
 ):
     """Delete or cancel an interview."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
 
-        # Check if interview exists
+        # Check if interview exists and belongs to user
         result = client.table("video_interviews") \
             .select("*") \
             .eq("id", interview_id) \
+            .eq("created_by", current_internal_id) \
             .single() \
             .execute()
 
@@ -288,6 +310,7 @@ async def delete_interview(
         client.table("video_interviews") \
             .delete() \
             .eq("id", interview_id) \
+            .eq("created_by", current_internal_id) \
             .execute()
 
         return None
@@ -441,11 +464,26 @@ async def create_evaluation(
 ):
     """Create a human evaluation for an interview."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(user_id)
+        
         client = get_supabase()
+        
+        # Verify interview ownership
+        interview_check = client.table("video_interviews") \
+            .select("id") \
+            .eq("id", interview_id) \
+            .eq("created_by", current_internal_id) \
+            .single() \
+            .execute()
+            
+        if not interview_check.data:
+            raise HTTPException(status_code=404, detail="Interview not found")
 
         evaluation_data = {
             "video_interview_id": interview_id,
-            "evaluator_id": user_id,
+            "evaluator_id": current_internal_id,
             "evaluation_type": "human",
             "overall_score": request.overall_score,
             "communication_score": request.communication_score,

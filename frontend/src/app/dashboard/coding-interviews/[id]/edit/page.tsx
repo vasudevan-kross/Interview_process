@@ -26,6 +26,8 @@ import {
 } from 'lucide-react'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { getInterview, updateInterview, type Interview, type Question } from '@/lib/api/coding-interviews'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonPageHeader } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 
@@ -204,8 +206,8 @@ export default function EditInterviewPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      <div className="space-y-6 p-8">
+        <SkeletonPageHeader />
       </div>
     )
   }
@@ -223,18 +225,16 @@ export default function EditInterviewPage() {
   return (
     <div className="space-y-6 p-8">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => router.back()}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           Back
         </Button>
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            Edit Interview
-          </h1>
-          <p className="text-gray-600 mt-1">Update interview details, bond settings, and questions</p>
-        </div>
       </div>
+      <PageHeader
+        title="Edit Interview"
+        description="Update interview details, bond settings, and questions"
+      />
 
       {/* Basic Details */}
       <Card>
@@ -507,8 +507,7 @@ export default function EditInterviewPage() {
         <Button
           onClick={handleSave}
           disabled={saving}
-          className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
-        >
+          >
           {saving ? (
             <>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />

@@ -61,6 +61,7 @@ export interface CampaignCreateRequest {
     candidate_type?: 'fresher' | 'experienced' | 'general'
     interview_style?: 'structured' | 'adaptive' | 'conversational'
     knowledge_base_file_ids?: string[]
+    job_id?: string  // Link to job_descriptions for pipeline
 }
 
 // Candidate Types (Minimal - no hardcoded extracted fields)

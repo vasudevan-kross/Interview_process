@@ -5,7 +5,6 @@ Builds complete VAPI assistant configuration JSON from AI-generated prompts.
 """
 
 from typing import Dict, Any
-import os
 import logging
 
 from app.core.config import get_settings
@@ -49,70 +48,69 @@ class VAPIConfigBuilder:
         """
         logger.info(f"Building VAPI config for candidate type: {candidate_type}, style: {interview_style}")
 
-        # Get webhook URL from environment
-        frontend_url = self.settings.FRONTEND_URL or "http://localhost:3000"
-        backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-        webhook_url = f"{backend_url}/api/v1/voice-screening/webhook"
-
-        logger.debug(f"Webhook URL: {webhook_url}")
-
-        config = {
-            "name": f"Dynamic Interview - {candidate_type}",
+        # Build config for vapi.start() — inline assistant config (NOT server-created assistant)
+        # Do NOT include server-dependent tools (end_call, flag_concern) as they require
+        # a reachable webhook URL. Use VAPI's built-in endCallFunctionEnabled instead.
+        config: Dict[str, Any] = {
             "model": {
                 "provider": "openai",
                 "model": "gpt-4o-mini",
                 "temperature": 0.4,
-                "systemPrompt": system_prompt,
                 "messages": [
                     {
-                        "role": "assistant",
-                        "content": "Hi! Thank you for taking the time to speak with me today."
+                        "role": "system",
+                        "content": system_prompt
                     }
-                ]
+                ],
             },
             "voice": {
                 "provider": "11labs",
-                "voiceId": "z0gdR3nhVl1Ig2kiEigL",  # Custom voice
+                "voiceId": "nPczCjzI2devNBz1zQrb",
                 "model": "eleven_turbo_v2_5",
                 "stability": 0.5,
                 "similarityBoost": 0.8,
-                "style": 0.0,
-                "useSpeakerBoost": True
             },
             "firstMessage": "Hi! Thank you for taking the time to speak with me today. Let's get started with the interview.",
             "recordingEnabled": True,
             "maxDurationSeconds": 900,  # 15 minutes
-            "silenceTimeoutSeconds": 30,
-            "endCallPhrases": [
-                "goodbye",
-                "thank you bye",
-                "that's all",
-                "end interview"
-            ],
+            "silenceTimeoutSeconds": 60,  # 60s silence before auto-end (was 45, too aggressive)
             "transcriber": {
                 "provider": "deepgram",
                 "model": "nova-2",
-                "language": "en"
-            },
-            "server": {
-                "url": webhook_url,
-                "secret": self.settings.SECRET_KEY
+                "language": "en",
+                "endpointing": 500,  # Wait 500ms of silence before finalizing speech
             },
             "analysisPlan": {
                 "structuredDataPrompt": "You are an expert data extractor. Extract the structured data from this interview conversation per the JSON Schema. Focus on extracting accurate information discussed during the call. If information is unclear or not mentioned, use null values.",
                 "structuredDataSchema": self._build_analysis_schema(structured_data_schema)
-            }
+            },
+            # Use VAPI's built-in end call — no webhook needed
+            "endCallFunctionEnabled": True,
+            # Turn-taking: prevent AI from speaking over the candidate
+            "startSpeakingPlan": {
+                "waitSeconds": 1.8,
+                "smartEndpointingEnabled": True,
+            },
+            "stopSpeakingPlan": {
+                "numWords": 0,
+                "backoffSeconds": 1.0,
+            },
         }
 
-        # Note: knowledgeBase property has been removed from VAPI API.
-        # Knowledge base content should be embedded in the system prompt instead.
+        # Only include server/webhook block if BACKEND_URL is set and not localhost
+        backend_url = self.settings.BACKEND_URL
+        if backend_url and "localhost" not in backend_url and "127.0.0.1" not in backend_url:
+            webhook_url = f"{backend_url}/api/v1/voice-screening/webhook"
+            config["server"] = {
+                "url": webhook_url,
+                "secret": self.settings.SECRET_KEY
+            }
+            logger.info(f"Webhook URL: {webhook_url}")
+        else:
+            logger.warning("BACKEND_URL not set or is localhost — skipping server/webhook block. Post-call data will be fetched via API instead.")
+
         if knowledge_base_file_ids and len(knowledge_base_file_ids) > 0:
             logger.info(f"Knowledge base file IDs provided ({len(knowledge_base_file_ids)}) - content should be included in system prompt")
-
-        # Add function calling if enabled
-        if enable_functions:
-            config["functions"] = self._build_functions()
-            logger.info(f"✅ Added {len(config['functions'])} functions")
 
         logger.info(f"Built VAPI config with {len(structured_data_schema)} fields to extract")
         return config
@@ -160,46 +158,3 @@ class VAPIConfigBuilder:
 
         logger.debug(f"Built analysis schema with {len(required_fields)} required fields")
         return schema
-
-    def _build_functions(self) -> list:
-        """
-        Build VAPI function calling definitions.
-
-        Returns:
-            List of function definitions for VAPI
-        """
-        return [
-            {
-                "name": "end_call",
-                "description": "End the interview call when the candidate indicates they are done (e.g., says thank you, goodbye, no more questions, etc.)",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "reason": {
-                            "type": "string",
-                            "description": "Reason why the call is ending (e.g., candidate said goodbye, interview complete)"
-                        }
-                    },
-                    "required": ["reason"]
-                }
-            },
-            {
-                "name": "flag_concern",
-                "description": "Flag a concern or red flag during the interview (e.g., technical knowledge gap, communication issue)",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "concern_type": {
-                            "type": "string",
-                            "enum": ["technical_gap", "communication_issue", "attitude_concern", "other"],
-                            "description": "Type of concern"
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Description of the concern"
-                        }
-                    },
-                    "required": ["concern_type", "description"]
-                }
-            }
-        ]

@@ -8,6 +8,7 @@ import { FileUpload } from '@/components/ui/file-upload'
 import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
 import { Loader2, Upload, CheckCircle2, XCircle } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
 
 interface UploadResult {
   filename: string
@@ -51,7 +52,6 @@ export default function UploadResumesPage() {
       })
       formData.append('job_id', jobId)
 
-      // For batch upload
       const result = await apiClient.uploadMultipleResumes(formData)
 
       // Update results
@@ -59,7 +59,7 @@ export default function UploadResumesPage() {
 
       result.results?.forEach((res: any, index: number) => {
         updatedResults.push({
-          filename: resumeFiles[index].name,
+          filename: resumeFiles[index]?.name || res.filename,
           status: 'success',
           resume_id: res.resume_id,
           candidate_name: res.candidate_name,
@@ -82,7 +82,6 @@ export default function UploadResumesPage() {
         `Successfully processed ${result.total_processed} out of ${resumeFiles.length} resumes`
       )
 
-      // Navigate to results after a short delay
       setTimeout(() => {
         router.push(`/dashboard/resume-matching/${jobId}/candidates`)
       }, 2000)
@@ -102,32 +101,24 @@ export default function UploadResumesPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Clean Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 p-8 shadow-sm">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500">
-                <Upload className="h-5 w-5 text-white" />
-              </div>
-              <span className="text-sm font-medium text-muted-foreground">Candidate Upload</span>
-            </div>
-            <h1 className="text-4xl font-bold text-slate-900 mb-2">Upload Resumes</h1>
-            <p className="text-lg text-slate-600">
-              Upload multiple candidate resumes for AI-powered matching and ranking
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Upload Resumes"
+        description="Upload multiple candidate resumes for AI-powered matching and ranking."
+        backHref="/dashboard/resume-matching/jobs"
+      />
 
       {/* Upload Card */}
-      <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-all">
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500">
-              <Upload className="h-5 w-5 text-white" />
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-3">
+              <Upload className="h-5 w-5 text-slate-400" />
+              <CardTitle className="text-xl text-slate-900">Select Resume Files</CardTitle>
             </div>
-            <CardTitle className="text-xl text-slate-900">Select Resume Files</CardTitle>
+            <div className="flex gap-3">
+              <a href="/samples/resume-matching/sample_resume_john_doe.txt" download className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">Download Sample 1</a>
+              <a href="/samples/resume-matching/sample_resume_jane_smith.txt" download className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">Download Sample 2</a>
+            </div>
           </div>
           <CardDescription className="text-base">
             Upload multiple resumes in PDF, DOCX, TXT, or image formats. Our AI will extract information and calculate match scores automatically.
@@ -142,11 +133,11 @@ export default function UploadResumesPage() {
           />
 
           {resumeFiles.length > 0 && !loading && (
-            <div className="p-4 rounded-lg bg-purple-50 border border-purple-200">
-              <p className="text-sm font-medium text-purple-900 mb-1">
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-100">
+              <p className="text-sm font-medium text-slate-900 mb-1">
                 {resumeFiles.length} file{resumeFiles.length !== 1 ? 's' : ''} selected
               </p>
-              <p className="text-xs text-purple-700">
+              <p className="text-xs text-slate-500">
                 Ready to process and match against job requirements
               </p>
             </div>
@@ -157,7 +148,7 @@ export default function UploadResumesPage() {
               <Button
                 onClick={handleUpload}
                 disabled={loading}
-                className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700"
               >
                 {loading ? (
                   <>
@@ -185,12 +176,10 @@ export default function UploadResumesPage() {
 
       {/* Processing Card */}
       {loading && (
-        <Card className="border border-slate-200 shadow-sm bg-white">
+        <Card className="border border-slate-200 bg-white">
           <CardHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-lg bg-purple-100">
-                <Loader2 className="h-5 w-5 text-purple-600 animate-spin" />
-              </div>
+              <Loader2 className="h-5 w-5 text-slate-500 animate-spin" />
               <CardTitle className="text-xl text-slate-900">Processing Resumes</CardTitle>
             </div>
             <CardDescription className="text-base">
@@ -201,11 +190,11 @@ export default function UploadResumesPage() {
             <div className="space-y-4">
               <div className="relative h-3 bg-slate-100 rounded-full overflow-hidden">
                 <div
-                  className="absolute inset-y-0 left-0 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
+                  className="absolute inset-y-0 left-0 bg-indigo-500 rounded-full transition-all duration-500"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="text-sm text-center text-muted-foreground">
+              <p className="text-sm text-center text-slate-500">
                 This may take a few moments depending on the number of resumes
               </p>
             </div>
@@ -215,12 +204,10 @@ export default function UploadResumesPage() {
 
       {/* Results Card */}
       {uploadResults.length > 0 && (
-        <Card className="border border-slate-200 shadow-sm bg-white">
+        <Card className="border border-slate-200 bg-white">
           <CardHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-lg bg-green-100">
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-              </div>
+              <CheckCircle2 className="h-5 w-5 text-green-600" />
               <CardTitle className="text-xl text-slate-900">Upload Results</CardTitle>
             </div>
             <CardDescription className="text-base">
@@ -233,26 +220,22 @@ export default function UploadResumesPage() {
                 <div
                   key={index}
                   className={`flex items-center justify-between p-4 rounded-lg border transition-all ${result.status === 'success'
-                      ? 'bg-green-50 border-green-200 hover:border-green-300'
+                      ? 'bg-green-50 border-green-200'
                       : result.status === 'error'
-                        ? 'bg-red-50 border-red-200 hover:border-red-300'
+                        ? 'bg-red-50 border-red-200'
                         : 'bg-slate-50 border-slate-200'
                     }`}
                 >
                   <div className="flex items-center gap-3 flex-1">
                     <div className="flex-shrink-0">
                       {result.status === 'success' && (
-                        <div className="p-1.5 rounded-lg bg-green-600">
-                          <CheckCircle2 className="h-4 w-4 text-white" />
-                        </div>
+                        <CheckCircle2 className="h-5 w-5 text-green-600" />
                       )}
                       {result.status === 'error' && (
-                        <div className="p-1.5 rounded-lg bg-red-600">
-                          <XCircle className="h-4 w-4 text-white" />
-                        </div>
+                        <XCircle className="h-5 w-5 text-red-600" />
                       )}
                       {result.status === 'pending' && (
-                        <Loader2 className="h-5 w-5 animate-spin text-purple-600" />
+                        <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -261,7 +244,7 @@ export default function UploadResumesPage() {
                       </p>
                       {result.status === 'success' && result.match_score !== undefined && (
                         <div className="flex items-center gap-2 mt-1">
-                          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-600 text-white">
+                          <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
                             {(result.match_score || 0).toFixed(1)}% Match
                           </span>
                           <span className="text-xs text-slate-600">

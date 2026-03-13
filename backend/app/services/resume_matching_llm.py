@@ -13,8 +13,89 @@ import uuid
 
 from app.services.resume_parser_llm import get_resume_parser_llm
 from app.db.supabase_client import get_supabase
+from app.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
+
+
+# ── Deterministic skill matching helpers ───────────────────────────────────
+
+def _normalize_skill(skill: str) -> str:
+    """Normalize a skill string for comparison."""
+    return skill.strip().lower().replace('-', '').replace('.', '').replace(' ', '')
+
+
+def _skills_match(candidate_skill: str, required_skill: str) -> bool:
+    """Check if a candidate skill matches a required skill (fuzzy)."""
+    c = _normalize_skill(candidate_skill)
+    r = _normalize_skill(required_skill)
+    if not c or not r:
+        return False
+    # Exact
+    if c == r:
+        return True
+    # Substring (e.g. "react" matches "reactjs")
+    if c in r or r in c:
+        return True
+    # Common aliases
+    aliases = {
+        'js': 'javascript', 'ts': 'typescript', 'py': 'python',
+        'nodejs': 'node', 'reactjs': 'react', 'vuejs': 'vue',
+        'nextjs': 'next', 'expressjs': 'express', 'angularjs': 'angular',
+        'postgres': 'postgresql', 'mongo': 'mongodb', 'mssql': 'sqlserver',
+        'csharp': 'c#', 'cplusplus': 'c++', 'golang': 'go',
+        'k8s': 'kubernetes', 'tf': 'terraform',
+        'ml': 'machinelearning', 'ai': 'artificialintelligence',
+        'dl': 'deeplearning', 'nlp': 'naturallanguageprocessing',
+        'aws': 'amazonwebservices', 'gcp': 'googlecloudplatform',
+        'dotnet': 'net', 'aspnet': 'aspnetcore',
+    }
+    c_resolved = aliases.get(c, c)
+    r_resolved = aliases.get(r, r)
+    if c_resolved == r_resolved:
+        return True
+    if c_resolved in r_resolved or r_resolved in c_resolved:
+        return True
+    return False
+
+
+def compute_algorithmic_score(
+    candidate_skills: List[str],
+    required_skills: List[str],
+    years_of_experience: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Compute a deterministic match score from skill overlap + experience.
+
+    Scoring:
+      - Skill overlap ratio (0-100), weighted 90%
+      - Experience bonus: up to +10 points for 5+ years
+
+    Returns dict with score (0-100), matched skills, missing skills.
+    """
+    if not required_skills:
+        return {'score': None, 'matched': [], 'missing': []}
+
+    matched = []
+    missing = []
+
+    for req in required_skills:
+        found = any(_skills_match(cand, req) for cand in candidate_skills)
+        (matched if found else missing).append(req)
+
+    skill_ratio = len(matched) / len(required_skills)
+    skill_score = round(skill_ratio * 100)
+
+    exp_bonus = 0
+    if years_of_experience is not None:
+        exp_bonus = min(int(years_of_experience) * 2, 10)
+
+    return {
+        'score': min(skill_score + exp_bonus, 100),
+        'matched': matched,
+        'missing': missing,
+        'skill_ratio': round(skill_ratio, 2),
+    }
 
 
 class ResumeMatchingServiceLLM:
@@ -23,61 +104,13 @@ class ResumeMatchingServiceLLM:
     def __init__(self):
         self.parser = get_resume_parser_llm()
         self.client = get_supabase()
+        self.user_service = get_user_service()
 
     def _ensure_user_exists(self, user_id: str) -> str:
         """
         Ensure the user exists in the users table.
-        
-        The auth system returns the Supabase auth user ID, but the resumes
-        and job_descriptions tables have foreign keys to the users table.
-        This method checks if a user row exists (by id or auth_user_id) and
-        creates one if missing.
-        
-        Args:
-            user_id: The Supabase auth user ID
-            
-        Returns:
-            The users table ID to use for foreign keys
         """
-        try:
-            # First try to find user by id (exact match)
-            result = self.client.table('users').select('id').eq('id', user_id).execute()
-            if result.data:
-                return result.data[0]['id']
-            
-            # Try to find user by auth_user_id
-            result = self.client.table('users').select('id').eq('auth_user_id', user_id).execute()
-            if result.data:
-                return result.data[0]['id']
-            
-            # User doesn't exist - create a new record
-            logger.info(f"Auto-creating user record for auth user: {user_id}")
-            new_user = {
-                'id': user_id,
-                'email': f'user-{user_id[:8]}@placeholder.local',
-                'full_name': 'Auto-created User',
-                'auth_user_id': user_id
-            }
-            
-            # Try to get email from Supabase auth
-            try:
-                auth_response = self.client.auth.admin.get_user_by_id(user_id)
-                if auth_response and auth_response.user:
-                    new_user['email'] = auth_response.user.email or new_user['email']
-                    user_meta = auth_response.user.user_metadata or {}
-                    new_user['full_name'] = user_meta.get('full_name', user_meta.get('name', 'Auto-created User'))
-            except Exception as auth_err:
-                logger.debug(f"Could not fetch auth user details: {auth_err}")
-            
-            self.client.table('users').insert(new_user).execute()
-            logger.info(f"Created user record: {user_id}")
-            return user_id
-            
-        except Exception as e:
-            logger.error(f"Error ensuring user exists: {e}")
-            # If we can't create the user, still return the ID and let the
-            # original FK error surface if the insert fails
-            return user_id
+        return self.user_service.resolve_user_id(user_id)
 
     async def process_job_description(
         self,
@@ -181,7 +214,7 @@ Return ONLY the JSON object."""
                 'id': job_id,
                 'title': title,
                 'department': department,
-                'description': job_text[:5000],
+                'raw_text': job_text[:5000],
                 'file_path': filename,
                 'parsed_data': {
                     'required_skills': required_skills,
@@ -242,8 +275,8 @@ Return ONLY the JSON object."""
                 raise ValueError(f"Job description not found: {job_id}")
 
             job_data = job_result.data[0]
-            job_title = job_data.get('title', 'Unknown')
-            job_description = job_data.get('description', '')
+            job_title = job_data.get('title', 'Unknown') or 'Unknown'
+            job_description = job_data.get('description') or job_data.get('raw_text') or ''
 
             # Parse resume
             resume_data = await self.parser.parse_resume(file_data, filename)
@@ -255,11 +288,34 @@ Return ONLY the JSON object."""
             if not candidate_email:
                 candidate_email = parsed.get('email')
 
-            # Match with job
+            # Match with job (LLM qualitative analysis)
             match_result = await self.parser.match_with_job(
                 resume_data=resume_data,
                 job_description=job_description,
                 job_title=job_title
+            )
+
+            # ── Hybrid scoring: algorithmic (60%) + LLM (40%) ──────────────
+            # Algorithmic score from skill overlap (deterministic)
+            job_required_skills = (job_data.get('parsed_data') or {}).get('required_skills', [])
+            candidate_skills = parsed.get('skills', [])
+            algo = compute_algorithmic_score(
+                candidate_skills=candidate_skills,
+                required_skills=job_required_skills,
+                years_of_experience=parsed.get('years_of_experience'),
+            )
+
+            llm_score = match_result.get('match_score', 0)
+            if algo['score'] is not None:
+                # Blend: 60% algorithmic + 40% LLM
+                match_score = round(algo['score'] * 0.6 + llm_score * 0.4)
+            else:
+                # No required_skills extracted — fall back to LLM score only
+                match_score = llm_score
+
+            logger.info(
+                f"Hybrid score for {candidate_name}: algo={algo['score']} llm={llm_score} final={match_score} "
+                f"(matched {len(algo['matched'])}/{len(job_required_skills)} skills)"
             )
 
             # Ensure user exists in the users table
@@ -268,11 +324,31 @@ Return ONLY the JSON object."""
             # Store in database
             resume_id = str(uuid.uuid4())
 
+            # Derive recommendation deterministically from final score
+            if match_score >= 80:
+                deterministic_recommendation = 'Strong recommend'
+            elif match_score >= 65:
+                deterministic_recommendation = 'Recommend'
+            elif match_score >= 50:
+                deterministic_recommendation = 'Consider'
+            else:
+                deterministic_recommendation = 'Not recommended'
+
+            # Use algorithmic matched/missing skills when available, fall back to LLM
+            algo_matched = algo['matched'] if algo['score'] is not None else []
+            algo_missing = algo['missing'] if algo['score'] is not None else []
+
             # Build skill_match for frontend (maps LLM match fields to frontend schema)
             skill_match = {
-                'key_matches': match_result.get('matching_skills', []) or match_result.get('strengths', []),
-                'missing_requirements': match_result.get('missing_skills', []) or match_result.get('weaknesses', []),
-                'reasoning': match_result.get('reasoning', match_result.get('overall_assessment', ''))
+                'key_matches': algo_matched or match_result.get('matching_skills', []) or match_result.get('strengths', []),
+                'missing_requirements': algo_missing or match_result.get('missing_skills', []) or match_result.get('weaknesses', []),
+                'reasoning': match_result.get('reasoning', match_result.get('overall_assessment', '')),
+                'recommendation': deterministic_recommendation,
+                'overall_assessment': match_result.get('overall_assessment', ''),
+                'experience_match': match_result.get('experience_match', ''),
+                'education_match': match_result.get('education_match', ''),
+                'strengths': match_result.get('strengths', []),
+                'weaknesses': match_result.get('weaknesses', []),
             }
 
             # Build parsed_data with skills_extracted sub-object for frontend
@@ -296,22 +372,23 @@ Return ONLY the JSON object."""
 
             resume_db_data = {
                 'id': resume_id,
-                'job_description_id': job_id,  # Correct column name
+                'job_description_id': job_id,
                 'candidate_name': candidate_name,
                 'candidate_email': candidate_email,
-                'file_path': filename,  # Store filename in file_path
+                'candidate_phone': parsed.get('phone'),
+                'file_path': filename,
                 'parsed_data': parsed_data_for_db,
-                'match_score': match_result.get('match_score', 0),
-                'skill_match': skill_match,  # Frontend reads this directly
-                'raw_text': resume_data.get('raw_text', ''),  # Frontend reads this directly
-                'llm_analysis': json.dumps(match_result),  # Full LLM analysis as JSON string
-                'uploaded_by': db_user_id,  # Use verified user ID
+                'match_score': match_score,
+                'skill_match': skill_match,
+                'experience_match': match_result.get('experience_match', ''),
+                'raw_text': resume_data.get('raw_text', ''),
+                'uploaded_by': db_user_id,
                 'created_at': datetime.now().isoformat()
             }
 
             self.client.table('resumes').insert(resume_db_data).execute()
 
-            logger.info(f"Processed resume: {resume_id} - {candidate_name} - Score: {match_result.get('match_score', 0)}")
+            logger.info(f"Processed resume: {resume_id} - {candidate_name} - Score: {match_score}")
 
             # Return in format matching ResumeResponse schema
             return {
@@ -326,7 +403,7 @@ Return ONLY the JSON object."""
                     'languages': [],
                     'certifications': []
                 },
-                'match_score': match_result.get('match_score', 0),
+                'match_score': match_score,
                 'match_details': match_result,
                 'file_info': {
                     'filename': filename,
@@ -389,7 +466,7 @@ Return ONLY the JSON object."""
                 logger.error(f"Failed to process {filename}: {e}")
                 failed.append({
                     'filename': filename,
-                    'candidate_name': candidate_name,
+                    'candidate_name': candidate_name or "Unknown",
                     'error': str(e)
                 })
 
@@ -419,14 +496,23 @@ Return ONLY the JSON object."""
     async def get_ranked_candidates(
         self,
         job_id: str,
+        user_id: str,
         limit: int = 50,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
         """Get all candidates for a job, ranked by match score."""
         try:
+            db_user_id = self._ensure_user_exists(user_id)
+            
+            # Verify job ownership first
+            job_check = self.client.table('job_descriptions').select('id').eq('id', job_id).eq('created_by', db_user_id).execute()
+            if not job_check.data:
+                logger.warning(f"Ownership check failed for job {job_id} by user {db_user_id}")
+                return []
+
             result = self.client.table('resumes').select('*').eq(
-                'job_description_id', job_id  # Correct column name
-            ).order('match_score', desc=True).limit(limit).offset(offset).execute()
+                'job_description_id', job_id
+            ).eq('uploaded_by', db_user_id).order('match_score', desc=True).limit(limit).offset(offset).execute()
 
             # Transform database rows to match CandidateInfo schema
             candidates = []
@@ -449,6 +535,9 @@ Return ONLY the JSON object."""
                     'certifications': []
                 })
 
+                # Extract recommendation info from skill_match (stored during processing)
+                skill_match = row.get('skill_match') or {}
+
                 candidates.append({
                     'id': row['id'],
                     'candidate_name': row.get('candidate_name') or 'Unknown',  # Handle None
@@ -456,6 +545,11 @@ Return ONLY the JSON object."""
                     'match_score': float(row.get('match_score', 0)) if row.get('match_score') else None,
                     'match_details': match_details,
                     'skills_extracted': skills_extracted,
+                    'recommendation': skill_match.get('recommendation') or (match_details or {}).get('recommendation', ''),
+                    'overall_assessment': skill_match.get('overall_assessment') or (match_details or {}).get('overall_assessment', ''),
+                    'experience_match': skill_match.get('experience_match') or (match_details or {}).get('experience_match', ''),
+                    'key_matches': skill_match.get('key_matches', []),
+                    'missing_requirements': skill_match.get('missing_requirements', []),
                     'created_at': row.get('created_at')
                 })
 
@@ -465,52 +559,12 @@ Return ONLY the JSON object."""
             logger.error(f"Error getting ranked candidates: {e}")
             raise
 
-    async def get_job_statistics(self, job_id: str) -> Dict[str, Any]:
-        """Get statistics for a job posting."""
-        try:
-            # Get all resumes for this job
-            resumes_result = self.client.table('resumes').select('*').eq(
-                'job_description_id', job_id  # Correct column name
-            ).execute()
-
-            resumes = resumes_result.data or []
-            total_resumes = len(resumes)
-
-            if total_resumes == 0:
-                return {
-                    'total_resumes': 0,
-                    'average_score': 0,
-                    'top_score': 0,
-                    'lowest_score': 0,
-                    'score_distribution': {
-                        'strong': 0,
-                        'good': 0,
-                        'weak': 0
-                    }
-                }
-
-            # Calculate statistics
-            scores = [r.get('match_score', 0) for r in resumes]
-            average_score = sum(scores) / len(scores) if scores else 0
-            top_score = max(scores) if scores else 0
-            bottom_score = min(scores) if scores else 0
-
-            # Count match categories
-            strong_matches = len([s for s in scores if s >= 80])
-            good_matches = len([s for s in scores if 60 <= s < 80])
-            weak_matches = len([s for s in scores if s < 60])
-
-            # Return in format matching JobStatistics schema
             return {
-                'total_resumes': total_resumes,
-                'average_score': round(average_score, 2),  # Changed from average_match_score
-                'top_score': top_score,
-                'lowest_score': bottom_score,  # Changed from bottom_score
-                'score_distribution': {  # Group match categories into score_distribution
-                    'strong': strong_matches,  # >= 80
-                    'good': good_matches,      # 60-79
-                    'weak': weak_matches       # < 60
-                }
+                "total_resumes": len(resumes),
+                "average_score": round(sum(scores) / len(scores), 2) if scores else 0,
+                "top_score": max(scores) if scores else 0,
+                "lowest_score": min(scores) if scores else 0,
+                "score_distribution": score_ranges
             }
 
         except Exception as e:
@@ -525,10 +579,11 @@ Return ONLY the JSON object."""
 
             for resume_id in resume_ids:
                 try:
-                    # Delete the resume directly (user is already authenticated at API layer)
+                    db_user_id = self._ensure_user_exists(user_id)
+                    # Delete the resume with ownership check
                     result = self.client.table('resumes').delete().eq(
                         'id', resume_id
-                    ).execute()
+                    ).eq('uploaded_by', db_user_id).execute()
 
                     if result.data and len(result.data) > 0:
                         deleted_count += 1
@@ -588,38 +643,41 @@ Return ONLY the JSON object."""
             logger.error(f"Error deleting job description {job_id}: {e}")
             raise
 
-    async def get_job_description(self, job_id: str) -> Dict[str, Any]:
+    async def get_job_description(self, job_id: str, user_id: str) -> Dict[str, Any]:
         """
-        Get job description details by ID.
+        Get job description details by ID with ownership check.
 
         Args:
             job_id: Job description ID
+            user_id: User ID
 
         Returns:
             dict with job description details including raw_text
         """
         try:
-            result = self.client.table("job_descriptions").select("*").eq("id", job_id).single().execute()
+            db_user_id = self._ensure_user_exists(user_id)
+            result = self.client.table("job_descriptions").select("*").eq("id", job_id).eq("created_by", db_user_id).single().execute()
             if not result.data:
-                raise ValueError(f"Job description with ID {job_id} not found")
+                raise ValueError(f"Job description with ID {job_id} not found or access denied")
             return result.data
         except Exception as e:
             logger.error(f"Error getting job description: {e}")
             raise
 
-    async def get_job_statistics(self, job_id: str) -> Dict[str, Any]:
+    async def get_job_statistics(self, job_id: str, user_id: str) -> Dict[str, Any]:
         """
         Get statistics for a job posting.
 
         Args:
             job_id: Job description ID
+            user_id: User ID (for authentication)
 
         Returns:
             dict with statistics
         """
         try:
             # Get all resumes for this job
-            resumes = await self.get_ranked_candidates(job_id, limit=1000)
+            resumes = await self.get_ranked_candidates(job_id, user_id, limit=1000)
 
             if not resumes:
                 return {

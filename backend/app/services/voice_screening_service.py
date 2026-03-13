@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.db.supabase_client import get_supabase
 from app.config import settings
+from app.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +18,11 @@ class VoiceScreeningService:
 
     def __init__(self):
         self.client = get_supabase()
+        self.user_service = get_user_service()
 
     def _generate_token(self) -> str:
-        """Generate a unique interview token."""
-        return str(uuid.uuid4())[:12]
+        """Generate a unique interview token (12 chars)."""
+        return uuid.uuid4().hex[:12]
 
     async def create_candidate(
         self,
@@ -38,6 +40,7 @@ class VoiceScreeningService:
         - If campaign_id provided: Uses campaign's dynamic VAPI config
         - If campaign_id is None: Uses static VAPI_ASSISTANT_ID (legacy workflow)
         """
+        user_id = self.user_service.resolve_user_id(user_id)
         token = self._generate_token()
 
         data = {
@@ -64,6 +67,7 @@ class VoiceScreeningService:
         user_id: str
     ) -> dict:
         """Bulk create voice screening candidates."""
+        user_id = self.user_service.resolve_user_id(user_id)
         records = []
         for c in candidates:
             records.append({
@@ -91,6 +95,7 @@ class VoiceScreeningService:
         status_filter: Optional[str] = None
     ) -> dict:
         """List voice candidates created by a specific user."""
+        user_id = self.user_service.resolve_user_id(user_id)
         query = (
             self.client.table("voice_candidates")
             .select("*")
@@ -126,6 +131,7 @@ class VoiceScreeningService:
 
     async def get_candidate_by_id(self, candidate_id: str, user_id: str) -> dict:
         """Get candidate by ID (requires ownership)."""
+        user_id = self.user_service.resolve_user_id(user_id)
         result = (
             self.client.table("voice_candidates")
             .select("*")
@@ -230,8 +236,20 @@ class VoiceScreeningService:
             "call_id", call_id
         ).execute()
 
+        # Sync to pipeline if candidate exists there
+        try:
+            from app.services.pipeline_service import get_pipeline_service
+            pipeline = get_pipeline_service()
+            # Find the voice_candidate id for this call
+            vc_result = self.client.table("voice_candidates").select("id").eq("call_id", call_id).execute()
+            if vc_result.data:
+                pipeline.sync_voice_results(vc_result.data[0]["id"], update_data.get("status", "completed"))
+        except Exception as pe:
+            logger.debug(f"Pipeline sync skipped: {pe}")
+
     async def delete_candidate(self, candidate_id: str, user_id: str):
         """Delete a candidate."""
+        user_id = self.user_service.resolve_user_id(user_id)
         result = (
             self.client.table("voice_candidates")
             .delete()
@@ -247,6 +265,7 @@ class VoiceScreeningService:
 
     async def export_to_excel(self, user_id: str) -> bytes:
         """Export all completed candidates to Excel."""
+        user_id = self.user_service.resolve_user_id(user_id)
         import pandas as pd
 
         result = (

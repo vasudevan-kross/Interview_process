@@ -1,0 +1,12 @@
+Senior Backend Engineer
+
+About the Role:
+We are looking for an experienced Senior Backend Engineer to join our core scalable infrastructure team. You will be responsible for designing, building, and maintaining high-performance REST APIs and microservices.
+
+Requirements:
+- 5+ years of experience in backend development.
+- Strong proficiency in Python and FastAPI.
+- Deep understanding of relational databases (PostgreSQL preferred).
+- Experience with Docker, Kubernetes, and CI/CD pipelines.
+- Knowledge of system architecture and scalable design patterns.
+- Excellent communication skills and ability to mentor junior engineers.

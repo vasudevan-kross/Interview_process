@@ -28,6 +28,8 @@ import {
   Trash2,
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonPageHeader, SkeletonTable } from '@/components/ui/skeleton'
 import { getInterview, listSubmissions, evaluateAllSubmissions, exportSubmissions, deleteSubmission, type Interview, type Submission } from '@/lib/api/coding-interviews'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { toast } from 'sonner'
@@ -74,21 +76,54 @@ export default function SubmissionsPage() {
   const handleEvaluateAll = async () => {
     try {
       setEvaluating(true)
-      toast.loading('Evaluating all submissions...', { id: 'bulk-eval' })
+      toast.loading('Starting evaluation...', { id: 'bulk-eval' })
 
       const result = await evaluateAllSubmissions(interviewId)
 
-      toast.success(
-        `Successfully evaluated ${result.evaluated} out of ${result.total} submissions${result.failed > 0 ? `. ${result.failed} failed.` : ''
-        }`,
-        { id: 'bulk-eval' }
-      )
+      if (result.status === 'processing') {
+        toast.info(
+          `Evaluation started for ${result.total} submissions. Viewing progress...`,
+          { id: 'bulk-eval', duration: 4000 }
+        )
 
-      // Refresh submissions to show updated scores
-      await fetchData()
+        // Start polling for 2 minutes or until all done
+        let attempts = 0
+        const maxAttempts = 12 // 12 * 10s = 2 minutes
+
+        const pollInterval = setInterval(async () => {
+          attempts++
+          try {
+            const submissionsData = await listSubmissions(interviewId)
+            const subs = submissionsData.submissions
+            setSubmissions(subs)
+
+            const stillEvaluating = subs.some(s => s.status === 'submitted' || s.status === 'auto_submitted')
+
+            if (!stillEvaluating || attempts >= maxAttempts) {
+              clearInterval(pollInterval)
+              setEvaluating(false)
+              if (!stillEvaluating) {
+                toast.success('Evaluation complete', { id: 'bulk-eval' })
+              } else {
+                toast.info('Evaluation is taking longer than expected. Please refresh later.', { id: 'bulk-eval' })
+              }
+            }
+          } catch (e) {
+            console.error('Polling failed:', e)
+            clearInterval(pollInterval)
+            setEvaluating(false)
+          }
+        }, 10000)
+      } else {
+        toast.success(
+          result.total === 0 ? 'No submissions to evaluate' : `Evaluated ${result.evaluated} submission(s)`,
+          { id: 'bulk-eval' }
+        )
+        await fetchData()
+        setEvaluating(false)
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to evaluate submissions', { id: 'bulk-eval' })
-    } finally {
       setEvaluating(false)
     }
   }
@@ -123,15 +158,21 @@ export default function SubmissionsPage() {
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
-      in_progress: 'bg-blue-100 text-blue-800',
-      submitted: 'bg-green-100 text-green-800',
-      auto_submitted: 'bg-yellow-100 text-yellow-800',
-      abandoned: 'bg-red-100 text-red-800',
+      in_progress: 'bg-blue-50 text-blue-700 border border-blue-200 rounded-md',
+      submitted: 'bg-amber-50 text-amber-700 border border-amber-200 rounded-md',
+      auto_submitted: 'bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-md',
+      evaluated: 'bg-green-50 text-green-700 border border-green-200 rounded-md',
+      abandoned: 'bg-red-50 text-red-700 border border-red-200 rounded-md',
+    }
+
+    const label: Record<string, string> = {
+      submitted: evaluating ? 'EVALUATING...' : 'SUBMITTED',
+      auto_submitted: evaluating ? 'EVALUATING...' : 'AUTO-SUBMITTED',
     }
 
     return (
       <Badge className={variants[status] || variants.submitted}>
-        {status.replace('_', ' ').toUpperCase()}
+        {label[status] || status.replace('_', ' ').toUpperCase()}
       </Badge>
     )
   }
@@ -147,7 +188,8 @@ export default function SubmissionsPage() {
       ? submissions.reduce((sum, s) => sum + (s.percentage || 0), 0) / submissions.length
       : 0
 
-  const completedCount = submissions.filter((s) => s.status === 'submitted' || s.status === 'auto_submitted').length
+  const completedCount = submissions.filter((s) => s.status === 'submitted' || s.status === 'auto_submitted' || s.status === 'evaluated').length
+  const pendingEvaluationCount = submissions.filter((s) => s.status === 'submitted' || s.status === 'auto_submitted').length
   const suspiciousCount = submissions.filter((s) => s.suspicious_activity).length
 
   const scoreDistribution = useMemo(() => {
@@ -174,70 +216,64 @@ export default function SubmissionsPage() {
   return (
     <div className="space-y-6 p-8">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => router.back()}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           Back
         </Button>
-        <div className="flex-1">
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            Submissions
-          </h1>
-          {interview && (
-            <p className="text-gray-600 mt-1">
-              {interview.title} - {format(new Date(interview.scheduled_start_time), 'MMM dd, yyyy')}
-            </p>
-          )}
-        </div>
       </div>
+      <PageHeader
+        title="Submissions"
+        description={interview ? `${interview.title} — ${format(new Date(interview.scheduled_start_time), 'MMM dd, yyyy')}` : 'Review candidate submissions and evaluations'}
+      />
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card className="border-l-4 border-l-blue-500">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        <Card className="border border-slate-200 bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Total Submissions
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium text-slate-500">Total Submissions</CardTitle>
+              <Users className="h-4 w-4 text-slate-300" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{submissions.length}</div>
+            <div className="text-2xl font-semibold tabular-nums text-slate-900">{submissions.length}</div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-green-500">
+        <Card className="border border-slate-200 bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Completed
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium text-slate-500">Completed</CardTitle>
+              <Clock className="h-4 w-4 text-slate-300" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{completedCount}</div>
+            <div className="text-2xl font-semibold tabular-nums text-slate-900">{completedCount}</div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-purple-500">
+        <Card className="border border-slate-200 bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-              <Award className="h-4 w-4" />
-              Average Score
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium text-slate-500">Average Score</CardTitle>
+              <Award className="h-4 w-4 text-slate-300" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{averageScore.toFixed(1)}%</div>
+            <div className="text-2xl font-semibold tabular-nums text-slate-900">{averageScore.toFixed(1)}%</div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-red-500">
+        <Card className="border border-slate-200 bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />
-              Flagged
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium text-slate-500">Flagged</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-slate-300" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{suspiciousCount}</div>
+            <div className="text-2xl font-semibold tabular-nums text-slate-900">{suspiciousCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -279,7 +315,7 @@ export default function SubmissionsPage() {
               <Button
                 variant="outline"
                 onClick={handleExport}
-                disabled={exporting || loading || completedCount === 0}
+                disabled={exporting || loading || submissions.length === 0}
               >
                 {exporting ? (
                   <>
@@ -295,8 +331,7 @@ export default function SubmissionsPage() {
               </Button>
               <Button
                 onClick={handleEvaluateAll}
-                disabled={evaluating || loading || completedCount === 0}
-                className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                disabled={evaluating || loading || submissions.length === 0}
               >
                 {evaluating ? (
                   <>
@@ -325,14 +360,14 @@ export default function SubmissionsPage() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-            </div>
+            <SkeletonTable rows={5} cols={7} />
           ) : filteredSubmissions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Users className="h-12 w-12 text-gray-300 mb-4" />
-              <p className="text-gray-500 text-center">
-                {searchQuery ? 'No submissions found matching your search' : 'No submissions yet'}
+            <div className="py-16 text-center">
+              <p className="text-sm font-medium text-slate-900 mb-1">
+                {searchQuery ? 'No submissions found' : 'No submissions yet'}
+              </p>
+              <p className="text-sm text-slate-400 mb-4">
+                {searchQuery ? 'Try adjusting your search.' : 'Submissions will appear here once candidates complete the interview.'}
               </p>
             </div>
           ) : (

@@ -1,0 +1,17 @@
+COMPANY KNOWLEDGE BASE - TechNova Inc.
+
+Welcome to the TechNova Inc. automated screening process! Here is some information about the company that you may need when candidates ask questions.
+
+1. Company History: techNova was founded in 2012 by Alice Springs. We specialize in B2B enterprise software solutions for supply chain management. We have offices in New York, London, and Tokyo.
+
+2. Benefits & Perks: 
+- We offer competitive salaries, equity options, and comprehensive health insurance.
+- Employees get 4 weeks of paid time off per year, plus public holidays.
+- We support remote work globally.
+- We have a $1,000 annual budget for professional development, courses, and conferences.
+
+3. Culture: 
+We value transparency, continuous learning, and a blame-free post-mortem culture. We strive to maintain a healthy work-life balance and do not tolerate "crunch time" schedules. Our core engineering hours are 10 AM to 3 PM EST.
+
+4. The Interview Process:
+After this initial voice screening, successful candidates will be invited to a 60-minute technical interview covering algorithms, system design, and a paired programming exercise. Finally, there is a 30-minute culture-fit interview with an engineering director. The entire process takes about 2 weeks from start to finish.

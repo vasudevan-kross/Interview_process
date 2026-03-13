@@ -1,0 +1,8 @@
+Candidate: Bob Williams
+
+Answers
+1. InnoDB handles data safer.
+2. OOP is about dividing code into classes like Car or Person. You can inherit variables.
+3. Hash tables are fast. Binary trees are slower but sorted.
+4. TCP is reliable, UDP is not. TCP is used for emails.
+5. I would use a MySQL database and store the long URL and a short random string. If the short string exists, I generate a new one.

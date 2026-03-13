@@ -33,6 +33,7 @@ class InterviewCreate(BaseModel):
     require_signature: bool = False  # Whether signature is required
     bond_years: int = 2  # Number of years for bond
     bond_timing: str = 'before_submission'  # 'before_start' | 'before_submission'
+    job_id: Optional[str] = None  # Link to job_descriptions for pipeline
     questions: List[QuestionCreate]
 
 

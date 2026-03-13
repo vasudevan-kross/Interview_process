@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,16 +30,17 @@ import {
   Upload,
   File,
   CheckCircle2,
+  ArrowLeft,
 } from 'lucide-react'
 import { createInterview, generateQuestions, generateShareableLink, extractQuestionsFromDocument, type Question } from '@/lib/api/coding-interviews'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
+import { PageHeader } from '@/components/ui/page-header'
 import { toast } from 'sonner'
 
 /**
  * Convert a datetime-local string (treated as LOCAL time) to an ISO 8601
  * string with the browser's UTC offset, so the server stores the correct
  * wall-clock time rather than silently subtracting the UTC offset.
- * Example (IST = UTC+5:30): "2025-03-09T16:00" → "2025-03-09T16:00:00+05:30"
  */
 function localToIso(datetimeLocal: string): string {
   if (!datetimeLocal) return ''
@@ -58,6 +59,8 @@ function localToIso(datetimeLocal: string): string {
 
 export default function CreateInterviewPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const pipelineJobId = searchParams.get('job_id')
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -73,28 +76,27 @@ export default function CreateInterviewPage() {
   const [programmingLanguage, setProgrammingLanguage] = useState('python')
   const [interviewType, setInterviewType] = useState('coding')
   const [testFramework, setTestFramework] = useState('selenium-python')
-  const [domainTool, setDomainTool] = useState('')  // Generic tool/dialect for non-coding/testing domains
+  const [domainTool, setDomainTool] = useState('')
   const [resumeRequired, setResumeRequired] = useState<'mandatory' | 'optional' | 'disabled'>('mandatory')
 
   // Bond/Terms fields
   const [bondTerms, setBondTerms] = useState('')
   const [bondDocumentUrl, setBondDocumentUrl] = useState('')
-  const [requireSignature, setRequireSignature] = useState(true)  // Default to checked
-  const [bondYears, setBondYears] = useState<string>('2')  // Use string to allow clearing
+  const [requireSignature, setRequireSignature] = useState(true)
+  const [bondYears, setBondYears] = useState<string>('2')
   const [bondTiming, setBondTiming] = useState<'before_start' | 'before_submission'>('before_submission')
   const [bondDocumentFile, setBondDocumentFile] = useState<File | null>(null)
 
   // AI Generation
   const [jobDescription, setJobDescription] = useState('')
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium')
-  const [numQuestions, setNumQuestions] = useState<string>('3')  // Use string to allow clearing
-  const [totalMarks, setTotalMarks] = useState<string>('100')  // Use string to allow clearing
+  const [numQuestions, setNumQuestions] = useState<string>('3')
+  const [totalMarks, setTotalMarks] = useState<string>('100')
 
   // Questions
   const [questions, setQuestions] = useState<Question[]>([])
   const [shareableLink, setShareableLink] = useState('')
 
-  // Helper: calculate available interview minutes from start/end time
   const getAvailableMinutes = () => {
     if (!scheduledStartTime || !scheduledEndTime) return 0
     const start = new Date(scheduledStartTime).getTime()
@@ -102,7 +104,6 @@ export default function CreateInterviewPage() {
     return Math.max(0, Math.floor((end - start) / 60000))
   }
 
-  // Distribute time and marks evenly across questions
   const distributeTimeAndMarks = (qs: Question[]): Question[] => {
     if (qs.length === 0) return qs
     const availableMinutes = getAvailableMinutes()
@@ -117,7 +118,6 @@ export default function CreateInterviewPage() {
     }))
   }
 
-  // Redistribute marks when total marks changes
   const handleTotalMarksChange = (newTotal: string) => {
     setTotalMarks(newTotal)
     const totalNum = parseInt(newTotal) || 0
@@ -149,7 +149,6 @@ export default function CreateInterviewPage() {
         interview_type: interviewType,
       })
 
-      // Auto-switch interview type if backend detected a different role
       if (response.detected_type && response.detected_type !== interviewType) {
         setInterviewType(response.detected_type)
         toast.info(`Detected a ${response.detected_type} role from your job description — generated ${response.detected_type} questions instead.`)
@@ -167,13 +166,11 @@ export default function CreateInterviewPage() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
-      // Validate file type
       const validTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv']
       if (!validTypes.includes(file.type) && !file.name.match(/\.(pdf|docx|doc|jpg|jpeg|png|xlsx|csv)$/i)) {
         toast.error('Please upload a PDF, Word, Image, Excel, or CSV file')
         return
       }
-
       setUploadedFile(file)
     }
   }
@@ -240,7 +237,6 @@ export default function CreateInterviewPage() {
   }
 
   const handleCreateInterview = async () => {
-    // Validation
     if (!title.trim()) {
       toast.error('Please enter interview title')
       return
@@ -250,7 +246,6 @@ export default function CreateInterviewPage() {
       return
     }
 
-    // Validate end time is after start time
     const startTime = new Date(scheduledStartTime)
     const endTime = new Date(scheduledEndTime)
     if (endTime <= startTime) {
@@ -265,12 +260,11 @@ export default function CreateInterviewPage() {
 
     try {
       setLoading(true)
-      // Determine the correct language/tool to store based on interview type
       const effectiveLanguage = interviewType === 'testing'
         ? testFramework
         : (['devops', 'sql', 'system_design', 'data_science', 'fullstack'].includes(interviewType)
           ? (domainTool || interviewType)
-          : programmingLanguage)  // 'any' is sent as-is — no fallback to 'python'
+          : programmingLanguage)
 
       const response = await createInterview({
         title,
@@ -287,8 +281,16 @@ export default function CreateInterviewPage() {
         require_signature: requireSignature,
         bond_years: parseInt(bondYears) || 2,
         bond_timing: bondTiming,
+        job_id: pipelineJobId || undefined,
         questions,
       })
+
+      // If created from pipeline, navigate back to pipeline
+      if (pipelineJobId) {
+        toast.success('Assessment created! Returning to pipeline...')
+        router.push('/dashboard/pipeline')
+        return
+      }
 
       const link = generateShareableLink(response.access_token)
       setShareableLink(link)
@@ -311,21 +313,22 @@ export default function CreateInterviewPage() {
     window.open(whatsappUrl, '_blank')
   }
 
+  // ── Success screen ──────────────────────────────────────────────────────────
   if (shareableLink) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-8">
-        <Card className="max-w-2xl w-full">
-          <CardHeader className="text-center">
-            <div className="mx-auto w-12 h-12 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full flex items-center justify-center mb-4">
-              <Code className="h-6 w-6 text-white" />
+      <div className="max-w-lg mx-auto py-16 px-4">
+        <Card className="border border-slate-200 bg-white">
+          <CardHeader className="text-center pb-4">
+            <div className="mx-auto w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center mb-4">
+              <CheckCircle2 className="h-6 w-6 text-white" />
             </div>
-            <CardTitle className="text-2xl">Interview Created Successfully!</CardTitle>
-            <CardDescription>Share this link with candidates</CardDescription>
+            <CardTitle className="text-xl">Interview Created!</CardTitle>
+            <CardDescription>Share this link with your candidates</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <p className="text-sm text-gray-600 mb-2">Shareable Link:</p>
-              <p className="font-mono text-sm break-all">{shareableLink}</p>
+            <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <p className="text-xs font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Shareable Link</p>
+              <p className="font-mono text-sm break-all text-slate-800">{shareableLink}</p>
             </div>
 
             <div className="flex gap-2">
@@ -335,7 +338,7 @@ export default function CreateInterviewPage() {
               </Button>
               <Button onClick={handleShareWhatsApp} variant="outline" className="flex-1">
                 <Share2 className="mr-2 h-4 w-4" />
-                Share on WhatsApp
+                WhatsApp
               </Button>
             </div>
 
@@ -344,6 +347,7 @@ export default function CreateInterviewPage() {
               variant="outline"
               className="w-full"
             >
+              <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Interviews
             </Button>
           </CardContent>
@@ -352,21 +356,25 @@ export default function CreateInterviewPage() {
     )
   }
 
+  // ── Main form ───────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 p-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-          Create Technical Assessment
-        </h1>
-        <p className="text-gray-600 mt-2">Set up a time-bound assessment with AI-generated or custom questions</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Create Technical Assessment"
+        description="Set up a time-bound assessment with AI-generated or custom questions."
+        action={
+          <Button variant="outline" onClick={() => router.back()}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Cancel
+          </Button>
+        }
+      />
 
-      {/* Interview Details */}
-      <Card>
+      {/* ── Section 1: Interview Details ── */}
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
           <CardTitle>Interview Details</CardTitle>
-          <CardDescription>Basic information about the interview</CardDescription>
+          <CardDescription>Basic information about the assessment</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -388,7 +396,7 @@ export default function CreateInterviewPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="coding">Coding (Algorithms, Development)</SelectItem>
-                  <SelectItem value="testing">Testing/QA (Test Cases, Automation)</SelectItem>
+                  <SelectItem value="testing">Testing / QA (Test Cases, Automation)</SelectItem>
                   <SelectItem value="devops">DevOps (Docker, K8s, CI/CD, IaC)</SelectItem>
                   <SelectItem value="sql">SQL / Database</SelectItem>
                   <SelectItem value="system_design">System Design (Architecture)</SelectItem>
@@ -407,14 +415,14 @@ export default function CreateInterviewPage() {
               placeholder="Brief description of the interview"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              rows={3}
+              rows={2}
             />
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label>
-                <Calendar className="inline h-4 w-4 mr-1" />
+                <Calendar className="inline h-3.5 w-3.5 mr-1 text-slate-400" />
                 Start Time *
               </Label>
               <DateTimePicker
@@ -423,7 +431,6 @@ export default function CreateInterviewPage() {
                   setScheduledStartTime(start)
                   if (start) {
                     const pad = (n: number) => String(n).padStart(2, '0')
-                    // Preserve existing duration; default to 1 hour if end not set
                     const durationMs = scheduledStartTime && scheduledEndTime
                       ? new Date(scheduledEndTime).getTime() - new Date(scheduledStartTime).getTime()
                       : 60 * 60 * 1000
@@ -440,7 +447,7 @@ export default function CreateInterviewPage() {
 
             <div className="space-y-2">
               <Label>
-                <Clock className="inline h-4 w-4 mr-1" />
+                <Clock className="inline h-3.5 w-3.5 mr-1 text-slate-400" />
                 End Time *
               </Label>
               <DateTimePicker
@@ -452,7 +459,7 @@ export default function CreateInterviewPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="gracePeriod">Grace Period (minutes)</Label>
+              <Label htmlFor="gracePeriod">Grace Period (mins)</Label>
               <Input
                 id="gracePeriod"
                 type="number"
@@ -464,8 +471,8 @@ export default function CreateInterviewPage() {
             </div>
           </div>
 
+          {/* Conditional language/tool selectors */}
           <div className="grid gap-4 md:grid-cols-2">
-            {/* Coding / Fullstack / Data Science: programming language picker */}
             {['coding', 'fullstack', 'data_science', 'both'].includes(interviewType) && (
               <div className="space-y-2">
                 <Label htmlFor="language">Programming Language</Label>
@@ -485,16 +492,14 @@ export default function CreateInterviewPage() {
                     <SelectItem value="rust">Rust</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-slate-500">
                   {programmingLanguage === 'any'
                     ? 'Candidates can write in any programming language'
-                    : `Interview will use ${programmingLanguage.toUpperCase()}`
-                  }
+                    : `Interview will use ${programmingLanguage.toUpperCase()}`}
                 </p>
               </div>
             )}
 
-            {/* Testing: test framework picker */}
             {interviewType === 'testing' && (
               <div className="space-y-2">
                 <Label htmlFor="testFramework">Test Framework *</Label>
@@ -515,7 +520,6 @@ export default function CreateInterviewPage() {
               </div>
             )}
 
-            {/* DevOps: tool picker */}
             {interviewType === 'devops' && (
               <div className="space-y-2">
                 <Label htmlFor="devopsTool">DevOps Focus</Label>
@@ -536,7 +540,6 @@ export default function CreateInterviewPage() {
               </div>
             )}
 
-            {/* SQL: dialect picker */}
             {interviewType === 'sql' && (
               <div className="space-y-2">
                 <Label htmlFor="sqlDialect">SQL Dialect</Label>
@@ -557,7 +560,7 @@ export default function CreateInterviewPage() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="resumeRequired">Resume Upload Requirement</Label>
+              <Label htmlFor="resumeRequired">Resume Upload</Label>
               <Select value={resumeRequired} onValueChange={(v: any) => setResumeRequired(v)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -568,7 +571,7 @@ export default function CreateInterviewPage() {
                   <SelectItem value="disabled">Disabled (No upload)</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-slate-500">
                 {resumeRequired === 'mandatory' && 'Candidates must upload resume to complete interview'}
                 {resumeRequired === 'optional' && 'Candidates can optionally upload resume after submission'}
                 {resumeRequired === 'disabled' && 'Resume upload will not be shown to candidates'}
@@ -578,15 +581,15 @@ export default function CreateInterviewPage() {
         </CardContent>
       </Card>
 
-      {/* Bond/Terms and Conditions */}
-      <Card className="border-amber-200 bg-amber-50/30">
+      {/* ── Section 2: Bond / Terms ── */}
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-amber-600" />
+            <FileText className="h-4 w-4 text-slate-400" />
             Bond Agreement & Terms
           </CardTitle>
           <CardDescription>
-            Add terms and conditions that candidates must accept after submitting the interview
+            Optional terms that candidates must accept before or after the assessment
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -596,9 +599,9 @@ export default function CreateInterviewPage() {
               id="requireSignature"
               checked={requireSignature}
               onChange={(e) => setRequireSignature(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300"
+              className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
             />
-            <Label htmlFor="requireSignature" className="cursor-pointer">
+            <Label htmlFor="requireSignature" className="cursor-pointer text-sm font-medium text-slate-700">
               Require digital signature before submission
             </Label>
           </div>
@@ -617,14 +620,11 @@ export default function CreateInterviewPage() {
                     onChange={(e) => setBondYears(e.target.value)}
                     onBlur={(e) => {
                       const val = e.target.value
-                      if (val === '' || parseInt(val) < 1) {
-                        setBondYears('1')
-                      } else if (parseInt(val) > 10) {
-                        setBondYears('10')
-                      }
+                      if (val === '' || parseInt(val) < 1) setBondYears('1')
+                      else if (parseInt(val) > 10) setBondYears('10')
                     }}
                   />
-                  <p className="text-xs text-gray-500">Number of years for the bond agreement</p>
+                  <p className="text-xs text-slate-500">Number of years for the bond agreement</p>
                 </div>
 
                 <div className="space-y-2">
@@ -638,11 +638,10 @@ export default function CreateInterviewPage() {
                       <SelectItem value="before_start">Before test starts (must sign to begin)</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-slate-500">
                     {bondTiming === 'before_start'
                       ? 'Candidate must sign the bond before they can start answering questions'
-                      : 'Candidate signs the bond after completing the test, before final submission'
-                    }
+                      : 'Candidate signs the bond after completing the test, before final submission'}
                   </p>
                 </div>
               </div>
@@ -653,13 +652,11 @@ export default function CreateInterviewPage() {
                   id="bondTerms"
                   value={bondTerms}
                   onChange={(e) => setBondTerms(e.target.value)}
-                  rows={8}
-                  placeholder="Enter the terms and conditions, bond details, certificate collection information, etc.&#10;&#10;Example:&#10;- Service bond: 2 years from joining date&#10;- Original certificates will be collected and returned after bond completion&#10;- Early exit penalty: Rs. 1,00,000&#10;- Non-compete clause for 6 months after exit"
+                  rows={6}
+                  placeholder={`Enter bond terms, conditions, and certificate details...\n\nExample:\n- Service bond: 2 years from joining date\n- Original certificates collected and returned after bond completion\n- Early exit penalty: Rs. 1,00,000\n- Non-compete clause for 6 months after exit`}
                   className="font-mono text-sm"
                 />
-                <p className="text-xs text-gray-500">
-                  This text will be shown to candidates after they submit their interview
-                </p>
+                <p className="text-xs text-slate-500">This text will be shown to candidates when signing</p>
               </div>
 
               <div className="space-y-2">
@@ -673,7 +670,6 @@ export default function CreateInterviewPage() {
                       const file = e.target.files?.[0]
                       if (file) {
                         setBondDocumentFile(file)
-                        // TODO: Upload to storage and get URL
                         toast.info('File selected. Upload will be implemented.')
                       }
                     }}
@@ -682,17 +678,14 @@ export default function CreateInterviewPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => {
-                        setBondDocumentFile(null)
-                        setBondDocumentUrl('')
-                      }}
+                      onClick={() => { setBondDocumentFile(null); setBondDocumentUrl('') }}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
-                <p className="text-xs text-gray-500">
-                  Upload a Word/PDF document with detailed terms (optional). Accepted formats: .pdf, .doc, .docx, .txt
+                <p className="text-xs text-slate-500">
+                  Accepted: .pdf, .doc, .docx, .txt
                 </p>
               </div>
             </>
@@ -700,24 +693,33 @@ export default function CreateInterviewPage() {
         </CardContent>
       </Card>
 
-      {/* Questions */}
-      <Card>
+      {/* ── Section 3: Questions ── */}
+      <Card className="border border-slate-200 bg-white">
         <CardHeader>
           <CardTitle>Questions</CardTitle>
-          <CardDescription>Generate questions with AI or add manually</CardDescription>
+          <CardDescription>Generate with AI, extract from a document, or write manually</CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="ai-generate">
+            <TabsList className="grid w-full grid-cols-3 bg-slate-100 p-1 rounded-lg mb-4">
+              <TabsTrigger
+                value="ai-generate"
+                className="rounded-md text-sm data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
                 <Sparkles className="mr-2 h-4 w-4" />
                 AI Generate
               </TabsTrigger>
-              <TabsTrigger value="upload-document">
+              <TabsTrigger
+                value="upload-document"
+                className="rounded-md text-sm data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
                 <Upload className="mr-2 h-4 w-4" />
                 Upload Document
               </TabsTrigger>
-              <TabsTrigger value="manual">
+              <TabsTrigger
+                value="manual"
+                className="rounded-md text-sm data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
                 <FileText className="mr-2 h-4 w-4" />
                 Manual Entry
               </TabsTrigger>
@@ -729,14 +731,14 @@ export default function CreateInterviewPage() {
                 <Label htmlFor="jobDescription">Job Description *</Label>
                 <Textarea
                   id="jobDescription"
-                  placeholder="Describe the role and required skills..."
+                  placeholder="Describe the role and required skills. AI will detect the interview type and generate relevant questions automatically."
                   value={jobDescription}
                   onChange={(e) => setJobDescription(e.target.value)}
                   rows={4}
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="difficulty">Difficulty</Label>
                   <Select value={difficulty} onValueChange={(v: any) => setDifficulty(v)}>
@@ -760,11 +762,8 @@ export default function CreateInterviewPage() {
                     onChange={(e) => setNumQuestions(e.target.value)}
                     onBlur={(e) => {
                       const val = e.target.value
-                      if (val === '' || parseInt(val) < 1) {
-                        setNumQuestions('1')
-                      } else if (parseInt(val) > 10) {
-                        setNumQuestions('10')
-                      }
+                      if (val === '' || parseInt(val) < 1) setNumQuestions('1')
+                      else if (parseInt(val) > 10) setNumQuestions('10')
                     }}
                     min="1"
                     max="10"
@@ -789,7 +788,10 @@ export default function CreateInterviewPage() {
 
             {/* Upload Document Tab */}
             <TabsContent value="upload-document" className="space-y-4">
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-indigo-400 transition-colors">
+              <div className="flex justify-end mb-2">
+                <a href="/samples/coding-interviews/sample_question_bank.csv" download className="text-xs text-indigo-600 hover:text-indigo-700 hover:underline">Download Sample CSV</a>
+              </div>
+              <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 text-center hover:border-indigo-300 transition-colors">
                 <input
                   type="file"
                   id="document-upload"
@@ -801,22 +803,20 @@ export default function CreateInterviewPage() {
                   <div className="flex flex-col items-center">
                     {uploadedFile ? (
                       <>
-                        <CheckCircle2 className="h-12 w-12 text-green-500 mb-4" />
-                        <p className="text-sm font-medium text-gray-900 mb-2">
-                          File uploaded successfully!
-                        </p>
-                        <p className="text-xs text-gray-500 mb-4">
+                        <CheckCircle2 className="h-10 w-10 text-green-500 mb-3" />
+                        <p className="text-sm font-medium text-slate-900 mb-1">File ready</p>
+                        <p className="text-xs text-slate-500">
                           {uploadedFile.name} ({(uploadedFile.size / 1024).toFixed(1)} KB)
                         </p>
                       </>
                     ) : (
                       <>
-                        <File className="h-12 w-12 text-gray-400 mb-4" />
-                        <p className="text-sm font-medium text-gray-900 mb-2">
+                        <File className="h-10 w-10 text-slate-300 mb-3" />
+                        <p className="text-sm font-medium text-slate-700 mb-1">
                           Click to upload or drag and drop
                         </p>
-                        <p className="text-xs text-gray-500">
-                          PDF, Word, Image, Excel, or CSV (max 10MB)
+                        <p className="text-xs text-slate-400">
+                          PDF, Word, Image, Excel, or CSV (max 10 MB)
                         </p>
                       </>
                     )}
@@ -825,31 +825,27 @@ export default function CreateInterviewPage() {
               </div>
 
               {uploadedFile && (
-                <div className="flex gap-2">
-                  <Button
-                    onClick={() => {
-                      setUploadedFile(null)
-                      const input = document.getElementById('document-upload') as HTMLInputElement
-                      if (input) input.value = ''
-                    }}
-                    variant="outline"
-                    size="sm"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Remove File
-                  </Button>
-                </div>
+                <Button
+                  onClick={() => {
+                    setUploadedFile(null)
+                    const input = document.getElementById('document-upload') as HTMLInputElement
+                    if (input) input.value = ''
+                  }}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Remove File
+                </Button>
               )}
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-900 font-medium mb-2">
-                  📝 Document Format Tips:
-                </p>
-                <ul className="text-xs text-blue-800 space-y-1 list-disc list-inside">
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                <p className="text-xs font-semibold text-slate-600 mb-2">Document Format Tips</p>
+                <ul className="text-xs text-slate-500 space-y-1 list-disc list-inside">
                   <li>Questions should be clearly numbered or separated</li>
-                  <li>Include marks for each question if possible</li>
+                  <li>Include marks per question where possible</li>
                   <li>Starter code and solutions will be extracted if present</li>
-                  <li>Images will be processed using OCR</li>
+                  <li>Images and handwriting processed via OCR</li>
                 </ul>
               </div>
 
@@ -874,22 +870,34 @@ export default function CreateInterviewPage() {
 
             {/* Manual Entry Tab */}
             <TabsContent value="manual" className="space-y-4">
-              <Button onClick={handleAddManualQuestion} variant="outline" className="w-full">
-                <Plus className="mr-2 h-4 w-4" />
-                Add Question
-              </Button>
+              <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-lg">
+                <Code className="h-8 w-8 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm text-slate-500 mb-4">Add questions one by one</p>
+                <Button onClick={handleAddManualQuestion} variant="outline">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add First Question
+                </Button>
+              </div>
             </TabsContent>
+
           </Tabs>
 
           {/* Questions List */}
           {questions.length > 0 && (
             <div className="mt-6 space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-semibold">
-                  Questions ({questions.length})
-                </h3>
+              <div className="flex items-center justify-between gap-4 pb-2 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Questions ({questions.length})
+                  </h3>
+                  {getAvailableMinutes() > 0 && (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {getAvailableMinutes()} min total · ~{Math.floor(getAvailableMinutes() / questions.length)} min per question
+                    </p>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
-                  <Label htmlFor="totalMarks" className="text-sm text-gray-600 whitespace-nowrap">Total Marks:</Label>
+                  <Label htmlFor="totalMarks" className="text-xs text-slate-500 whitespace-nowrap">Total Marks</Label>
                   <Input
                     id="totalMarks"
                     type="number"
@@ -897,57 +905,56 @@ export default function CreateInterviewPage() {
                     onChange={(e) => handleTotalMarksChange(e.target.value)}
                     onBlur={(e) => {
                       const val = e.target.value
-                      if (val === '' || parseInt(val) < 1) {
-                        handleTotalMarksChange('1')
-                      }
+                      if (val === '' || parseInt(val) < 1) handleTotalMarksChange('1')
                     }}
                     min="1"
-                    className="w-24 h-8"
+                    className="w-20 h-8 text-sm"
                   />
-                  <p className="text-xs text-gray-400">
-                    (Assigned: {questions.reduce((sum, q) => sum + q.marks, 0)})
-                  </p>
+                  <span className="text-xs text-slate-400 whitespace-nowrap">
+                    ({questions.reduce((sum, q) => sum + q.marks, 0)} assigned)
+                  </span>
                 </div>
               </div>
-              {getAvailableMinutes() > 0 && (
-                <p className="text-xs text-gray-500">
-                  ⏱ Interview duration: {getAvailableMinutes()} min · ~{Math.floor(getAvailableMinutes() / questions.length)} min per question
-                </p>
-              )}
 
               {questions.map((question, index) => (
-                <Card key={index} className="border-l-4 border-l-indigo-500">
-                  <CardHeader>
+                <Card key={index} className="border border-slate-200 bg-white">
+                  <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-base">Question {index + 1}</CardTitle>
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs font-semibold flex items-center justify-center">
+                          {index + 1}
+                        </div>
+                        <span className="text-sm font-medium text-slate-700">Question {index + 1}</span>
+                      </div>
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => handleDeleteQuestion(index)}
-                        className="text-red-600 hover:text-red-700"
+                        className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="space-y-2">
-                      <Label>Question Text</Label>
+                  <CardContent className="space-y-3 pt-0">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-slate-500">Question Text</Label>
                       <Textarea
                         value={question.question_text}
                         onChange={(e) => handleUpdateQuestion(index, 'question_text', e.target.value)}
                         rows={3}
+                        placeholder="Enter question here..."
                       />
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label>Difficulty</Label>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-slate-500">Difficulty</Label>
                         <Select
                           value={question.difficulty}
                           onValueChange={(v) => handleUpdateQuestion(index, 'difficulty', v)}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="h-9">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -958,18 +965,19 @@ export default function CreateInterviewPage() {
                         </Select>
                       </div>
 
-                      <div className="space-y-2">
-                        <Label>Marks</Label>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-slate-500">Marks</Label>
                         <Input
                           type="number"
                           value={question.marks}
                           onChange={(e) => handleUpdateQuestion(index, 'marks', parseInt(e.target.value) || 0)}
                           min="1"
+                          className="h-9"
                         />
                       </div>
 
-                      <div className="space-y-2">
-                        <Label>Time (minutes)</Label>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-slate-500">Time (minutes)</Label>
                         <Input
                           type="number"
                           value={question.time_estimate_minutes || 30}
@@ -977,26 +985,33 @@ export default function CreateInterviewPage() {
                             handleUpdateQuestion(index, 'time_estimate_minutes', parseInt(e.target.value) || 5)
                           }
                           min="5"
+                          className="h-9"
                         />
                       </div>
                     </div>
                   </CardContent>
                 </Card>
               ))}
+
+              {activeTab === 'manual' && (
+                <Button onClick={handleAddManualQuestion} variant="outline" className="w-full">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Another Question
+                </Button>
+              )}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Create Button */}
-      <div className="flex justify-end gap-4">
+      {/* ── Footer actions ── */}
+      <div className="flex justify-end gap-3 pb-6">
         <Button variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button
           onClick={handleCreateInterview}
           disabled={loading || questions.length === 0}
-          className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
         >
           {loading ? (
             <>

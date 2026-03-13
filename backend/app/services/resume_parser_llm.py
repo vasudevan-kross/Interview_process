@@ -163,6 +163,10 @@ Return ONLY the JSON object, no additional text."""
 
             # Parse LLM response as JSON
             try:
+                if not result or not result.get('response'):
+                    logger.error(f"LLM returned empty response for resume: {filename}")
+                    raise ValueError("LLM returned empty response")
+
                 # Extract JSON from response (handle markdown code blocks)
                 json_text = result['response'].strip()
                 if json_text.startswith('```'):
@@ -183,7 +187,9 @@ Return ONLY the JSON object, no additional text."""
 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM response as JSON: {e}")
-                logger.error(f"LLM Response: {result[:500]}")
+                # Log a snippet of the response safely
+                response_preview = str(result.get('response', ''))[:500]
+                logger.error(f"LLM Response snippet: {response_preview}")
                 raise ValueError("Failed to parse resume structure from LLM response")
 
         except Exception as e:
@@ -208,7 +214,7 @@ Return ONLY the JSON object, no additional text."""
             dict with match_score (0-100), strengths, weaknesses, recommendation
         """
         try:
-            parsed = resume_data.get('parsed_data', {})
+            parsed = resume_data.get('parsed_data') or {}
             candidate_name = parsed.get('name', 'Candidate')
 
             prompt = f"""Analyze how well this candidate matches the job requirements.
@@ -257,6 +263,10 @@ Return ONLY the JSON object."""
 
             # Parse LLM response
             try:
+                if not result or not result.get('response'):
+                    logger.error(f"LLM returned empty response for match analysis: {candidate_name}")
+                    raise ValueError("LLM returned empty match response")
+
                 json_text = result['response'].strip()
                 if json_text.startswith('```'):
                     json_text = json_text.split('```')[1]
@@ -272,7 +282,9 @@ Return ONLY the JSON object."""
 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse match result: {e}")
-                logger.error(f"LLM Response: {result[:500]}")
+                # Log a snippet of the response safely
+                response_preview = str(result.get('response', ''))[:500]
+                logger.error(f"LLM Response snippet: {response_preview}")
                 raise ValueError("Failed to parse match analysis from LLM response")
 
         except Exception as e:

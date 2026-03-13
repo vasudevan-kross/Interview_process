@@ -11,6 +11,13 @@ export function useUserRole() {
 
   useEffect(() => {
     fetchUserRole()
+    
+    // Safety timeout: stop loading after 5s regardless of result
+    const timer = setTimeout(() => {
+      setLoading(false)
+    }, 5000)
+    
+    return () => clearTimeout(timer)
   }, [])
 
   const fetchUserRole = async () => {

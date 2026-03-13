@@ -2,14 +2,31 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Briefcase, Calendar, Users, ArrowRight, Plus, Trash2 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Plus, Trash2, Users, Upload, Eye } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { apiClient } from '@/lib/api/client'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonTable } from '@/components/ui/skeleton'
 
 interface JobDescription {
   id: string
@@ -18,9 +35,6 @@ interface JobDescription {
   created_at: string
   parsed_data: {
     file_name?: string
-  }
-  _count?: {
-    resumes: number
   }
 }
 
@@ -32,6 +46,9 @@ export default function JobsListPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [jdDialogOpen, setJdDialogOpen] = useState(false)
+  const [jdDetails, setJdDetails] = useState<any>(null)
+  const [jdLoading, setJdLoading] = useState(false)
 
   useEffect(() => {
     fetchJobs()
@@ -41,15 +58,12 @@ export default function JobsListPage() {
     try {
       const supabase = createClient()
 
-      // Get current user
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
         router.push('/login')
         return
       }
 
-      // Fetch job descriptions — try both auth user ID and users-table ID
-      // (the LLM service stores created_by as auth user ID or users.id depending on signup path)
       const { data: userRecord } = await supabase
         .from('users')
         .select('id')
@@ -73,35 +87,23 @@ export default function JobsListPage() {
 
       setJobs(jobsData || [])
 
-      // Fetch resume counts for each job
       if (jobsData && jobsData.length > 0) {
         const counts: Record<string, number> = {}
-
         for (const job of jobsData) {
           const { count } = await supabase
             .from('resumes')
             .select('*', { count: 'exact', head: true })
             .eq('job_description_id', job.id)
-
           counts[job.id] = count || 0
         }
-
         setResumeCounts(counts)
       }
     } catch (error) {
       console.error('Error:', error)
-      toast.error('An error occurred')
+      toast.error('Failed to load job descriptions')
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleViewJob = (jobId: string) => {
-    router.push(`/dashboard/resume-matching/${jobId}/candidates`)
-  }
-
-  const handleUploadResumes = (jobId: string) => {
-    router.push(`/dashboard/resume-matching/${jobId}/upload-resumes`)
   }
 
   const handleDeleteJob = (jobId: string) => {
@@ -118,7 +120,7 @@ export default function JobsListPage() {
       setJobs((prev) => prev.filter((j) => j.id !== pendingDeleteId))
       setResumeCounts((prev) => {
         const next = { ...prev }
-        delete next[pendingDeleteId]
+        delete next[pendingDeleteId!]
         return next
       })
     } catch (error: any) {
@@ -130,139 +132,116 @@ export default function JobsListPage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading job descriptions...</p>
-        </div>
-      </div>
-    )
+  const handleViewJD = async (jobId: string) => {
+    setJdDetails(null)
+    setJdDialogOpen(true)
+    setJdLoading(true)
+    try {
+      const data = await apiClient.getJobDescription(jobId)
+      setJdDetails(data)
+    } catch (error) {
+      toast.error('Failed to load job description')
+      setJdDialogOpen(false)
+    } finally {
+      setJdLoading(false)
+    }
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      {/* Gradient Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-500/90 to-pink-600 p-8 text-white shadow-xl">
-        <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
-        <div className="relative z-10">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Briefcase className="h-6 w-6" />
-                <span className="text-sm font-medium opacity-90">Recruitment Management</span>
-              </div>
-              <h1 className="text-4xl font-bold mb-2">Job Descriptions</h1>
-              <p className="text-lg opacity-90">
-                {jobs.length} {jobs.length === 1 ? 'position' : 'positions'} available for candidate matching
-              </p>
-            </div>
-            <Button
-              onClick={() => router.push('/dashboard/resume-matching')}
-              className="bg-white text-purple-600 hover:bg-purple-50 shadow-lg hover:shadow-xl transition-all"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              New Job Description
-            </Button>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Job Descriptions"
+        description={`${jobs.length} ${jobs.length === 1 ? 'position' : 'positions'} available for candidate matching.`}
+        action={
+          <Button onClick={() => router.push('/dashboard/resume-matching')}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Job Description
+          </Button>
+        }
+      />
 
-      {jobs.length === 0 ? (
-        <Card className="border-0 shadow-lg overflow-hidden">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="p-6 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 mb-6 shadow-lg">
-              <Briefcase className="h-12 w-12 text-white" />
+      {loading ? (
+        <SkeletonTable rows={4} cols={5} />
+      ) : jobs.length === 0 ? (
+        <Card className="border border-slate-200 bg-white">
+          <CardContent>
+            <div className="py-16 text-center">
+              <p className="text-sm font-medium text-slate-900 mb-1">No job descriptions yet</p>
+              <p className="text-sm text-slate-400 mb-6 max-w-sm mx-auto">
+                Create your first job description to start matching candidates with AI.
+              </p>
+              <Button onClick={() => router.push('/dashboard/resume-matching')}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Job Description
+              </Button>
             </div>
-            <h3 className="text-2xl font-semibold mb-2 text-slate-900">No job descriptions yet</h3>
-            <p className="text-muted-foreground mb-8 text-center max-w-md leading-relaxed">
-              Create your first job description to start matching candidates with AI-powered algorithms
-            </p>
-            <Button
-              onClick={() => router.push('/dashboard/resume-matching')}
-              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-md hover:shadow-lg transition-all"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Create Job Description
-            </Button>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
-          {jobs.map((job) => (
-            <Card
-              key={job.id}
-              className="border-0 shadow-lg overflow-hidden relative group hover:shadow-xl transition-all cursor-pointer"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-pink-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              <CardHeader className="relative">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 flex gap-4">
-                    <div className="p-3 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 shadow-md flex-shrink-0 h-fit">
-                      <Briefcase className="h-6 w-6 text-white" />
+        <Card className="border border-slate-200 bg-white overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Title</TableHead>
+                <TableHead>Department</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Candidates</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {jobs.map((job) => (
+                <TableRow key={job.id}>
+                  <TableCell className="font-medium text-slate-900">{job.title}</TableCell>
+                  <TableCell className="text-slate-600">{job.department || '—'}</TableCell>
+                  <TableCell className="text-slate-600">
+                    {format(new Date(job.created_at), 'MMM d, yyyy')}
+                  </TableCell>
+                  <TableCell className="text-slate-600">
+                    {resumeCounts[job.id] ?? 0}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleViewJD(job.id)}
+                        title="View job description"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => router.push(`/dashboard/resume-matching/${job.id}/upload-resumes`)}
+                        title="Upload resumes"
+                      >
+                        <Upload className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => router.push(`/dashboard/resume-matching/${job.id}/candidates`)}
+                        title="View candidates"
+                      >
+                        <Users className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDeleteJob(job.id)}
+                        title="Delete"
+                        className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <div className="flex-1">
-                      <CardTitle className="text-xl mb-3 text-slate-900 group-hover:text-purple-600 transition-colors">
-                        {job.title}
-                      </CardTitle>
-                      <div className="flex flex-wrap items-center gap-4 text-sm">
-                        {job.department && (
-                          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-100">
-                            <Briefcase className="h-4 w-4" />
-                            <span className="font-medium">{job.department}</span>
-                          </span>
-                        )}
-                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 text-slate-600 border border-slate-100">
-                          <Calendar className="h-4 w-4" />
-                          <span>{format(new Date(job.created_at), 'MMM d, yyyy')}</span>
-                        </span>
-                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-50 text-pink-700 border border-pink-100">
-                          <Users className="h-4 w-4" />
-                          <span className="font-medium">{resumeCounts[job.id] || 0} candidates</span>
-                        </span>
-                      </div>
-                      {job.parsed_data?.file_name && (
-                        <p className="text-sm text-muted-foreground mt-3 flex items-center gap-1.5">
-                          <span className="text-xs px-2 py-1 rounded bg-slate-100 font-mono">
-                            {job.parsed_data.file_name}
-                          </span>
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteJob(job.id)}
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                      title="Delete job description"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleUploadResumes(job.id)}
-                      className="border-purple-200 text-purple-700 hover:bg-purple-50"
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Upload Resumes
-                    </Button>
-                    <Button
-                      onClick={() => handleViewJob(job.id)}
-                      className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow-md hover:shadow-lg transition-all"
-                    >
-                      <Users className="mr-2 h-4 w-4" />
-                      {resumeCounts[job.id] > 0 ? `View ${resumeCounts[job.id]} Candidates` : 'View Candidates'}
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-            </Card>
-          ))}
-        </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       )}
 
       <ConfirmDialog
@@ -274,6 +253,77 @@ export default function JobsListPage() {
         confirmText={deleting ? 'Deleting...' : 'Delete'}
         variant="destructive"
       />
+
+      {/* Job Description Detail Dialog */}
+      <Dialog open={jdDialogOpen} onOpenChange={setJdDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{jdDetails?.title || 'Job Description'}</DialogTitle>
+          </DialogHeader>
+          {jdLoading ? (
+            <div className="py-8 text-center text-sm text-slate-500">Loading...</div>
+          ) : jdDetails ? (
+            <div className="space-y-5">
+              {/* Meta */}
+              <div className="flex flex-wrap gap-3 text-sm text-slate-600">
+                {jdDetails.department && (
+                  <span><span className="font-medium">Department:</span> {jdDetails.department}</span>
+                )}
+                {jdDetails.created_at && (
+                  <span><span className="font-medium">Created:</span> {format(new Date(jdDetails.created_at), 'MMM d, yyyy')}</span>
+                )}
+                {jdDetails.parsed_data?.file_name && (
+                  <span><span className="font-medium">File:</span> {jdDetails.parsed_data.file_name}</span>
+                )}
+              </div>
+
+              {/* Required Skills */}
+              {jdDetails.parsed_data?.required_skills?.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-700 mb-2">Required Skills</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {jdDetails.parsed_data.required_skills.map((skill: string, i: number) => (
+                      <Badge key={i} variant="secondary" className="text-xs">{skill}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Nice to have */}
+              {jdDetails.parsed_data?.preferred_skills?.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-700 mb-2">Preferred Skills</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {jdDetails.parsed_data.preferred_skills.map((skill: string, i: number) => (
+                      <Badge key={i} variant="outline" className="text-xs">{skill}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Experience */}
+              {jdDetails.parsed_data?.experience_required && (
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-700 mb-1">Experience Required</h4>
+                  <p className="text-sm text-slate-600">{jdDetails.parsed_data.experience_required}</p>
+                </div>
+              )}
+
+              {/* Raw JD text */}
+              {jdDetails.raw_text && (
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-700 mb-2">Full Job Description</h4>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-64 overflow-y-auto">
+                    <pre className="text-xs text-slate-700 whitespace-pre-wrap font-mono leading-relaxed">
+                      {jdDetails.raw_text}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

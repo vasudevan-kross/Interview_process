@@ -19,9 +19,9 @@ class ModelConfig:
         "jd_parsing": "llama3.1:8b",
         "skill_extraction": "llama3.1:8b",
 
-        # Evaluation tasks - upgraded to mistral-nemo:12b for better reasoning + faster
-        "answer_evaluation": "mistral-nemo:12b",
-        "resume_matching": "llama3.1:8b",  # Use same model as skill_extraction to avoid model switching overhead
+        # Evaluation tasks
+        "answer_evaluation": "llama3.1:8b",
+        "resume_matching": "llama3.1:8b",
 
         # Specialized tasks
         "code_evaluation": "llama3.1:8b",
@@ -33,21 +33,17 @@ class ModelConfig:
         "coding": "llama3.1:8b",
         "development": "llama3.1:8b",
         "sql": "llama3.1:8b",  # Can be changed to sqlcoder if available
-        "general": "mistral-nemo:12b",
-        "testing": "mistral-nemo:12b",
-        "devops": "mistral-nemo:12b",
+        "general": "llama3.1:8b",
+        "testing": "llama3.1:8b",
+        "devops": "llama3.1:8b",
     }
 
     # Fallback model if specified model is not available
     DEFAULT_MODEL = "llama3.1:8b"
 
-    # Vision model priority list for handwritten answer sheet evaluation
+    # Vision model for handwritten answer sheet evaluation
     VISION_EVAL_MODELS: List[str] = [
-        "llava:13b",
-        "llava-llama3",
         "llava:7b",
-        "glm-ocr:latest",
-        "MedAIBase/PaddleOCR-VL:0.9b",
     ]
 
     @classmethod

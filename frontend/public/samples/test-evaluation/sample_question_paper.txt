@@ -1,0 +1,11 @@
+# Technical Assessment - Software Engineering
+
+Please answer the following questions to the best of your ability.
+
+1. **Database Engines (10 marks):** Explain the difference between MyISAM and InnoDB storage engines in MySQL. Discuss ACID compliance and locking mechanisms.
+2. **Object-Oriented Programming (15 marks):** Describe the core principles of OOP (Encapsulation, Inheritance, Polymorphism, Abstraction) and provide a brief example in Python or Java.
+3. **Data Structures (10 marks):** Compare and contrast a Hash Table and a Binary Search Tree. When would you use one over the other?
+4. **Networking (5 marks):** What is the difference between TCP and UDP? Give a common usecase for both.
+5. **System Architecture (10 marks):** How would you design a scalable URL shortener service (like bit.ly)? Outline the key components, database schema, and handling of collisions.
+
+Total Marks: 50

@@ -1,12 +1,10 @@
-import { Loader2 } from 'lucide-react'
+import { SkeletonPageHeader, SkeletonTable } from '@/components/ui/skeleton'
 
 export default function TestEvaluationLoading() {
   return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="text-center">
-        <Loader2 className="h-12 w-12 animate-spin text-orange-600 mx-auto mb-4" />
-        <p className="text-gray-600 text-sm">Loading test evaluation...</p>
-      </div>
+    <div className="space-y-6">
+      <SkeletonPageHeader />
+      <SkeletonTable rows={4} cols={5} />
     </div>
   )
 }

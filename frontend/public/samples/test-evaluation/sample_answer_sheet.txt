@@ -1,0 +1,22 @@
+Candidate Name: Alex Johnson
+Date: 2023-10-27
+
+# Assessment Answers
+
+1. **Database Engines:** MyISAM does not support transactions or foreign keys. It uses table-level locking, which can cause bottlenecks for active databases. InnoDB supports ACID transactions (Atomicity, Consistency, Isolation, Durability) and uses row-level locking, making it much better for read/write heavy applications.
+
+2. **Object-Oriented Programming:** 
+- Encapsulation hides the internal state and requires all interaction to be performed through an object's methods. 
+- Inheritance lets a class acquire the properties and methods of another class.
+- Polymorphism allows objects of different classes to be treated as objects of a common superclass, usually via method overriding.
+- Abstraction hides complex implementation details and only shows the essential features of an object.
+Example: `class Dog(Animal): ...` inherits from Animal.
+
+3. **Data Structures:** A Hash Table provides O(1) average time complexity for lookups, insertions, and deletions, but does not maintain an ordered set of elements. A Binary Search Tree provides O(log n) time complexity for those operations but allows for ordered traversal. Use a Hash Table for caching and quick lookups. Use a BST when you need to iterate over elements in a sorted manner.
+
+4. **Networking:** TCP is connection-oriented and guarantees delivery of packets in the correct order. UDP is connectionless and does not guarantee delivery. Use TCP for web browsing (HTTP) where data integrity is critical. Use UDP for video streaming or gaming where speed is more important than occasional packet loss.
+
+5. **System Architecture:** 
+Components: A web server (e.g., Nginx), an application layer handling encoding/decoding, a database (e.g., PostgreSQL for links, Redis for caching), and potentially a load balancer.
+Schema: id (auto-incrementing int), original_url (text), short_code (varchar), created_at (timestamp).
+Algorithm: Base62 encoding on the auto-incremented database ID to generate the short code. This guarantees uniqueness and prevents collisions natively compared to hashing the URL directly.

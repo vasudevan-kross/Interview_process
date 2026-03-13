@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { listCampaigns, deleteCampaign, Campaign } from '@/lib/api/voice-screening'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonPageHeader } from '@/components/ui/skeleton'
 import { Plus, Loader2, Sparkles, Users, Calendar, Phone, Briefcase, Edit, Trash2, MoreVertical } from 'lucide-react'
 import {
   DropdownMenu,
@@ -87,32 +89,39 @@ export default function CampaignsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="container mx-auto py-8 space-y-6">
+        <SkeletonPageHeader />
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="border border-slate-200 rounded-lg p-6 space-y-3 bg-white animate-pulse">
+              <div className="h-5 bg-slate-100 rounded w-3/4" />
+              <div className="h-4 bg-slate-100 rounded w-1/2" />
+              <div className="h-4 bg-slate-100 rounded w-full" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
 
   return (
     <div className="container mx-auto py-8">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold">Voice Screening Campaigns</h1>
-          <p className="text-muted-foreground mt-2">
-            Manage AI-powered voice interview configurations
-          </p>
-        </div>
-        <Link href="/dashboard/voice-screening/campaigns/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Create Campaign
-          </Button>
-        </Link>
-      </div>
+      <PageHeader
+        title="Voice Screening Campaigns"
+        description="Manage AI-powered voice interview configurations"
+        action={
+          <Link href="/dashboard/voice-screening/campaigns/new">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Campaign
+            </Button>
+          </Link>
+        }
+      />
 
       {/* Navigation Tabs */}
-      <div className="flex gap-2 border-b mb-8">
-        <button className="px-4 py-2 font-medium text-teal-600 border-b-2 border-teal-600">
+      <div className="flex gap-2 border-b mb-8 mt-6">
+        <button className="px-4 py-2 font-medium text-indigo-600 border-b-2 border-indigo-600">
           <Briefcase className="h-4 w-4 inline-block mr-2" />
           Campaigns
         </button>
@@ -133,11 +142,10 @@ export default function CampaignsPage() {
       )}
 
       {campaigns.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <Sparkles className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-xl font-semibold mb-2">No campaigns yet</h3>
-            <p className="text-muted-foreground mb-6">
+        <Card className="border border-slate-200 bg-white">
+          <CardContent className="py-16 text-center">
+            <p className="text-sm font-medium text-slate-900 mb-1">No campaigns yet</p>
+            <p className="text-sm text-slate-400 mb-4">
               Create your first AI-powered voice screening campaign
             </p>
             <Link href="/dashboard/voice-screening/campaigns/new">
@@ -164,7 +172,7 @@ export default function CampaignsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     {campaign.is_active && (
-                      <Badge variant="default" className="bg-green-500">Active</Badge>
+                      <Badge className="bg-green-50 text-green-700 border border-green-200 rounded-md">Active</Badge>
                     )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>

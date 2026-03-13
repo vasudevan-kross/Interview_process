@@ -1,0 +1,25 @@
+Jane Smith
+Frontend Developer
+Email: jane.smith@example.com | Phone: 555-888-9999
+
+Summary:
+Creative and detail-oriented frontend developer with a strong focus on user experience and responsive design.
+
+Experience:
+
+Frontend Engineer @ CreativeWeb (2021 - Present)
+- Developed responsive and accessible web applications using React.js and Next.js.
+- Collaborated closely with UI/UX designers to implement pixel-perfect user interfaces using Tailwind CSS.
+- Optimized frontend performance, reducing payload size by 20%.
+
+Web Developer @ StartUp Agency (2019 - 2021)
+- Built and maintained client websites using HTML, CSS, and vanilla JavaScript.
+- Integrated various third-party REST APIs.
+
+Education:
+B.A. in Graphic Design - State University, 2019
+
+Skills:
+- Languages: JavaScript, TypeScript, HTML, CSS
+- Frameworks: React, Next.js, Tailwind CSS
+- Tools: Figma, Git, Webpack

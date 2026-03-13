@@ -29,27 +29,15 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
     if (!role) return null
 
     const roleConfig = {
-      admin: {
-        variant: 'default' as const,
-        label: 'Admin',
-        color: 'bg-blue-600 text-white border-0'
-      },
-      hr: {
-        variant: 'secondary' as const,
-        label: 'HR',
-        color: 'bg-purple-600 text-white border-0'
-      },
-      interviewer: {
-        variant: 'outline' as const,
-        label: 'Interviewer',
-        color: 'bg-orange-600 text-white border-0'
-      },
+      admin: { label: 'Admin' },
+      hr: { label: 'HR' },
+      interviewer: { label: 'Interviewer' },
     }
 
-    const config = roleConfig[role] || roleConfig.hr
+    const config = roleConfig[role as keyof typeof roleConfig] || roleConfig.hr
 
     return (
-      <Badge className={`flex items-center gap-1.5 px-3 py-1 ${config.color}`}>
+      <Badge className="flex items-center gap-1.5 px-2.5 py-1 border border-slate-200 text-slate-600 bg-transparent text-xs font-medium">
         <Shield className="h-3 w-3" />
         {config.label}
       </Badge>

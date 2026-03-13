@@ -25,6 +25,7 @@ powershell -Command ^
   "$envFile = 'backend\.env'; " ^
   "$content = Get-Content $envFile -Raw; " ^
   "$content = $content -replace 'FRONTEND_URL=.*', 'FRONTEND_URL=%STATIC_DOMAIN%'; " ^
+  "$content = $content -replace 'BACKEND_URL=.*', 'BACKEND_URL=%STATIC_DOMAIN%'; " ^
   "$content = $content -replace 'ALLOWED_ORIGINS=.*', 'ALLOWED_ORIGINS=http://localhost:3000,%STATIC_DOMAIN%'; " ^
   "$content | Set-Content $envFile -NoNewline; " ^
   "Write-Host '  Updated backend\.env'"

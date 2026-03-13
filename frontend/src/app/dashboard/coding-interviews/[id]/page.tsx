@@ -20,9 +20,11 @@ import {
     GitFork,
     Pencil,
 } from 'lucide-react'
+
 import { getInterview, generateShareableLink, cloneInterview, type Interview } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import { SkeletonPageHeader } from '@/components/ui/skeleton'
 
 export default function InterviewDetailPage() {
     const params = useParams()
@@ -79,10 +81,10 @@ export default function InterviewDetailPage() {
 
     const getStatusBadge = (status: string) => {
         const variants: Record<string, string> = {
-            scheduled: 'bg-blue-600 text-white',
-            in_progress: 'bg-green-600 text-white',
-            completed: 'bg-gray-600 text-white',
-            expired: 'bg-red-600 text-white',
+            scheduled: 'bg-blue-50 text-blue-700 border border-blue-200 rounded-md',
+            in_progress: 'bg-green-50 text-green-700 border border-green-200 rounded-md',
+            completed: 'bg-slate-100 text-slate-700 border border-slate-200 rounded-md',
+            expired: 'bg-red-50 text-red-700 border border-red-200 rounded-md',
         }
         return <Badge className={variants[status] || variants.scheduled}>{status.replace('_', ' ').toUpperCase()}</Badge>
     }
@@ -98,8 +100,8 @@ export default function InterviewDetailPage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center py-24">
-                <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+            <div className="space-y-6 p-8">
+                <SkeletonPageHeader />
             </div>
         )
     }
@@ -124,7 +126,7 @@ export default function InterviewDetailPage() {
                 </Button>
                 <div className="flex-1">
                     <div className="flex items-center gap-3">
-                        <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                        <h1 className="text-xl font-semibold text-slate-900">
                             {interview.title}
                         </h1>
                         {getStatusBadge(interview.status)}
@@ -159,7 +161,6 @@ export default function InterviewDetailPage() {
                     </Button>
                     <Button
                         onClick={() => router.push(`/dashboard/coding-interviews/${interviewId}/submissions`)}
-                        className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
                     >
                         <Users className="h-4 w-4 mr-2" />
                         View Submissions
@@ -169,67 +170,69 @@ export default function InterviewDetailPage() {
 
             {/* Info Cards */}
             <div className="grid gap-4 md:grid-cols-4">
-                <Card className="border-l-4 border-l-blue-500">
+                <Card className="border border-slate-200 bg-white">
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                            <Calendar className="h-4 w-4" />
-                            Scheduled Time
-                        </CardTitle>
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-sm font-medium text-slate-500">Scheduled Time</CardTitle>
+                            <Calendar className="h-4 w-4 text-slate-300" />
+                        </div>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-lg font-bold">
-                            {format(new Date(interview.scheduled_start_time), 'MMM dd, yyyy')}
+                        <div className="text-2xl font-semibold tabular-nums text-slate-900">
+                            {format(new Date(interview.scheduled_start_time), 'MMM dd')}
                         </div>
-                        <p className="text-sm text-gray-500">
-                            {format(new Date(interview.scheduled_start_time), 'HH:mm')}
+                        <p className="text-sm text-slate-500">
+                            {format(new Date(interview.scheduled_start_time), 'yyyy, HH:mm')}
                         </p>
                     </CardContent>
                 </Card>
 
-                <Card className="border-l-4 border-l-purple-500">
+                <Card className="border border-slate-200 bg-white">
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                            <Clock className="h-4 w-4" />
-                            Duration
-                        </CardTitle>
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-sm font-medium text-slate-500">Duration</CardTitle>
+                            <Clock className="h-4 w-4 text-slate-300" />
+                        </div>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-lg font-bold">{interview.duration_minutes} min</div>
-                        <p className="text-sm text-gray-500">
+                        <div className="text-2xl font-semibold tabular-nums text-slate-900">{interview.duration_minutes} min</div>
+                        <p className="text-sm text-slate-500">
                             {interview.interview_type.toUpperCase()} interview
                         </p>
                     </CardContent>
                 </Card>
 
-                <Card className="border-l-4 border-l-green-500">
+                <Card className="border border-slate-200 bg-white">
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                            <Award className="h-4 w-4" />
-                            Total Marks
-                        </CardTitle>
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-sm font-medium text-slate-500">Total Marks</CardTitle>
+                            <Award className="h-4 w-4 text-slate-300" />
+                        </div>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-lg font-bold">{interview.total_marks}</div>
-                        <p className="text-sm text-gray-500">
+                        <div className="text-2xl font-semibold tabular-nums text-slate-900">{interview.total_marks}</div>
+                        <p className="text-sm text-slate-500">
                             {interview.questions?.length || 0} questions
                         </p>
                     </CardContent>
                 </Card>
 
-                <Card className="border-l-4 border-l-orange-500">
+                <Card className="border border-slate-200 bg-white">
                     <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium text-gray-600 flex items-center gap-2">
-                            <Code className="h-4 w-4" />
-                            {interview.interview_type === 'testing' ? 'Framework' : 'Language'}
-                        </CardTitle>
+                        <div className="flex items-center justify-between">
+                            <CardTitle className="text-sm font-medium text-slate-500">
+                                {interview.interview_type === 'testing' ? 'Framework' : 'Language'}
+                            </CardTitle>
+                            <Code className="h-4 w-4 text-slate-300" />
+                        </div>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-lg font-bold">
+                        <div className="text-2xl font-semibold tabular-nums text-slate-900">
                             {interview.allowed_languages?.length === 0
-                                ? 'ANY LANGUAGE'
+                                ? 'ANY'
                                 : interview.programming_language.toUpperCase()}
                         </div>
-                        <p className="text-sm text-gray-500">
+                        <p className="text-sm text-slate-500">
                             {interview.allowed_languages?.length === 0
                                 ? "Candidate's Choice"
                                 : interview.interview_type === 'testing' ? 'Test Framework' : 'Programming Language'}

@@ -187,7 +187,8 @@ async def upload_multiple_resumes(
 )
 async def get_ranked_candidates(
     job_id: str,
-    limit: int = 50
+    limit: int = 50,
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Get a ranked list of candidates for a specific job.
@@ -197,7 +198,7 @@ async def get_ranked_candidates(
     try:
         service = get_resume_matching_service()
 
-        candidates = await service.get_ranked_candidates(job_id=job_id, limit=limit)
+        candidates = await service.get_ranked_candidates(job_id=job_id, user_id=current_user_id, limit=limit)
 
         return RankedCandidatesResponse(
             job_id=job_id,
@@ -214,13 +215,16 @@ async def get_ranked_candidates(
     "/job/{job_id}",
     summary="Get job description details"
 )
-async def get_job_description(job_id: str):
+async def get_job_description(
+    job_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """
     Get job description details by ID.
     """
     try:
         service = get_resume_matching_service()
-        job = await service.get_job_description(job_id=job_id)
+        job = await service.get_job_description(job_id=job_id, user_id=current_user_id)
         return job
 
     except Exception as e:
@@ -233,7 +237,10 @@ async def get_job_description(job_id: str):
     response_model=JobStatistics,
     summary="Get statistics for a job"
 )
-async def get_job_statistics(job_id: str):
+async def get_job_statistics(
+    job_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """
     Get statistics for a job posting.
 
@@ -245,7 +252,7 @@ async def get_job_statistics(job_id: str):
     try:
         service = get_resume_matching_service()
 
-        stats = await service.get_job_statistics(job_id=job_id)
+        stats = await service.get_job_statistics(job_id=job_id, user_id=current_user_id)
 
         return JobStatistics(
             job_id=job_id,

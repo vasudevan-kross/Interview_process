@@ -47,7 +47,18 @@
       "Bash(systeminfo:*)",
       "Bash(winget install:*)",
       "Bash(\"D:/Projects/AI driven/Interview/backend/venv/Scripts/python.exe\":*)",
-      "Bash(\"venv\\\\Scripts\\\\python.exe\":*)"
+      "Bash(\"venv\\\\Scripts\\\\python.exe\":*)",
+      "Bash(rm:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.vapi.ai)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "Bash(find \"/d/Projects/AI driven/Interview\" -type f \\\\\\( -name \"*.sql\" -o -name \"*migration*\" \\\\\\) 2>/dev/null | head -20)",
+      "Bash(cd \"D:\\\\Projects\\\\AI driven\\\\Interview\\\\frontend\" && npx next build 2>&1 | tail -30)",
+      "Bash(find \"D:\\\\Projects\\\\AI driven\\\\Interview\" -type f -name \"*pipeline*\" 2>/dev/null | head -20)"
     ]
   }
 }

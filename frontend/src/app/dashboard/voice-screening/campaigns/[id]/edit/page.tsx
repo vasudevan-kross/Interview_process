@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select'
 import { getCampaign, updateCampaign, uploadVapiFile, deleteVapiFile, type Campaign } from '@/lib/api/voice-screening'
 import { ArrowLeft, Loader2, Save, X, Upload, Trash2, FileText, Plus } from 'lucide-react'
+import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
@@ -227,22 +228,24 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   return (
     <div className="container mx-auto py-8 max-w-4xl">
       {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <Link href={`/dashboard/voice-screening/campaigns/${resolvedParams.id}`}>
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-3xl font-bold">Edit Campaign</h1>
-          <p className="text-muted-foreground mt-1">Update campaign settings, questions, and knowledge base</p>
-        </div>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-          Save Changes
-        </Button>
-      </div>
+      <PageHeader
+        title="Edit Campaign"
+        description="Update campaign settings, questions, and knowledge base."
+        action={
+          <div className="flex items-center gap-2">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+              Save Changes
+            </Button>
+            <Link href={`/dashboard/voice-screening/campaigns/${resolvedParams.id}`}>
+              <Button variant="ghost" size="sm">
+                <ArrowLeft className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+            </Link>
+          </div>
+        }
+      />
 
       <div className="space-y-6">
         {/* Basic Information */}

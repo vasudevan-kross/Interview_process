@@ -14,7 +14,7 @@ import json
 import re
 import zipfile
 from io import BytesIO
-from fastapi import APIRouter, HTTPException, status, Request, Body, Depends, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Request, Body, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 
@@ -38,8 +38,11 @@ from app.services.coding_interview_service import get_coding_interview_service
 from app.services.question_generator import get_question_generator, DOMAIN_REGISTRY
 from app.services.document_processor import get_document_processor
 from app.services.llm_orchestrator import get_llm_orchestrator
+from app.services.voice_interview_service import get_voice_interview_service
+from app.services.user_service import get_user_service
 from app.db.supabase_client import get_supabase
 from app.auth.dependencies import get_current_user_id
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +94,8 @@ async def create_interview(
             bond_document_url=request.bond_document_url,
             require_signature=request.require_signature,
             bond_years=request.bond_years,
-            bond_timing=request.bond_timing
+            bond_timing=request.bond_timing,
+            job_id=request.job_id
         )
 
         return result
@@ -105,7 +109,10 @@ async def create_interview(
 
 
 @router.post("/generate-questions", summary="Generate questions with AI")
-async def generate_questions(request: GenerateQuestionsRequest):
+async def generate_questions(
+    request: GenerateQuestionsRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
     """
     Generate interview questions using AI (Ollama codellama:7b).
 
@@ -178,12 +185,60 @@ async def generate_questions(request: GenerateQuestionsRequest):
         )
 
 
+# ---------------------------------------------------------------------------
+# Voice Interview Creation
+# ---------------------------------------------------------------------------
+
+class VoiceSessionRequest(BaseModel):
+    message: str
+    session_state: dict = {}
+    user_timezone_offset: int = 330  # Minutes ahead of UTC (default: IST +5:30)
+
+
+@router.get("/voice-session/start", summary="Get opening message for voice interview creation")
+async def voice_session_start(
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Returns the opening greeting message and initial session state for voice-driven
+    interview creation. Call this once when the user opens the voice modal.
+    """
+    service = get_voice_interview_service()
+    return service.get_opening_message()
+
+
+@router.post("/voice-session", summary="Process one turn in voice interview creation")
+async def voice_session(
+    request: VoiceSessionRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """
+    Process a single voice turn. The caller sends the latest speech transcript
+    and the full session_state from the previous response. Returns the agent's
+    reply, updated session_state, and (when done=true) the created interview details.
+    """
+    try:
+        service = get_voice_interview_service()
+        return await service.process_turn(
+            message=request.message,
+            session_state=request.session_state,
+            user_id=current_user_id,
+            user_timezone_offset=request.user_timezone_offset,
+        )
+    except Exception as e:
+        logger.error(f"Voice session error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Voice session failed: {str(e)}"
+        )
+
 @router.post("/extract-questions", summary="Extract questions from document")
 async def extract_questions_from_document(
     file: UploadFile = File(...),
     programming_language: str = Form('python'),
     interview_type: str = Form('coding'),
-    difficulty: str = Form('medium')
+    difficulty: str = Form('medium'),
+    current_user_id: str = Depends(get_current_user_id)
 ):
     """
     Extract interview questions from uploaded document.
@@ -326,6 +381,10 @@ async def list_interviews(
 ):
     """List all interviews created by the current user."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
         from datetime import datetime, timezone
 
@@ -333,7 +392,7 @@ async def list_interviews(
         # Find interviews that are still 'scheduled' or 'in_progress' but past their end time
         active_result = client.table('coding_interviews').select(
             'id, status, scheduled_end_time, grace_period_minutes'
-        ).eq('created_by', current_user_id).in_(
+        ).eq('created_by', current_internal_id).in_(
             'status', ['scheduled', 'in_progress']
         ).execute()
 
@@ -369,7 +428,7 @@ async def list_interviews(
                         logger.warning(f"Failed to auto-update interview status: {update_err}")
 
         # Now fetch the list with updated statuses
-        query = client.table('coding_interviews').select('*').eq('created_by', current_user_id).order('created_at', desc=True).limit(limit).offset(offset)
+        query = client.table('coding_interviews').select('*').eq('created_by', current_internal_id).order('created_at', desc=True).limit(limit).offset(offset)
 
         if status_filter:
             query = query.eq('status', status_filter)
@@ -406,12 +465,16 @@ async def get_interview(
 ):
     """Get interview details with questions."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
 
         # Get interview and verify ownership
         interview_result = client.table('coding_interviews').select('*').eq(
             'id', interview_id
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data or len(interview_result.data) == 0:
             raise HTTPException(
@@ -479,12 +542,16 @@ async def delete_interview(
 ):
     """Delete an interview (cascade deletes questions, submissions)."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
 
         # Delete and verify ownership (CASCADE will handle related records)
         result = client.table('coding_interviews').delete().eq(
             'id', interview_id
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not result.data or len(result.data) == 0:
             raise HTTPException(
@@ -537,9 +604,13 @@ async def get_submission_risk_score(
         submission = submission_result.data[0]
 
         # Check if user owns the interview
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission['interview_id']
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -830,9 +901,13 @@ async def get_submission_resume(
         submission = submission_result.data[0]
 
         # Verify interview ownership
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission['interview_id']
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -868,12 +943,16 @@ async def list_submissions(
 ):
     """List all submissions for an interview."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+        
         client = get_supabase()
 
         # Verify interview ownership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', interview_id
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -908,6 +987,10 @@ async def get_submission(
 ):
     """Get detailed submission with all answers and evaluations."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         client = get_supabase()
 
         # Get submission
@@ -926,7 +1009,7 @@ async def get_submission(
         # Verify interview ownership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission['interview_id']
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -987,6 +1070,10 @@ async def reevaluate_submission(
 ):
     """Manually trigger re-evaluation of a submission."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         service = get_coding_interview_service()
 
         # Verify ownership (similar to get_submission)
@@ -1000,7 +1087,7 @@ async def reevaluate_submission(
 
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission_result.data[0]['interview_id']
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -1020,20 +1107,43 @@ async def reevaluate_submission(
         )
 
 
+async def _run_bulk_evaluation(interview_id: str, submissions: list) -> None:
+    """Background task: evaluate all submissions without holding the HTTP connection."""
+    service = get_coding_interview_service()
+    total = len(submissions)
+    evaluated = 0
+    failed = 0
+    logger.info(f"[BG] Starting bulk evaluation for {total} submissions in interview {interview_id}")
+    for submission in submissions:
+        submission_id = submission['id']
+        try:
+            result = await service.evaluate_submission(submission_id)
+            evaluated += 1
+            logger.info(f"[BG] ✅ Evaluated {submission_id}: {result.get('percentage')}%")
+        except Exception as e:
+            failed += 1
+            logger.error(f"[BG] ❌ Failed to evaluate {submission_id}: {e}")
+    logger.info(f"[BG] Bulk evaluation done: {evaluated} ok, {failed} failed out of {total}")
+
+
 @router.post("/{interview_id}/evaluate-all", summary="Bulk evaluate all submissions")
 async def evaluate_all_submissions(
     interview_id: str,
+    background_tasks: BackgroundTasks,
     current_user_id: str = Depends(get_current_user_id)
 ):
-    """Evaluate all submitted submissions for an interview in bulk."""
+    """Start bulk evaluation in background and return immediately to avoid connection timeout."""
     try:
-        service = get_coding_interview_service()
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         client = get_supabase()
 
         # Verify ownership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', interview_id
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized to access this interview")
@@ -1041,7 +1151,7 @@ async def evaluate_all_submissions(
         # Get all submitted submissions for this interview
         submissions_result = client.table('coding_submissions').select('id, status').eq(
             'interview_id', interview_id
-        ).in_('status', ['submitted', 'auto_submitted']).execute()
+        ).in_('status', ['submitted', 'auto_submitted', 'evaluated']).execute()
 
         if not submissions_result.data:
             return {
@@ -1049,55 +1159,32 @@ async def evaluate_all_submissions(
                 "total": 0,
                 "evaluated": 0,
                 "failed": 0,
-                "results": []
+                "results": [],
+                "status": "done"
             }
 
-        total = len(submissions_result.data)
-        evaluated = 0
-        failed = 0
-        results = []
+        submissions = submissions_result.data
+        total = len(submissions)
+        logger.info(f"Queuing bulk evaluation for {total} submissions in interview {interview_id}")
 
-        logger.info(f"Starting bulk evaluation for {total} submissions in interview {interview_id}")
-
-        # Evaluate each submission
-        for submission in submissions_result.data:
-            submission_id = submission['id']
-            try:
-                result = await service.evaluate_submission(submission_id)
-                evaluated += 1
-                results.append({
-                    "submission_id": submission_id,
-                    "status": "success",
-                    "total_marks": result.get('total_marks_awarded'),
-                    "percentage": result.get('percentage')
-                })
-                logger.info(f"✅ Evaluated submission {submission_id}: {result.get('percentage')}%")
-            except Exception as e:
-                failed += 1
-                results.append({
-                    "submission_id": submission_id,
-                    "status": "failed",
-                    "error": str(e)
-                })
-                logger.error(f"❌ Failed to evaluate submission {submission_id}: {e}")
-
-        logger.info(f"Bulk evaluation completed: {evaluated} successful, {failed} failed out of {total}")
+        background_tasks.add_task(_run_bulk_evaluation, interview_id, submissions)
 
         return {
-            "message": f"Evaluated {evaluated} out of {total} submissions",
+            "message": f"Evaluation started for {total} submissions. Results will be available shortly.",
             "total": total,
-            "evaluated": evaluated,
-            "failed": failed,
-            "results": results
+            "evaluated": 0,
+            "failed": 0,
+            "results": [],
+            "status": "processing"
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in bulk evaluation: {e}")
+        logger.error(f"Error starting bulk evaluation: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to perform bulk evaluation"
+            detail="Failed to start bulk evaluation"
         )
 
 
@@ -1207,12 +1294,16 @@ async def get_interview_candidates(
     Requires interview ownership.
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         client = get_supabase()
 
         # Verify ownership
         interview_result = client.table('coding_interviews').select('id, title, access_token, total_marks').eq(
             'id', interview_id
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -1263,6 +1354,10 @@ async def set_submission_decision(
     try:
         client = get_supabase()
 
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         # Verify ownership via interview
         sub_result = client.table('coding_submissions').select('interview_id').eq(
             'id', submission_id
@@ -1273,7 +1368,7 @@ async def set_submission_decision(
 
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', sub_result.data[0]['interview_id']
-        ).eq('created_by', current_user_id).execute()
+        ).eq('created_by', current_internal_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -1382,6 +1477,10 @@ async def export_submissions_zip(
                 answers.docx   (styled Word document)
     """
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         client = get_supabase()
 
         # Verify interview ownership
@@ -1393,7 +1492,7 @@ async def export_submissions_zip(
             raise HTTPException(status_code=404, detail="Interview not found")
 
         interview = interview_result.data[0]
-        if interview.get('created_by') != current_user_id:
+        if interview.get('created_by') != current_internal_id:
             raise HTTPException(status_code=403, detail="Not authorized")
 
         title = interview.get('title', 'Assessment')
@@ -1634,11 +1733,15 @@ async def update_interview(
 ):
     """Update interview title, description, scheduled times, or grace period."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         service = get_coding_interview_service()
         result = await service.update_interview(
             interview_id=interview_id,
             update_data=body.dict(exclude_none=True),
-            user_id=current_user_id,
+            user_id=current_internal_id,
         )
         return result
     except ValueError as e:
@@ -1655,8 +1758,12 @@ async def clone_interview(
 ):
     """Create a copy of an interview with all its questions and a new access token."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         service = get_coding_interview_service()
-        result = await service.clone_interview(interview_id, current_user_id)
+        result = await service.clone_interview(interview_id, current_internal_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -1672,8 +1779,12 @@ async def send_invites(
 ):
     """Email the interview link to all pre-registered candidates who haven't submitted."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         service = get_coding_interview_service()
-        result = await service.send_interview_invites(interview_id, current_user_id)
+        result = await service.send_interview_invites(interview_id, current_internal_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -1690,12 +1801,16 @@ async def bulk_decision(
 ):
     """Set the same decision (advanced/rejected/hold/pending) on multiple submissions at once."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         service = get_coding_interview_service()
         result = await service.bulk_submission_decision(
             interview_id=interview_id,
             submission_ids=body.submission_ids,
             decision=body.decision,
-            decided_by=current_user_id,
+            decided_by=current_internal_id,
         )
         return result
     except ValueError as e:
@@ -1713,11 +1828,15 @@ async def bulk_delete_candidates(
 ):
     """Delete multiple pre-registered candidates from the interview pipeline."""
     try:
+        # Resolve raw user ID to internal UUID
+        user_service = get_user_service()
+        current_internal_id = user_service.resolve_user_id(current_user_id)
+
         service = get_coding_interview_service()
         result = await service.bulk_delete_candidates(
             interview_id=interview_id,
             candidate_ids=body.candidate_ids,
-            user_id=current_user_id,
+            user_id=current_internal_id,
         )
         return result
     except ValueError as e:

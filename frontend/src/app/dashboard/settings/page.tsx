@@ -11,6 +11,8 @@ import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { User, Settings2, Users, Bot, Save, Shield } from 'lucide-react'
 import { apiClient } from '@/lib/api/client'
+import { PageHeader } from '@/components/ui/page-header'
+import { SkeletonPageHeader } from '@/components/ui/skeleton'
 
 interface UserProfile {
   id: string
@@ -145,49 +147,37 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading settings...</p>
-        </div>
+      <div className="space-y-6">
+        <SkeletonPageHeader />
       </div>
     )
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-500/90 to-slate-600 p-8 text-white shadow-xl">
-        <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-2">
-            <Settings2 className="h-6 w-6" />
-            <span className="text-sm font-medium opacity-90">Configuration</span>
-          </div>
-          <h1 className="text-4xl font-bold mb-2">Settings</h1>
-          <p className="text-lg opacity-90">
-            Manage your account and application preferences
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Settings"
+        description="Manage your account and application preferences."
+      />
 
       <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 h-auto p-1 bg-gradient-to-r from-slate-100 to-slate-50 dark:from-slate-800 dark:to-slate-900">
-          <TabsTrigger value="profile" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-blue-600 data-[state=active]:text-white">
+        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 h-auto p-1 bg-slate-100">
+          <TabsTrigger value="profile" className="data-[state=active]:bg-indigo-600 data-[state=active]:text-white">
             <User className="h-4 w-4 mr-2" />
             Profile
           </TabsTrigger>
-          <TabsTrigger value="preferences" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-pink-500 data-[state=active]:text-white">
+          <TabsTrigger value="preferences" className="data-[state=active]:bg-indigo-600 data-[state=active]:text-white">
             <Settings2 className="h-4 w-4 mr-2" />
             Preferences
           </TabsTrigger>
           {(userRole === 'admin') && (
-            <TabsTrigger value="models" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-red-500 data-[state=active]:text-white">
+            <TabsTrigger value="models" className="data-[state=active]:bg-indigo-600 data-[state=active]:text-white">
               <Bot className="h-4 w-4 mr-2" />
               LLM Models
             </TabsTrigger>
           )}
           {(userRole === 'admin') && (
-            <TabsTrigger value="users" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-green-500 data-[state=active]:to-emerald-500 data-[state=active]:text-white">
+            <TabsTrigger value="users" className="data-[state=active]:bg-indigo-600 data-[state=active]:text-white">
               <Users className="h-4 w-4 mr-2" />
               Users
             </TabsTrigger>
@@ -196,12 +186,11 @@ export default function SettingsPage() {
 
         {/* Profile Tab */}
         <TabsContent value="profile">
-          <Card className="border-0 shadow-lg overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent"></div>
-            <CardHeader className="relative">
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600">
-                  <User className="h-5 w-5 text-white" />
+                <div className="p-1.5 rounded-md bg-slate-100">
+                  <User className="h-4 w-4 text-slate-600" />
                 </div>
                 Profile Information
               </CardTitle>
@@ -209,14 +198,14 @@ export default function SettingsPage() {
                 Update your personal information and profile details
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6 relative">
+            <CardContent className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-sm font-semibold">Email Address</Label>
+                <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
                 <Input
                   id="email"
                   value={profile.email}
                   disabled
-                  className="bg-gradient-to-r from-slate-50 to-slate-100 border-slate-200"
+                  className="bg-slate-50 border-slate-200"
                 />
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <Shield className="h-3 w-3" />
@@ -225,38 +214,36 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="fullName" className="text-sm font-semibold">Full Name</Label>
+                <Label htmlFor="fullName" className="text-sm font-medium">Full Name</Label>
                 <Input
                   id="fullName"
                   value={profile.full_name || ''}
                   onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
                   placeholder="Enter your full name"
-                  className="border-slate-200 focus:border-blue-500 transition-colors"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="avatarUrl" className="text-sm font-semibold">Avatar URL</Label>
+                <Label htmlFor="avatarUrl" className="text-sm font-medium">Avatar URL</Label>
                 <Input
                   id="avatarUrl"
                   value={profile.avatar_url || ''}
                   onChange={(e) => setProfile({ ...profile, avatar_url: e.target.value })}
                   placeholder="https://example.com/avatar.jpg"
-                  className="border-slate-200 focus:border-blue-500 transition-colors"
                 />
                 <p className="text-xs text-muted-foreground">
                   Provide a URL to your profile picture
                 </p>
               </div>
 
-              <div className="p-4 rounded-lg bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200">
+              <div className="p-4 rounded-lg bg-slate-50 border border-slate-200">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600">
-                    <Shield className="h-5 w-5 text-white" />
+                  <div className="p-1.5 rounded-md bg-slate-200">
+                    <Shield className="h-4 w-4 text-slate-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold">Current Role</p>
-                    <p className="text-lg font-bold capitalize bg-gradient-to-r from-blue-600 to-blue-800 bg-clip-text text-transparent">
+                    <p className="text-xs text-slate-500">Current Role</p>
+                    <p className="text-sm font-semibold capitalize text-indigo-600">
                       {userRole}
                     </p>
                   </div>
@@ -267,7 +254,6 @@ export default function SettingsPage() {
                 <Button
                   onClick={handleSaveProfile}
                   disabled={saving}
-                  className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
                 >
                   {saving ? (
                     <Save className="mr-2 h-4 w-4 animate-spin" />
@@ -283,12 +269,11 @@ export default function SettingsPage() {
 
         {/* Preferences Tab */}
         <TabsContent value="preferences">
-          <Card className="border-0 shadow-lg overflow-hidden relative">
-            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent"></div>
-            <CardHeader className="relative">
+          <Card className="border border-slate-200 bg-white">
+            <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500">
-                  <Settings2 className="h-5 w-5 text-white" />
+                <div className="p-1.5 rounded-md bg-slate-100">
+                  <Settings2 className="h-4 w-4 text-slate-600" />
                 </div>
                 Application Preferences
               </CardTitle>
@@ -296,17 +281,17 @@ export default function SettingsPage() {
                 Customize your application experience and behavior
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6 relative">
-              <div className="space-y-6">
-                <div className="p-4 rounded-lg border border-slate-200 bg-white hover:border-purple-300 transition-colors">
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div className="p-4 rounded-lg border border-slate-200 bg-white">
                   <div className="flex items-center justify-between gap-4">
                     <div className="space-y-1 flex-1">
-                      <Label className="text-sm font-semibold">Default LLM Model</Label>
-                      <p className="text-sm text-muted-foreground">
+                      <Label className="text-sm font-medium">Default LLM Model</Label>
+                      <p className="text-sm text-slate-500">
                         Choose the default AI model for processing resumes and tests
                       </p>
                     </div>
-                    <select className="border border-slate-200 rounded-lg px-4 py-2 bg-white hover:border-purple-500 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all" defaultValue="Mistral 7B">
+                    <select className="border border-slate-200 rounded-md px-3 py-2 text-sm bg-white" defaultValue="Mistral 7B">
                       <option>Mistral 7B</option>
                       <option>Llama 2 7B</option>
                       <option>CodeLlama 7B</option>
@@ -314,15 +299,15 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="p-4 rounded-lg border border-slate-200 bg-white hover:border-purple-300 transition-colors">
+                <div className="p-4 rounded-lg border border-slate-200 bg-white">
                   <div className="flex items-center justify-between gap-4">
                     <div className="space-y-1 flex-1">
-                      <Label className="text-sm font-semibold">Results Per Page</Label>
-                      <p className="text-sm text-muted-foreground">
+                      <Label className="text-sm font-medium">Results Per Page</Label>
+                      <p className="text-sm text-slate-500">
                         Number of candidates or results to display per page
                       </p>
                     </div>
-                    <select className="border border-slate-200 rounded-lg px-4 py-2 bg-white hover:border-purple-500 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all" defaultValue="50">
+                    <select className="border border-slate-200 rounded-md px-3 py-2 text-sm bg-white" defaultValue="50">
                       <option>10</option>
                       <option>25</option>
                       <option>50</option>
@@ -331,24 +316,24 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="p-4 rounded-lg border border-slate-200 bg-white hover:border-purple-300 transition-colors">
+                <div className="p-4 rounded-lg border border-slate-200 bg-white">
                   <div className="flex items-center justify-between gap-4">
                     <div className="space-y-1 flex-1">
-                      <Label className="text-sm font-semibold">Email Notifications</Label>
-                      <p className="text-sm text-muted-foreground">
+                      <Label className="text-sm font-medium">Email Notifications</Label>
+                      <p className="text-sm text-slate-500">
                         Receive email updates about evaluations and new candidates
                       </p>
                     </div>
                     <input
                       type="checkbox"
-                      className="h-5 w-5 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                      className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
                   </div>
                 </div>
               </div>
 
               <div className="flex justify-end pt-4 border-t">
-                <Button className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white">
+                <Button>
                   <Save className="mr-2 h-4 w-4" />
                   Save Preferences
                 </Button>
@@ -360,12 +345,11 @@ export default function SettingsPage() {
         {/* LLM Models Tab (Admin Only) */}
         {userRole === 'admin' && (
           <TabsContent value="models">
-            <Card className="border-0 shadow-lg overflow-hidden relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent"></div>
-              <CardHeader className="relative">
+            <Card className="border border-slate-200 bg-white">
+              <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-red-500">
-                    <Bot className="h-5 w-5 text-white" />
+                  <div className="p-1.5 rounded-md bg-slate-100">
+                    <Bot className="h-4 w-4 text-slate-600" />
                   </div>
                   LLM Model Configuration
                 </CardTitle>
@@ -373,10 +357,10 @@ export default function SettingsPage() {
                   Manage and configure AI models for resume matching and test evaluation
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6 relative">
+              <CardContent className="space-y-6">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <Label className="text-sm font-semibold">Available Models</Label>
+                    <Label className="text-sm font-medium">Available Models</Label>
                     <span className="text-sm text-muted-foreground">
                       {availableModels.length} model{availableModels.length !== 1 ? 's' : ''} installed
                     </span>
@@ -389,8 +373,8 @@ export default function SettingsPage() {
                           className="group flex items-center justify-between p-4 border border-slate-200 rounded-lg bg-white hover:border-orange-300 hover:shadow-md transition-all"
                         >
                           <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-gradient-to-br from-orange-100 to-red-100 group-hover:from-orange-200 group-hover:to-red-200 transition-colors">
-                              <Bot className="h-5 w-5 text-orange-600" />
+                            <div className="p-1.5 rounded-md bg-slate-100">
+                              <Bot className="h-4 w-4 text-slate-500" />
                             </div>
                             <div>
                               <p className="font-semibold text-slate-900">{model.name}</p>
@@ -399,24 +383,16 @@ export default function SettingsPage() {
                               </p>
                             </div>
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="border-orange-200 hover:bg-gradient-to-r hover:from-orange-500 hover:to-red-500 hover:text-white hover:border-transparent transition-all"
-                          >
+                          <Button variant="outline" size="sm">
                             Set as Default
                           </Button>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="text-center py-8 border border-dashed border-slate-200 rounded-lg bg-slate-50">
-                      <div className="inline-flex p-3 rounded-full bg-gradient-to-br from-orange-100 to-red-100 mb-3">
-                        <Bot className="h-8 w-8 text-orange-600" />
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        No models found. Make sure Ollama is running with models pulled.
-                      </p>
+                    <div className="py-10 text-center">
+                      <p className="text-sm font-medium text-slate-900 mb-1">No models found</p>
+                      <p className="text-sm text-slate-400">Make sure Ollama is running with models pulled.</p>
                     </div>
                   )}
                 </div>
@@ -431,7 +407,7 @@ export default function SettingsPage() {
                       placeholder="e.g., llama2:7b, mistral:7b, codellama:7b"
                       className="flex-1 border-slate-200 focus:border-orange-500 transition-colors"
                     />
-                    <Button className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white">
+                    <Button>
                       Pull Model
                     </Button>
                   </div>
@@ -448,12 +424,11 @@ export default function SettingsPage() {
         {/* User Management Tab (Admin Only) */}
         {userRole === 'admin' && (
           <TabsContent value="users">
-            <Card className="border-0 shadow-lg overflow-hidden relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent"></div>
-              <CardHeader className="relative">
+            <Card className="border border-slate-200 bg-white">
+              <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <div className="p-2 rounded-lg bg-gradient-to-br from-green-500 to-emerald-500">
-                    <Users className="h-5 w-5 text-white" />
+                  <div className="p-1.5 rounded-md bg-slate-100">
+                    <Users className="h-4 w-4 text-slate-600" />
                   </div>
                   User Management
                 </CardTitle>
@@ -461,18 +436,13 @@ export default function SettingsPage() {
                   Manage users, roles, and permissions across the platform
                 </CardDescription>
               </CardHeader>
-              <CardContent className="relative">
-                <div className="text-center py-12 space-y-4">
-                  <div className="inline-flex p-4 rounded-full bg-gradient-to-br from-green-100 to-emerald-100">
-                    <Users className="h-12 w-12 text-green-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold mb-2">Advanced User Management</h3>
-                    <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
-                      User management interface coming soon. For now, manage users and roles directly through the Supabase dashboard.
-                    </p>
-                  </div>
-                  <Button className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white">
+              <CardContent>
+                <div className="py-16 text-center">
+                  <p className="text-sm font-medium text-slate-900 mb-1">Advanced User Management</p>
+                  <p className="text-sm text-slate-400 mb-6 max-w-md mx-auto">
+                    User management interface coming soon. For now, manage users and roles directly through the Supabase dashboard.
+                  </p>
+                  <Button variant="outline">
                     <Shield className="mr-2 h-4 w-4" />
                     Open Supabase Dashboard
                   </Button>
