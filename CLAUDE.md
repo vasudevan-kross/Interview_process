@@ -25,8 +25,8 @@ npm run lint
 ### Infrastructure (Ollama LLM + Redis)
 ```bash
 docker compose up -d   # starts Ollama on :11434 and Redis on :6379
-ollama pull qwen3.5:9b && ollama pull glm-ocr   # required models
-# qwen3.5:9b - latest generation, superior reasoning, 256K context, multimodal (~5.5GB)
+ollama pull qwen2.5:7b && ollama pull glm-ocr   # required models
+# qwen2.5:7b - superior reasoning and JSON generation (~4.7GB)
 # glm-ocr - #1 ranked OCR model, 128K context (2.2GB)
 ```
 
@@ -62,7 +62,7 @@ Individual migration files (numbered 001–036) are kept in `backend/migrations/
 - **Backend:** FastAPI 0.115 + Pydantic v2 Settings, running on Uvicorn
 - **Frontend:** Next.js 15 (App Router) + React 19 + TypeScript + Tailwind CSS + shadcn/ui
 - **Database:** Supabase (PostgreSQL + pgvector + Auth + Storage)
-- **LLM:** Ollama (local) — default model `qwen3.5:9b`, vision/OCR model `glm-ocr`
+- **LLM:** Ollama (local) — default model `qwen2.5:7b`, vision/OCR model `glm-ocr`
 - **Video:** Daily.co (`@daily-co/daily-js`)
 - **Voice AI:** Vapi.ai (`@vapi-ai/web`)
 

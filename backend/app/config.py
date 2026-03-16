@@ -25,8 +25,8 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    DEFAULT_OLLAMA_MODEL: str = "qwen3.5:9b"
-    OLLAMA_NUM_CTX: int = 32768  # Increased - qwen3.5 supports 256K context
+    DEFAULT_OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_NUM_CTX: int = 8192
 
     # Ollama OCR Models (for fallback layers)
     OLLAMA_OCR_MODEL: str = "glm-ocr"
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     CODING_INTERVIEW_DEFAULT_GRACE_PERIOD: int = 15  # minutes
     CODING_INTERVIEW_AUTO_SAVE_INTERVAL: int = 30    # seconds
     CODING_INTERVIEW_MAX_DURATION: int = 240         # minutes (4 hours max)
-    QUESTION_GENERATION_MODEL: str = "qwen3.5:9b"
+    QUESTION_GENERATION_MODEL: str = "qwen2.5:7b"
     QUESTION_GENERATION_TEMPERATURE: float = 0.4
 
     # Vapi Voice Screening
