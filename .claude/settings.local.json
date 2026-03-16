@@ -64,7 +64,8 @@
       "Bash(find \"D:/Projects/AI driven/Interview/frontend/src/contexts\" -type f -name \"*.ts*\" 2>/dev/null | head -10)",
       "Bash(find:*)",
       "Bash(npm run dev:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "WebFetch(domain:ollama.com)"
     ]
   }
 }

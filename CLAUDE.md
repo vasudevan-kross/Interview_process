@@ -25,8 +25,9 @@ npm run lint
 ### Infrastructure (Ollama LLM + Redis)
 ```bash
 docker compose up -d   # starts Ollama on :11434 and Redis on :6379
-ollama pull qwen2.5:7b && ollama pull llava:7b   # required models (qwen2.5:7b replaces qwen2.5:7b)
-ollama pull qwen2.5:7b   # optional fallback model
+ollama pull qwen3.5:9b && ollama pull glm-ocr   # required models
+# qwen3.5:9b - latest generation, superior reasoning, 256K context, multimodal (~5.5GB)
+# glm-ocr - #1 ranked OCR model, 128K context (2.2GB)
 ```
 
 ### Environment
@@ -39,8 +40,19 @@ Copy `backend/.env.example` → `backend/.env` and fill in:
 
 `DEBUG=True` in `.env` disables JWT enforcement — the backend falls back to `SYSTEM_USER_UUID = "00000000-0000-0000-0000-000000000000"` for unauthenticated requests during local development.
 
-### Database Migrations
-Migrations are plain SQL files in `backend/migrations/` (numbered 001–031). Run them manually in Supabase's SQL editor in order. There is no migration runner script.
+### Database Setup & Migrations
+
+**For new projects (recommended):**
+Run the single consolidated schema file in Supabase SQL editor:
+```sql
+-- backend/migrations/000_consolidated_schema.sql
+```
+This file contains the complete, up-to-date database schema including all tables, indexes, RLS policies, functions, triggers, and seed data.
+
+**For existing projects or incremental updates:**
+Individual migration files (numbered 001–036) are kept in `backend/migrations/` for reference and can be run sequentially. The consolidated file (`000_consolidated_schema.sql`) represents the final state after all migrations.
+
+**Note:** There is no migration runner script — all migrations are plain SQL executed manually in Supabase's SQL editor.
 
 ---
 
@@ -50,7 +62,7 @@ Migrations are plain SQL files in `backend/migrations/` (numbered 001–031). Ru
 - **Backend:** FastAPI 0.115 + Pydantic v2 Settings, running on Uvicorn
 - **Frontend:** Next.js 15 (App Router) + React 19 + TypeScript + Tailwind CSS + shadcn/ui
 - **Database:** Supabase (PostgreSQL + pgvector + Auth + Storage)
-- **LLM:** Ollama (local) — default model `qwen2.5:7b`, vision model `llava:7b`
+- **LLM:** Ollama (local) — default model `qwen3.5:9b`, vision/OCR model `glm-ocr`
 - **Video:** Daily.co (`@daily-co/daily-js`)
 - **Voice AI:** Vapi.ai (`@vapi-ai/web`)
 
