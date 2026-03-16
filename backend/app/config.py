@@ -53,17 +53,6 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:3000"
 
-    # Daily.co Video Service
-    DAILY_API_KEY: Optional[str] = None
-    DAILY_DOMAIN: Optional[str] = None  # Your custom domain (optional)
-
-    # Video Settings
-    ENABLE_VIDEO_INTERVIEWS: bool = False
-    MAX_VIDEO_SIZE_MB: int = 5000  # 5GB
-    VIDEO_STORAGE_BUCKET: str = "interview-recordings"
-    ENABLE_AI_VIDEO_ANALYSIS: bool = True
-    ALLOWED_VIDEO_FORMATS: str = "mp4,webm,mov"
-
     # Frontend URL (for generating join links)
     FRONTEND_URL: str = "http://localhost:3000"
 
@@ -98,11 +87,6 @@ class Settings(BaseSettings):
     def allowed_origins_list(self) -> List[str]:
         """Get allowed origins as a list."""
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(',')]
-
-    @property
-    def allowed_video_formats_list(self) -> List[str]:
-        """Get allowed video formats as a list."""
-        return [fmt.strip() for fmt in self.ALLOWED_VIDEO_FORMATS.split(',')]
 
 
     class Config:

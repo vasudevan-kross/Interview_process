@@ -88,21 +88,6 @@ ADD CONSTRAINT voice_candidates_created_by_fkey
 FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE CASCADE;
 
 --------------------------------------------------------------------------------
--- 4. VIDEO INTERVIEWS
---------------------------------------------------------------------------------
-ALTER TABLE public.video_interviews DROP CONSTRAINT IF EXISTS video_interviews_created_by_fkey;
-
-UPDATE public.video_interviews vi
-SET created_by = u.id
-FROM public.users u
-WHERE vi.created_by::text = u.auth_user_id::text
-AND vi.created_by NOT IN (SELECT id FROM public.users);
-
-ALTER TABLE public.video_interviews 
-ADD CONSTRAINT video_interviews_created_by_fkey 
-FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE CASCADE;
-
---------------------------------------------------------------------------------
 -- 5. TEST EVALUATION (BATCHES & RESULTS)
 --------------------------------------------------------------------------------
 -- Batches
