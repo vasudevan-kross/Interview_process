@@ -13,6 +13,7 @@ import logging
 import json
 import re
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Request, Body, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -37,11 +38,12 @@ from app.schemas.coding_interviews import (
 from app.services.coding_interview_service import get_coding_interview_service
 from app.services.question_generator import get_question_generator, DOMAIN_REGISTRY
 from app.services.document_processor import get_document_processor
+from app.services.resume_auto_processor import get_resume_auto_processor
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.services.voice_interview_service import get_voice_interview_service
-from app.services.user_service import get_user_service
 from app.db.supabase_client import get_supabase
-from app.auth.dependencies import get_current_user_id
+from app.auth.dependencies import get_current_user_id, get_current_org_context, OrgContext
+from app.auth.permissions import require_permission
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ async def list_domains():
 @router.post("", summary="Create coding interview")
 async def create_interview(
     request: InterviewCreate,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """
     Create a new coding or testing interview with questions.
@@ -86,7 +88,7 @@ async def create_interview(
             programming_language=request.programming_language,
             interview_type=request.interview_type,
             questions_data=questions_data,
-            user_id=current_user_id,
+            user_id=ctx.user_id,
             grace_period_minutes=request.grace_period_minutes,
             resume_required=request.resume_required,
             allowed_languages=request.allowed_languages,
@@ -95,7 +97,8 @@ async def create_interview(
             require_signature=request.require_signature,
             bond_years=request.bond_years,
             bond_timing=request.bond_timing,
-            job_id=request.job_id
+            job_id=request.job_id,
+            org_id=ctx.org_id
         )
 
         return result
@@ -111,7 +114,7 @@ async def create_interview(
 @router.post("/generate-questions", summary="Generate questions with AI")
 async def generate_questions(
     request: GenerateQuestionsRequest,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """
     Generate interview questions using AI (Ollama codellama:7b).
@@ -197,7 +200,7 @@ class VoiceSessionRequest(BaseModel):
 
 @router.get("/voice-session/start", summary="Get opening message for voice interview creation")
 async def voice_session_start(
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """
     Returns the opening greeting message and initial session state for voice-driven
@@ -210,7 +213,7 @@ async def voice_session_start(
 @router.post("/voice-session", summary="Process one turn in voice interview creation")
 async def voice_session(
     request: VoiceSessionRequest,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """
     Process a single voice turn. The caller sends the latest speech transcript
@@ -222,7 +225,7 @@ async def voice_session(
         return await service.process_turn(
             message=request.message,
             session_state=request.session_state,
-            user_id=current_user_id,
+            user_id=ctx.user_id,
             user_timezone_offset=request.user_timezone_offset,
         )
     except Exception as e:
@@ -238,7 +241,7 @@ async def extract_questions_from_document(
     programming_language: str = Form('python'),
     interview_type: str = Form('coding'),
     difficulty: str = Form('medium'),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """
     Extract interview questions from uploaded document.
@@ -374,17 +377,13 @@ Rules:
 
 @router.get("", summary="List interviews")
 async def list_interviews(
-    current_user_id: str = Depends(get_current_user_id),
+    ctx: OrgContext = Depends(require_permission('interview:view')),
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0
 ):
-    """List all interviews created by the current user."""
+    """List all interviews for the current organization."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
         client = get_supabase()
         from datetime import datetime, timezone
 
@@ -392,7 +391,7 @@ async def list_interviews(
         # Find interviews that are still 'scheduled' or 'in_progress' but past their end time
         active_result = client.table('coding_interviews').select(
             'id, status, scheduled_end_time, grace_period_minutes'
-        ).eq('created_by', current_internal_id).in_(
+        ).eq('org_id', ctx.org_id).in_(
             'status', ['scheduled', 'in_progress']
         ).execute()
 
@@ -428,7 +427,7 @@ async def list_interviews(
                         logger.warning(f"Failed to auto-update interview status: {update_err}")
 
         # Now fetch the list with updated statuses
-        query = client.table('coding_interviews').select('*').eq('created_by', current_internal_id).order('created_at', desc=True).limit(limit).offset(offset)
+        query = client.table('coding_interviews').select('*').eq('org_id', ctx.org_id).is_('deleted_at', 'null').order('created_at', desc=True).limit(limit).offset(offset)
 
         if status_filter:
             query = query.eq('status', status_filter)
@@ -461,20 +460,16 @@ async def list_interviews(
 @router.get("/{interview_id}", summary="Get interview details")
 async def get_interview(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """Get interview details with questions."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
         client = get_supabase()
 
-        # Get interview and verify ownership
+        # Get interview and verify org membership
         interview_result = client.table('coding_interviews').select('*').eq(
             'id', interview_id
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data or len(interview_result.data) == 0:
             raise HTTPException(
@@ -538,20 +533,16 @@ async def get_interview(
 @router.delete("/{interview_id}", summary="Delete interview")
 async def delete_interview(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Delete an interview (cascade deletes questions, submissions)."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
         client = get_supabase()
 
-        # Delete and verify ownership (CASCADE will handle related records)
-        result = client.table('coding_interviews').delete().eq(
-            'id', interview_id
-        ).eq('created_by', current_internal_id).execute()
+        # Soft delete
+        result = client.table('coding_interviews').update(
+            {"deleted_at": datetime.utcnow().isoformat()}
+        ).eq('id', interview_id).eq('org_id', ctx.org_id).is_('deleted_at', 'null').execute()
 
         if not result.data or len(result.data) == 0:
             raise HTTPException(
@@ -574,7 +565,7 @@ async def delete_interview(
 @router.get("/submissions/{submission_id}/risk-score", summary="Get submission risk score")
 async def get_submission_risk_score(
     submission_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """
     Get comprehensive risk score for a submission based on anti-cheating activities.
@@ -603,14 +594,10 @@ async def get_submission_risk_score(
 
         submission = submission_result.data[0]
 
-        # Check if user owns the interview
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
+        # Check if user's org owns the interview
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission['interview_id']
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -728,11 +715,17 @@ async def save_code(request: SaveCodeRequest):
 
 
 @router.post("/submit", summary="Submit interview (public)")
-async def submit_interview(request: SubmitInterviewRequest, req: Request):
+async def submit_interview(
+    request: SubmitInterviewRequest,
+    req: Request,
+    background_tasks: BackgroundTasks
+):
     """
     Public endpoint for submitting interview.
     Finalizes submission and triggers evaluation.
     Accepts optional signature data and terms acceptance.
+
+    Also triggers background resume processing to link uploaded resumes to pipeline.
     """
     try:
         service = get_coding_interview_service()
@@ -748,6 +741,12 @@ async def submit_interview(request: SubmitInterviewRequest, req: Request):
             client_ip=client_ip
         )
 
+        # Add background task to process resume (if uploaded)
+        background_tasks.add_task(
+            process_resume_background,
+            request.submission_id
+        )
+
         return result
 
     except ValueError as e:
@@ -761,6 +760,16 @@ async def submit_interview(request: SubmitInterviewRequest, req: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to submit interview: {type(e).__name__}: {str(e)}"
         )
+
+
+async def process_resume_background(submission_id: str):
+    """Background task to process resume after submission."""
+    try:
+        processor = get_resume_auto_processor()
+        await processor.process_coding_interview_resume(submission_id)
+    except Exception as e:
+        logger.error(f"Background resume processing failed for submission {submission_id}: {e}")
+        # Don't raise - background task failure shouldn't affect submission
 
 
 @router.post("/activity", summary="Track activity (public)")
@@ -884,7 +893,7 @@ async def upload_resume(
 @router.get("/submissions/{submission_id}/resume", summary="Download resume")
 async def get_submission_resume(
     submission_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """Get a signed URL for viewing the candidate's uploaded resume."""
     try:
@@ -900,14 +909,10 @@ async def get_submission_resume(
 
         submission = submission_result.data[0]
 
-        # Verify interview ownership
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
+        # Verify interview org membership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission['interview_id']
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -939,20 +944,16 @@ async def get_submission_resume(
 @router.get("/{interview_id}/submissions", summary="List submissions")
 async def list_submissions(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """List all submissions for an interview."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
         client = get_supabase()
 
-        # Verify interview ownership
+        # Verify interview org membership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', interview_id
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -983,14 +984,10 @@ async def list_submissions(
 @router.get("/submissions/{submission_id}", summary="Get submission details")
 async def get_submission(
     submission_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """Get detailed submission with all answers and evaluations."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         client = get_supabase()
 
         # Get submission
@@ -1006,10 +1003,10 @@ async def get_submission(
 
         submission = submission_result.data[0]
 
-        # Verify interview ownership
+        # Verify interview org membership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission['interview_id']
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -1066,17 +1063,13 @@ async def get_submission(
 @router.post("/submissions/{submission_id}/evaluate", summary="Re-evaluate submission")
 async def reevaluate_submission(
     submission_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """Manually trigger re-evaluation of a submission."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         service = get_coding_interview_service()
 
-        # Verify ownership (similar to get_submission)
+        # Verify org membership
         client = get_supabase()
         submission_result = client.table('coding_submissions').select('interview_id').eq(
             'id', submission_id
@@ -1087,7 +1080,7 @@ async def reevaluate_submission(
 
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', submission_result.data[0]['interview_id']
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -1130,20 +1123,16 @@ async def _run_bulk_evaluation(interview_id: str, submissions: list) -> None:
 async def evaluate_all_submissions(
     interview_id: str,
     background_tasks: BackgroundTasks,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """Start bulk evaluation in background and return immediately to avoid connection timeout."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         client = get_supabase()
 
-        # Verify ownership
+        # Verify org membership
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', interview_id
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized to access this interview")
@@ -1196,7 +1185,7 @@ async def evaluate_all_submissions(
 async def bulk_import_candidates(
     interview_id: str,
     file: UploadFile = File(...),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """
     Upload an Excel (.xlsx / .xls) or CSV file to pre-register candidates for an interview.
@@ -1265,7 +1254,7 @@ async def bulk_import_candidates(
         result = await service.bulk_import_candidates(
             interview_id=interview_id,
             candidates=candidates,
-            user_id=current_user_id
+            user_id=ctx.user_id
         )
         return result
 
@@ -1287,23 +1276,19 @@ async def bulk_import_candidates(
 )
 async def get_interview_candidates(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """
     Return unified candidate list: pre-registered + walk-in submissions.
-    Requires interview ownership.
+    Requires interview org membership.
     """
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         client = get_supabase()
 
-        # Verify ownership
+        # Verify org membership
         interview_result = client.table('coding_interviews').select('id, title, access_token, total_marks').eq(
             'id', interview_id
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(
@@ -1345,20 +1330,16 @@ async def get_interview_candidates(
 async def set_submission_decision(
     submission_id: str,
     body: CandidateDecisionUpdate,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """
     Mark a candidate submission as advanced / rejected / hold / pending.
-    Requires ownership of the parent interview.
+    Requires org membership of the parent interview.
     """
     try:
         client = get_supabase()
 
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
-        # Verify ownership via interview
+        # Verify org membership via interview
         sub_result = client.table('coding_submissions').select('interview_id').eq(
             'id', submission_id
         ).execute()
@@ -1368,7 +1349,7 @@ async def set_submission_decision(
 
         interview_result = client.table('coding_interviews').select('id').eq(
             'id', sub_result.data[0]['interview_id']
-        ).eq('created_by', current_internal_id).execute()
+        ).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=403, detail="Not authorized")
@@ -1385,7 +1366,7 @@ async def set_submission_decision(
             submission_id=submission_id,
             decision=body.decision,
             notes=body.notes,
-            decided_by=current_user_id
+            decided_by=ctx.user_id
         )
         return result
 
@@ -1409,7 +1390,7 @@ async def update_candidate(
     interview_id: str,
     candidate_id: str,
     body: CandidateUpdate,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Update name, email, phone of a pre-registered candidate."""
     try:
@@ -1420,7 +1401,7 @@ async def update_candidate(
             name=body.name,
             email=body.email,
             phone=body.phone,
-            user_id=current_user_id
+            user_id=ctx.user_id
         )
         return result
     except ValueError as e:
@@ -1437,7 +1418,7 @@ async def update_candidate(
 async def delete_candidate(
     interview_id: str,
     candidate_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Delete a pre-registered candidate from the interview list."""
     try:
@@ -1445,7 +1426,7 @@ async def delete_candidate(
         await service.delete_interview_candidate(
             interview_id=interview_id,
             candidate_id=candidate_id,
-            user_id=current_user_id
+            user_id=ctx.user_id
         )
         return {'message': 'Candidate removed successfully'}
     except ValueError as e:
@@ -1465,7 +1446,7 @@ def _sanitize_name(name: str) -> str:
 @router.get("/{interview_id}/export", summary="Export submissions as ZIP")
 async def export_submissions_zip(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:view'))
 ):
     """
     Download all submitted candidates' resumes + answers as a ZIP archive.
@@ -1477,23 +1458,17 @@ async def export_submissions_zip(
                 answers.docx   (styled Word document)
     """
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         client = get_supabase()
 
-        # Verify interview ownership
+        # Verify interview org membership
         interview_result = client.table('coding_interviews').select(
-            'id, title, created_by'
-        ).eq('id', interview_id).execute()
+            'id, title, org_id'
+        ).eq('id', interview_id).eq('org_id', ctx.org_id).execute()
 
         if not interview_result.data:
             raise HTTPException(status_code=404, detail="Interview not found")
 
         interview = interview_result.data[0]
-        if interview.get('created_by') != current_internal_id:
-            raise HTTPException(status_code=403, detail="Not authorized")
 
         title = interview.get('title', 'Assessment')
         safe_title = _sanitize_name(title)
@@ -1729,19 +1704,15 @@ async def export_submissions_zip(
 async def update_interview(
     interview_id: str,
     body: InterviewUpdate,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Update interview title, description, scheduled times, or grace period."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         service = get_coding_interview_service()
         result = await service.update_interview(
             interview_id=interview_id,
             update_data=body.dict(exclude_none=True),
-            user_id=current_internal_id,
+            user_id=ctx.user_id,
         )
         return result
     except ValueError as e:
@@ -1754,16 +1725,12 @@ async def update_interview(
 @router.post("/{interview_id}/clone", summary="Clone interview")
 async def clone_interview(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Create a copy of an interview with all its questions and a new access token."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         service = get_coding_interview_service()
-        result = await service.clone_interview(interview_id, current_internal_id)
+        result = await service.clone_interview(interview_id, ctx.user_id, ctx.org_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -1775,16 +1742,12 @@ async def clone_interview(
 @router.post("/{interview_id}/send-invites", summary="Send invite emails to candidates")
 async def send_invites(
     interview_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Email the interview link to all pre-registered candidates who haven't submitted."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         service = get_coding_interview_service()
-        result = await service.send_interview_invites(interview_id, current_internal_id)
+        result = await service.send_interview_invites(interview_id, ctx.user_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -1797,20 +1760,16 @@ async def send_invites(
 async def bulk_decision(
     interview_id: str,
     body: BulkDecisionRequest,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """Set the same decision (advanced/rejected/hold/pending) on multiple submissions at once."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         service = get_coding_interview_service()
         result = await service.bulk_submission_decision(
             interview_id=interview_id,
             submission_ids=body.submission_ids,
             decision=body.decision,
-            decided_by=current_internal_id,
+            decided_by=ctx.user_id,
         )
         return result
     except ValueError as e:
@@ -1824,19 +1783,15 @@ async def bulk_decision(
 async def bulk_delete_candidates(
     interview_id: str,
     body: BulkDeleteCandidatesRequest,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Delete multiple pre-registered candidates from the interview pipeline."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-
         service = get_coding_interview_service()
         result = await service.bulk_delete_candidates(
             interview_id=interview_id,
             candidate_ids=body.candidate_ids,
-            user_id=current_internal_id,
+            user_id=ctx.user_id,
         )
         return result
     except ValueError as e:
@@ -1854,7 +1809,7 @@ async def save_evaluator_notes(
     submission_id: str,
     answer_id: str,
     body: EvaluatorNotesUpdate,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """Save interviewer notes and optionally override the AI-assigned marks for a specific answer."""
     try:
@@ -1864,7 +1819,7 @@ async def save_evaluator_notes(
             answer_id=answer_id,
             notes=body.notes,
             marks_override=body.marks_override,
-            evaluator_id=current_user_id,
+            evaluator_id=ctx.user_id,
         )
         return result
     except ValueError as e:
@@ -1877,14 +1832,14 @@ async def save_evaluator_notes(
 @router.delete("/submissions/{submission_id}", summary="Delete a submission")
 async def delete_submission(
     submission_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('interview:create'))
 ):
     """Delete a candidate submission (any status: in_progress, submitted, etc.). Requires interview ownership."""
     try:
         service = get_coding_interview_service()
         await service.delete_submission(
             submission_id=submission_id,
-            user_id=current_user_id
+            user_id=ctx.user_id
         )
         return {'message': 'Submission deleted successfully'}
     except ValueError as e:

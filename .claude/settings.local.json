@@ -58,7 +58,13 @@
       "mcp__plugin_playwright_playwright__browser_take_screenshot",
       "Bash(find \"/d/Projects/AI driven/Interview\" -type f \\\\\\( -name \"*.sql\" -o -name \"*migration*\" \\\\\\) 2>/dev/null | head -20)",
       "Bash(cd \"D:\\\\Projects\\\\AI driven\\\\Interview\\\\frontend\" && npx next build 2>&1 | tail -30)",
-      "Bash(find \"D:\\\\Projects\\\\AI driven\\\\Interview\" -type f -name \"*pipeline*\" 2>/dev/null | head -20)"
+      "Bash(find \"D:\\\\Projects\\\\AI driven\\\\Interview\" -type f -name \"*pipeline*\" 2>/dev/null | head -20)",
+      "Bash(find \"D:\\\\Projects\\\\AI driven\\\\Interview\" -type f \\\\\\( -name \"*.sql\" -o -name \"migrations\" -o -name \"*schema*\" \\\\\\) 2>/dev/null | head -20)",
+      "Bash(find \"D:/Projects/AI driven/Interview/backend/app/middleware\" -type f -name \"*.py\" 2>/dev/null | head -20)",
+      "Bash(find \"D:/Projects/AI driven/Interview/frontend/src/contexts\" -type f -name \"*.ts*\" 2>/dev/null | head -10)",
+      "Bash(find:*)",
+      "Bash(npm run dev:*)",
+      "Bash(test:*)"
     ]
   }
 }

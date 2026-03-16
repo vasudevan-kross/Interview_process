@@ -169,7 +169,8 @@ class TestEvaluationService:
         test_type: str,
         total_marks: float,
         duration_minutes: Optional[int] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process a question paper and extract questions.
@@ -221,7 +222,7 @@ class TestEvaluationService:
                 content_type=f"application/{validation['file_type']}"
             )
 
-            # Parse questions using LLM (uses fast model - llama3.1:8b)
+            # Parse questions using LLM (uses fast model - qwen2.5:7b)
             questions_result = await self._parse_questions(
                 extracted_text,
                 total_marks,
@@ -239,6 +240,7 @@ class TestEvaluationService:
                 "question_paper_path": storage_result['file_path'],
                 "question_paper_name": filename,
                 "created_by": internal_user_id,
+                **({"org_id": org_id} if org_id else {}),
                 "metadata": {
                     "file_type": validation['file_type'],
                     "file_size": validation['file_size'],
@@ -346,7 +348,7 @@ Extract each question with its answer key, marks, type, and other details.
 If marks are not specified, distribute the {total_marks} marks proportionally across questions.
 Return ONLY the JSON object, nothing else."""
 
-            # Use fast model for parsing (llama3.1:8b)
+            # Use fast model for parsing (qwen2.5:7b)
             result = await self.llm.parse_with_fast_model(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
@@ -410,7 +412,8 @@ Return ONLY the JSON object, nothing else."""
         candidate_name: str,
         candidate_email: Optional[str] = None,
         user_id: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process an answer sheet and evaluate answers.

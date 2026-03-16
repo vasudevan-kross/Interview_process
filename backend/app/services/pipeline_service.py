@@ -1,6 +1,7 @@
 """Pipeline Service: Unified candidate lifecycle tracking across modules."""
 
 import logging
+import uuid
 from typing import Optional
 from app.db.supabase_client import get_supabase
 from app.services.user_service import get_user_service
@@ -21,12 +22,19 @@ class PipelineService:
 
     # ── Settings ──────────────────────────────────────────────────────────
 
-    def get_pipeline_settings(self, job_id: str, user_id: str) -> dict:
+    def get_pipeline_settings(self, job_id: str, user_id: str, org_id: Optional[str] = None) -> dict:
         """Get pipeline threshold settings for a job."""
         user_id = self._resolve_user_id(user_id)
-        result = self.client.table("job_descriptions").select(
+        query = self.client.table("job_descriptions").select(
             "id, title, pipeline_settings"
-        ).eq("id", job_id).eq("created_by", user_id).execute()
+        ).eq("id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.execute()
 
         if not result.data:
             raise ValueError("Job not found or access denied")
@@ -38,13 +46,17 @@ class PipelineService:
         }
         return {"job_id": job_id, "title": job["title"], **settings}
 
-    def update_pipeline_settings(self, job_id: str, user_id: str, settings: dict) -> dict:
+    def update_pipeline_settings(self, job_id: str, user_id: str, settings: dict, org_id: Optional[str] = None) -> dict:
         """Update pipeline threshold settings for a job."""
         user_id = self._resolve_user_id(user_id)
-        # Verify ownership
-        check = self.client.table("job_descriptions").select("id").eq(
-            "id", job_id
-        ).eq("created_by", user_id).execute()
+        query = self.client.table("job_descriptions").select("id").eq("id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        check = query.execute()
         if not check.data:
             raise ValueError("Job not found or access denied")
 
@@ -61,13 +73,21 @@ class PipelineService:
 
     # ── Promote resumes into pipeline ─────────────────────────────────────
 
-    def promote_to_pipeline(self, job_id: str, resume_ids: list[str], user_id: str) -> dict:
+    def promote_to_pipeline(self, job_id: str, resume_ids: list[str], user_id: str, org_id: Optional[str] = None) -> dict:
         """Bulk-create pipeline_candidates from selected resumes."""
         user_id = self._resolve_user_id(user_id)
-        # Get job settings for thresholds
-        job_result = self.client.table("job_descriptions").select(
+        logger.info(f"🔍 PROMOTE: job_id={job_id}, user_id={user_id}, org_id={org_id}, resume_ids={resume_ids}")
+
+        query = self.client.table("job_descriptions").select(
             "id, pipeline_settings"
-        ).eq("id", job_id).eq("created_by", user_id).execute()
+        ).eq("id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        job_result = query.execute()
 
         if not job_result.data:
             raise ValueError("Job not found or access denied")
@@ -110,7 +130,12 @@ class PipelineService:
                 "resume_match_score": score,
                 "recommendation": recommendation,
                 "created_by": user_id,
+                "deleted_at": None,  # Clear soft-delete flag when re-adding
             }
+            if org_id:
+                record["org_id"] = org_id
+
+            logger.info(f"📝 Creating pipeline_candidate: email={record['candidate_email']}, org_id={record.get('org_id', 'NULL')}")
 
             try:
                 self.client.table("pipeline_candidates").upsert(
@@ -124,6 +149,94 @@ class PipelineService:
 
         return {"created": created, "skipped": skipped, "errors": errors}
 
+    def bulk_import_candidates(
+        self,
+        job_id: str,
+        candidates: list[dict],
+        user_id: str,
+        org_id: Optional[str] = None
+    ) -> dict:
+        """
+        Bulk import candidates directly to pipeline without resumes.
+
+        Args:
+            job_id: Job description ID
+            candidates: List of dicts with 'name', 'email', 'phone' (phone optional)
+            user_id: Creator user ID
+            org_id: Organization ID
+
+        Returns:
+            {
+                "total": int,
+                "created": int,
+                "skipped": int,
+                "errors": List[str]
+            }
+        """
+        user_id = self._resolve_user_id(user_id)
+
+        # Verify job exists and belongs to org
+        query = self.client.table("job_descriptions").select("id, title").eq("id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        job_result = query.execute()
+
+        if not job_result.data:
+            raise ValueError("Job description not found or access denied")
+
+        results = {
+            "total": len(candidates),
+            "created": 0,
+            "skipped": 0,
+            "errors": []
+        }
+
+        for candidate in candidates:
+            try:
+                # Validate required fields
+                if not candidate.get("name") or not candidate.get("email"):
+                    results["errors"].append(f"Missing name or email for candidate: {candidate}")
+                    results["skipped"] += 1
+                    continue
+
+                # Create pipeline candidate record
+                record = {
+                    "job_id": job_id,
+                    "candidate_name": candidate["name"],
+                    "candidate_email": candidate["email"].lower().strip(),
+                    "candidate_phone": candidate.get("phone"),
+                    "current_stage": "resume_screening",
+                    "resume_id": None,  # No resume yet
+                    "resume_match_score": None,  # No score yet
+                    "recommendation": "pending",  # Set to pending until resume uploaded
+                    "created_by": user_id,
+                    "deleted_at": None,  # Clear soft-delete flag when re-adding
+                }
+
+                if org_id:
+                    record["org_id"] = org_id
+
+                # Use upsert to avoid duplicates (unique constraint on job_id, email)
+                self.client.table("pipeline_candidates").upsert(
+                    record,
+                    on_conflict="job_id,candidate_email"
+                ).execute()
+
+                results["created"] += 1
+
+            except Exception as e:
+                error_msg = f"Error for {candidate.get('email', 'unknown')}: {str(e)}"
+                logger.warning(error_msg)
+                results["errors"].append(error_msg)
+                results["skipped"] += 1
+
+        logger.info(f"✅ Imported {results['created']} candidates to pipeline for job {job_id}")
+        return results
+
     # ── Advance candidates to next stage ──────────────────────────────────
 
     def advance_candidates(
@@ -134,6 +247,7 @@ class PipelineService:
         user_id: str,
         interview_id: Optional[str] = None,
         campaign_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> dict:
         """Move pipeline candidates to a forward stage."""
         user_id = self._resolve_user_id(user_id)
@@ -141,10 +255,13 @@ class PipelineService:
         if target_stage not in valid_stages:
             raise ValueError(f"Invalid target stage. Must be one of: {valid_stages}")
 
-        # Get pipeline candidates
-        candidates_result = self.client.table("pipeline_candidates").select("*").eq(
-            "job_id", job_id
-        ).eq("created_by", user_id).in_("id", candidate_ids).execute()
+        query = self.client.table("pipeline_candidates").select("*").eq("job_id", job_id)
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        candidates_result = query.in_("id", candidate_ids).execute()
 
         if not candidates_result.data:
             raise ValueError("No pipeline candidates found")
@@ -192,7 +309,7 @@ class PipelineService:
 
             if target_stage == "voice_screening" and campaign_id:
                 voice_id = self._create_voice_candidate(
-                    campaign_id, candidate, user_id
+                    campaign_id, candidate, user_id, org_id
                 )
                 if voice_id:
                     update_data["voice_candidate_id"] = voice_id
@@ -229,7 +346,7 @@ class PipelineService:
             logger.warning(f"Failed to create interview candidate: {e}")
             return None
 
-    def _create_voice_candidate(self, campaign_id: str, candidate: dict, user_id: str) -> Optional[str]:
+    def _create_voice_candidate(self, campaign_id: str, candidate: dict, user_id: str, org_id: Optional[str] = None) -> Optional[str]:
         """Create a voice_candidates entry for voice screening."""
         try:
             token = uuid.uuid4().hex[:12]
@@ -242,6 +359,8 @@ class PipelineService:
                 "status": "pending",
                 "created_by": user_id,
             }
+            if org_id:
+                record["org_id"] = org_id
             result = self.client.table("voice_candidates").insert(record).execute()
             return result.data[0]["id"] if result.data else None
         except Exception as e:
@@ -253,7 +372,6 @@ class PipelineService:
     def sync_coding_results(self, submission_id: str, candidate_email: str, score: float, percentage: float):
         """Called after coding evaluation — updates pipeline if entry exists."""
         try:
-            # Find pipeline candidate by email (across all jobs)
             result = self.client.table("pipeline_candidates").select("id").eq(
                 "candidate_email", candidate_email
             ).eq("current_stage", "technical_assessment").execute()
@@ -285,14 +403,22 @@ class PipelineService:
 
     # ── Pipeline board data ───────────────────────────────────────────────
 
-    def get_pipeline_board(self, job_id: str, user_id: str) -> dict:
+    def get_pipeline_board(self, job_id: str, user_id: str, org_id: Optional[str] = None) -> dict:
         """Get all pipeline candidates grouped by stage for Kanban view."""
         user_id = self._resolve_user_id(user_id)
-        result = self.client.table("pipeline_candidates").select("*").eq(
-            "job_id", job_id
-        ).eq("created_by", user_id).order("created_at", desc=False).execute()
+        logger.info(f"🔍 GET_PIPELINE_BOARD: job_id={job_id}, user_id={user_id}, org_id={org_id}")
+
+        query = self.client.table("pipeline_candidates").select("*").eq("job_id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.is_("deleted_at", "null").order("created_at", desc=False).execute()
 
         candidates = result.data or []
+        logger.info(f"📊 Found {len(candidates)} pipeline candidates for job {job_id}")
 
         board = {
             "resume_screening": [],
@@ -308,12 +434,17 @@ class PipelineService:
 
         return board
 
-    def get_pipeline_stats(self, job_id: str, user_id: str) -> dict:
+    def get_pipeline_stats(self, job_id: str, user_id: str, org_id: Optional[str] = None) -> dict:
         """Get pipeline statistics for a job."""
         user_id = self._resolve_user_id(user_id)
-        result = self.client.table("pipeline_candidates").select("*").eq(
-            "job_id", job_id
-        ).eq("created_by", user_id).execute()
+        query = self.client.table("pipeline_candidates").select("*").eq("job_id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.is_("deleted_at", "null").execute()
 
         candidates = result.data or []
         total = len(candidates)
@@ -342,13 +473,18 @@ class PipelineService:
         }
 
     def get_pipeline_candidates(
-        self, job_id: str, user_id: str, stage: Optional[str] = None, recommendation: Optional[str] = None
+        self, job_id: str, user_id: str, stage: Optional[str] = None, recommendation: Optional[str] = None, org_id: Optional[str] = None
     ) -> list[dict]:
         """List pipeline candidates with optional filters."""
         user_id = self._resolve_user_id(user_id)
-        query = self.client.table("pipeline_candidates").select("*").eq(
-            "job_id", job_id
-        ).eq("created_by", user_id)
+        query = self.client.table("pipeline_candidates").select("*").eq("job_id", job_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        query = query.is_("deleted_at", "null")
 
         if stage:
             query = query.eq("current_stage", stage)
@@ -360,93 +496,103 @@ class PipelineService:
 
     # ── Decision ──────────────────────────────────────────────────────────
 
-    def set_decision(self, candidate_id: str, user_id: str, decision: str, notes: Optional[str] = None) -> dict:
+    def set_decision(self, candidate_id: str, user_id: str, decision: str, notes: Optional[str] = None, org_id: Optional[str] = None) -> dict:
         """Set final hiring decision on a pipeline candidate."""
         user_id = self._resolve_user_id(user_id)
         valid = ["pending", "selected", "rejected", "hold"]
         if decision not in valid:
             raise ValueError(f"Invalid decision. Must be one of: {valid}")
 
-        result = self.client.table("pipeline_candidates").update({
+        query = self.client.table("pipeline_candidates").update({
             "final_decision": decision,
             "decision_notes": notes,
             "decided_by": user_id,
             "decided_at": "now()",
-        }).eq("id", candidate_id).eq("created_by", user_id).execute()
+        }).eq("id", candidate_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.execute()
 
         if not result.data:
             raise ValueError("Pipeline candidate not found or access denied")
 
         return result.data[0]
 
-    def delete_pipeline_candidate(self, candidate_id: str, user_id: str) -> bool:
-        """Remove a candidate from the pipeline."""
+    def delete_pipeline_candidate(self, candidate_id: str, user_id: str, org_id: Optional[str] = None) -> bool:
+        """Soft-delete a candidate from the pipeline."""
         user_id = self._resolve_user_id(user_id)
-        result = self.client.table("pipeline_candidates").delete().eq(
-            "id", candidate_id
-        ).eq("created_by", user_id).execute()
+        query = self.client.table("pipeline_candidates").update(
+            {"deleted_at": "now()"}
+        ).eq("id", candidate_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.execute()
         return bool(result.data)
 
     # ── Available targets ─────────────────────────────────────────────────
 
-    def get_available_interviews(self, user_id: str, job_id: Optional[str] = None) -> list[dict]:
-        """List coding interviews available for promotion.
-
-        When job_id is provided, returns job-linked interviews first, then unlinked ones.
-        """
+    def get_available_interviews(self, user_id: str, job_id: Optional[str] = None, org_id: Optional[str] = None) -> list[dict]:
+        """List coding interviews available for promotion."""
         user_id = self._resolve_user_id(user_id)
         fields = "id, title, status, interview_type, programming_language, scheduled_start_time, job_id"
 
+        def _build_query():
+            q = self.client.table("coding_interviews").select(fields)
+            if org_id:
+                q = q.eq("org_id", org_id)
+            else:
+                q = q.eq("created_by", user_id)
+            return q
+
         if job_id:
-            # Job-linked interviews first
-            linked = self.client.table("coding_interviews").select(fields).eq(
-                "created_by", user_id
-            ).eq("job_id", job_id).in_(
+            linked = _build_query().eq("job_id", job_id).in_(
                 "status", ["scheduled", "in_progress"]
             ).order("created_at", desc=True).execute()
 
-            # Then unlinked interviews as fallback
-            unlinked = self.client.table("coding_interviews").select(fields).eq(
-                "created_by", user_id
-            ).is_("job_id", "null").in_(
+            unlinked = _build_query().is_("job_id", "null").in_(
                 "status", ["scheduled", "in_progress"]
             ).order("created_at", desc=True).execute()
 
             return (linked.data or []) + (unlinked.data or [])
 
-        result = self.client.table("coding_interviews").select(fields).eq(
-            "created_by", user_id
-        ).in_(
+        result = _build_query().in_(
             "status", ["scheduled", "in_progress"]
         ).order("created_at", desc=True).execute()
         return result.data or []
 
-    def get_available_campaigns(self, user_id: str, job_id: Optional[str] = None) -> list[dict]:
-        """List voice screening campaigns available for promotion.
-
-        When job_id is provided, returns job-linked campaigns first, then unlinked ones.
-        """
+    def get_available_campaigns(self, user_id: str, job_id: Optional[str] = None, org_id: Optional[str] = None) -> list[dict]:
+        """List voice screening campaigns available for promotion."""
         user_id = self._resolve_user_id(user_id)
         fields = "id, name, job_role, is_active, candidate_type, interview_style, job_id"
 
+        def _build_query():
+            q = self.client.table("voice_screening_campaigns").select(fields)
+            if org_id:
+                q = q.eq("org_id", org_id)
+            else:
+                q = q.eq("created_by", user_id)
+            return q
+
         if job_id:
-            linked = self.client.table("voice_screening_campaigns").select(fields).eq(
-                "created_by", user_id
-            ).eq("job_id", job_id).eq("is_active", True).order(
+            linked = _build_query().eq("job_id", job_id).eq("is_active", True).order(
                 "created_at", desc=True
             ).execute()
 
-            unlinked = self.client.table("voice_screening_campaigns").select(fields).eq(
-                "created_by", user_id
-            ).is_("job_id", "null").eq("is_active", True).order(
+            unlinked = _build_query().is_("job_id", "null").eq("is_active", True).order(
                 "created_at", desc=True
             ).execute()
 
             return (linked.data or []) + (unlinked.data or [])
 
-        result = self.client.table("voice_screening_campaigns").select(fields).eq(
-            "created_by", user_id
-        ).eq("is_active", True).order(
+        result = _build_query().eq("is_active", True).order(
             "created_at", desc=True
         ).execute()
         return result.data or []

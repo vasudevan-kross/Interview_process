@@ -13,12 +13,12 @@ class InterviewSummaryService:
     """
     Service for generating AI-powered interview summaries and technical assessments.
 
-    Uses llama3.1:8b for reasoning and analysis.
+    Uses qwen2.5:7b for reasoning and analysis.
     """
 
     def __init__(self):
         self.settings = get_settings()
-        self.model = "llama3.1:8b"
+        self.model = "qwen2.5:7b"
         self.temperature = 0.3  # Lower temperature for more consistent analysis
         self.base_url = self.settings.OLLAMA_BASE_URL
 

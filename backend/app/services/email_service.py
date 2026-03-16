@@ -66,11 +66,11 @@ def _submission_html(candidate_name: str, interview_title: str) -> str:
 
 def send_email(to: str, subject: str, html: str, from_addr: Optional[str] = None) -> bool:
     """Send an HTML email via Gmail SMTP."""
-    sender = from_addr or getattr(settings, 'GMAIL_SENDER', 'vasudevan.r@krossark.com')
-    app_password = getattr(settings, 'GMAIL_APP_PASSWORD', None)
+    sender = from_addr or settings.GMAIL_SENDER
+    app_password = settings.GMAIL_APP_PASSWORD
 
-    if not app_password:
-        logger.warning("GMAIL_APP_PASSWORD not configured — email not sent")
+    if not sender or not app_password:
+        logger.warning("GMAIL_SENDER or GMAIL_APP_PASSWORD not configured — email not sent")
         return False
 
     try:
@@ -141,4 +141,28 @@ def send_interview_invite(
         to=candidate_email,
         subject=f"Interview Invitation: {interview_title}",
         html=_invite_html(candidate_name, interview_title, interview_link),
+    )
+
+
+def _voice_interview_completion_html(candidate_name: str, campaign_name: str) -> str:
+    body = f"""
+<p>Dear <strong>{candidate_name}</strong>,</p>
+<p>Thank you for completing the <strong>{campaign_name}</strong> voice screening interview.</p>
+<p>Your interview has been recorded and is currently being reviewed by our team.
+   We appreciate the time you took to speak with us about your experience and qualifications.</p>
+<p>You will hear back from us with the next steps shortly.</p>
+<p>Best of luck!</p>"""
+    return _base_html("Voice Interview Completed", body)
+
+
+def send_voice_interview_completion(
+    candidate_email: str,
+    candidate_name: str,
+    campaign_name: str = "Voice Screening"
+) -> bool:
+    """Send a completion confirmation for voice interview to the candidate."""
+    return send_email(
+        to=candidate_email,
+        subject=f"Interview Completed: {campaign_name}",
+        html=_voice_interview_completion_html(candidate_name, campaign_name),
     )

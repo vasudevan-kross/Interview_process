@@ -6,37 +6,44 @@ import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useOrg } from '@/contexts/OrganizationContext'
 
 const navItems = [
   {
     title: 'Dashboard',
     href: '/dashboard',
     icon: Home,
+    permission: 'pipeline:view',
   },
   {
     title: 'Interview Pipeline',
     href: '/dashboard/pipeline',
     icon: GitBranch,
+    permission: 'pipeline:view',
   },
   {
     title: 'Resume Matching',
     href: '/dashboard/resume-matching',
     icon: Users,
+    permission: 'resume:view',
   },
   {
     title: 'Test Evaluation',
     href: '/dashboard/test-evaluation',
     icon: FileText,
+    permission: 'test:view',
   },
   {
     title: 'Technical Assessments',
     href: '/dashboard/coding-interviews',
     icon: Code,
+    permission: 'interview:view',
   },
   {
     title: 'Voice Screening',
     href: '/dashboard/voice-screening',
     icon: Phone,
+    permission: 'campaign:view',
   },
 ]
 
@@ -44,12 +51,14 @@ const settingsItem = {
   title: 'Settings',
   href: '/dashboard/settings',
   icon: Settings,
+  permission: 'settings:view',
 }
 
 export function DashboardNav() {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const { org, can, loading } = useOrg()
 
   useEffect(() => {
     setMobileOpen(false)
@@ -72,6 +81,11 @@ export function DashboardNav() {
     }
     return pathname.startsWith(href)
   }
+
+  // Filter nav items by permission (show all while loading)
+  const visibleItems = loading
+    ? navItems
+    : navItems.filter(item => can(item.permission))
 
   const NavLink = ({ item }: { item: typeof navItems[0] }) => {
     const Icon = item.icon
@@ -124,19 +138,23 @@ export function DashboardNav() {
         collapsed ? 'md:w-16' : 'md:w-64',
         'w-64'
       )}>
-        {/* Logo */}
+        {/* Logo / Org name */}
         <div className={cn(
           'flex h-16 items-center border-b border-slate-800/60 px-4 shrink-0',
           collapsed ? 'justify-between' : 'justify-between'
         )}>
           {!collapsed && (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="p-1.5 rounded-md bg-indigo-600 shrink-0">
                 <FileCheck className="h-4 w-4 text-white" />
               </div>
-              <div>
-                <h1 className="font-semibold text-sm text-white">Interview AI</h1>
-                <p className="text-xs text-slate-500">Smart Hiring Platform</p>
+              <div className="min-w-0">
+                <h1 className="font-semibold text-sm text-white truncate">
+                  {org?.name || 'Interview AI'}
+                </h1>
+                <p className="text-xs text-slate-500 truncate">
+                  {org ? 'Organization' : 'Smart Hiring Platform'}
+                </p>
               </div>
             </div>
           )}
@@ -165,7 +183,7 @@ export function DashboardNav() {
             </p>
           )}
           <div className="space-y-0.5">
-            {navItems.map((item) => (
+            {visibleItems.map((item) => (
               <NavLink key={item.href} item={item} />
             ))}
           </div>

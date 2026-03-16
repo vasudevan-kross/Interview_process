@@ -48,12 +48,14 @@ import { toast } from 'sonner'
 import Vapi from '@vapi-ai/web'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonTable } from '@/components/ui/skeleton'
+import { useOrg } from '@/contexts/OrganizationContext'
 
 const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || ''
 const VAPI_ASSISTANT_ID = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID || ''
 const FRONTEND_URL = process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000'
 
 export default function VoiceScreeningPage() {
+    const { can } = useOrg()
     const [candidates, setCandidates] = useState<VoiceCandidate[]>([])
     const [loading, setLoading] = useState(true)
     const [searchQuery, setSearchQuery] = useState('')
@@ -465,14 +467,18 @@ export default function VoiceScreeningPage() {
                 description="AI-powered voice interviews via Vapi."
                 action={
                     <div className="flex items-center gap-2">
-                        <Button onClick={() => setShowAddModal(true)}>
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add Candidate
-                        </Button>
-                        <Button variant="outline" onClick={() => setShowImportModal(true)}>
-                            <Upload className="h-4 w-4 mr-2" />
-                            Import
-                        </Button>
+                        {can('campaign:create') && (
+                            <>
+                                <Button onClick={() => setShowAddModal(true)}>
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Add Candidate
+                                </Button>
+                                <Button variant="outline" onClick={() => setShowImportModal(true)}>
+                                    <Upload className="h-4 w-4 mr-2" />
+                                    Import
+                                </Button>
+                            </>
+                        )}
                         <Button variant="outline" onClick={handleExport} disabled={candidates.length === 0}>
                             <Download className="h-4 w-4 mr-2" />
                             Export
@@ -628,14 +634,16 @@ export default function VoiceScreeningPage() {
                                                     </Button>
 
                                                     {/* Delete */}
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => handleDelete(candidate.id)}
-                                                        title="Delete candidate"
-                                                    >
-                                                        <Trash2 className="h-4 w-4 text-red-500" />
-                                                    </Button>
+                                                    {can('campaign:create') && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => handleDelete(candidate.id)}
+                                                            title="Delete candidate"
+                                                        >
+                                                            <Trash2 className="h-4 w-4 text-red-500" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -1016,7 +1024,7 @@ export default function VoiceScreeningPage() {
                                                                                     </svg>
                                                                                 )}
                                                                             </div>
-                                                                            <p className={`font-medium break-words ${
+                                                                            <div className={`font-medium break-words ${
                                                                                 isEmpty
                                                                                     ? 'text-gray-400 italic'
                                                                                     : 'text-gray-900'
@@ -1028,7 +1036,7 @@ export default function VoiceScreeningPage() {
                                                                                 ) : (
                                                                                     displayValue
                                                                                 )}
-                                                                            </p>
+                                                                            </div>
                                                                         </div>
                                                                     )
                                                                 })}

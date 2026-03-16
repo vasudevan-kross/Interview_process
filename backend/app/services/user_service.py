@@ -44,10 +44,29 @@ class UserService:
                 self._cache[auth_user_id] = resolved_id
                 return resolved_id
 
-            # 3. If still not found, it might be a new user or a mismatch
-            # In some modules like Resume Matching, we auto-create the user record.
-            # For now, we'll return as-is but log a warning.
-            logger.warning(f"Could not resolve internal UUID for auth user: {auth_user_id}. Using raw ID.")
+            # 3. Not found — auto-create the users row from Supabase Auth data
+            try:
+                auth_response = self.client.auth.admin.get_user_by_id(auth_user_id)
+                auth_user = auth_response.user if auth_response else None
+                email = (auth_user.email or "") if auth_user else ""
+                full_name = ((auth_user.user_metadata or {}).get("full_name") or "") if auth_user else ""
+            except Exception:
+                email = ""
+                full_name = ""
+
+            insert_result = self.client.table("users").insert({
+                "email": email,
+                "full_name": full_name,
+                "auth_user_id": auth_user_id,
+            }).execute()
+
+            if insert_result.data:
+                resolved_id = insert_result.data[0]["id"]
+                self._cache[auth_user_id] = resolved_id
+                logger.info(f"Auto-created users row {resolved_id} for auth user {auth_user_id}")
+                return resolved_id
+
+            logger.warning(f"Could not create users row for auth user: {auth_user_id}. Using raw ID.")
             return auth_user_id
 
         except Exception as e:

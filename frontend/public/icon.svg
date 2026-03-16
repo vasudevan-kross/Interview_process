@@ -1,0 +1,34 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="128" fill="#6366f1"/>
+
+  <!-- Sparkle/Star icon -->
+  <g transform="translate(256, 256)">
+    <!-- Center circle -->
+    <circle cx="0" cy="0" r="20" fill="white"/>
+
+    <!-- Top ray -->
+    <path d="M0,-80 L10,-25 L0,-20 L-10,-25 Z" fill="white"/>
+
+    <!-- Right ray -->
+    <path d="M80,0 L25,10 L20,0 L25,-10 Z" fill="white"/>
+
+    <!-- Bottom ray -->
+    <path d="M0,80 L10,25 L0,20 L-10,25 Z" fill="white"/>
+
+    <!-- Left ray -->
+    <path d="M-80,0 L-25,10 L-20,0 L-25,-10 Z" fill="white"/>
+
+    <!-- Top-right diagonal -->
+    <path d="M56.5,-56.5 L20,-20 L15,-25 L18,-28 Z" fill="white"/>
+
+    <!-- Bottom-right diagonal -->
+    <path d="M56.5,56.5 L20,20 L25,15 L28,18 Z" fill="white"/>
+
+    <!-- Bottom-left diagonal -->
+    <path d="M-56.5,56.5 L-20,20 L-15,25 L-18,28 Z" fill="white"/>
+
+    <!-- Top-left diagonal -->
+    <path d="M-56.5,-56.5 L-20,-20 L-25,-15 L-28,-18 Z" fill="white"/>
+  </g>
+</svg>

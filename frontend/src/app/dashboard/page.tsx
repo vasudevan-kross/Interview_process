@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonStatCards } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
+import { useOrganization } from '@/hooks/useOrganization'
 
 interface DashboardStats {
   jobsCount: number
@@ -23,6 +24,7 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
+  const { org } = useOrganization()
   const [stats, setStats] = useState<DashboardStats>({
     jobsCount: 0,
     resumesCount: 0,
@@ -33,79 +35,63 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchDashboardData()
-  }, [])
+    if (org) {
+      fetchDashboardData()
+    }
+  }, [org])
 
   const fetchDashboardData = async () => {
     try {
       const supabase = createClient()
 
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!org?.id) return
 
-      const { data: userRecord } = await supabase
-        .from('users')
-        .select('id')
-        .eq('auth_user_id', user.id)
-        .single()
-
-      if (!userRecord) return
-
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('roles(name)')
-        .eq('user_id', userRecord.id)
-        .single()
-
-      const isAdmin = (roleData as any)?.roles?.name === 'admin'
-
-      let jobsQuery = supabase
+      // Count jobs in this organization
+      const { count: jobsCount } = await supabase
         .from('job_descriptions')
         .select('id', { count: 'exact', head: true })
+        .eq('org_id', org.id)
+        .is('deleted_at', null)
 
-      if (!isAdmin) {
-        jobsQuery = jobsQuery.eq('created_by', userRecord.id)
+      // Count resumes and get scores for jobs in this organization
+      const { data: orgJobs } = await supabase
+        .from('job_descriptions')
+        .select('id')
+        .eq('org_id', org.id)
+        .is('deleted_at', null)
+
+      const jobIds = orgJobs?.map(j => j.id) || []
+
+      let resumesData: any[] = []
+      let resumesCount = 0
+
+      if (jobIds.length > 0) {
+        const { data, count } = await supabase
+          .from('resumes')
+          .select('id, match_score', { count: 'exact' })
+          .in('job_description_id', jobIds)
+
+        resumesData = data || []
+        resumesCount = count || 0
       }
-
-      const { count: jobsCount } = await jobsQuery
-
-      let resumesQuery = supabase
-        .from('resumes')
-        .select('id, match_score', { count: 'exact' })
-
-      if (!isAdmin) {
-        const { data: userJobs } = await supabase
-          .from('job_descriptions')
-          .select('id')
-          .eq('created_by', userRecord.id)
-
-        const jobIds = userJobs?.map(j => j.id) || []
-        if (jobIds.length > 0) {
-          resumesQuery = resumesQuery.in('job_description_id', jobIds)
-        }
-      }
-
-      const { data: resumesData, count: resumesCount } = await resumesQuery
 
       const scores = resumesData?.map(r => r.match_score).filter(s => s !== null && s !== undefined) || []
       const avgScore = scores.length > 0
         ? (scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1)
         : '0'
 
-      let testsQuery = supabase
+      // Count tests in this organization
+      const { count: testsCount } = await supabase
         .from('tests')
         .select('id', { count: 'exact', head: true })
+        .eq('org_id', org.id)
 
-      if (!isAdmin) {
-        testsQuery = testsQuery.eq('created_by', userRecord.id)
-      }
-
-      const { count: testsCount } = await testsQuery
-
+      // Get recent jobs in this organization
       const { data: recentJobs } = await supabase
         .from('job_descriptions')
         .select('id, title, created_at')
-        .eq('created_by', userRecord.id)
+        .eq('org_id', org.id)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(3)
 

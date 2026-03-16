@@ -13,6 +13,7 @@ class APIClient {
   constructor() {
     this.client = axios.create({
       baseURL: API_URL,
+      timeout: 180000, // 3 minutes — LLM calls can be slow
       headers: {
         'Content-Type': 'application/json',
         'ngrok-skip-browser-warning': 'true',
@@ -45,6 +46,13 @@ class APIClient {
           if (typeof window !== 'undefined') {
             window.location.href = '/login'
           }
+        }
+        if (error.response?.status === 429) {
+          // Surface rate-limit errors clearly
+          return Promise.reject(new Error('Too many requests — please wait a moment and try again.'))
+        }
+        if (error.response?.status === 503) {
+          return Promise.reject(new Error('Service temporarily unavailable. Please try again shortly.'))
         }
         return Promise.reject(error)
       }

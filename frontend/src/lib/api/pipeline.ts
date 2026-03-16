@@ -222,6 +222,44 @@ export async function deletePipelineCandidate(candidateId: string): Promise<void
   if (!res.ok) throw new Error('Failed to delete candidate')
 }
 
+export async function importCandidatesFile(
+  jobId: string,
+  file: File
+): Promise<{
+  message: string
+  total: number
+  created: number
+  skipped: number
+  errors: string[]
+}> {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const headers: HeadersInit = {
+    'ngrok-skip-browser-warning': 'true',
+  }
+
+  if (session?.access_token) {
+    headers['Authorization'] = `Bearer ${session.access_token}`
+  }
+
+  const res = await fetch(`${API_BASE_URL}${API_PREFIX}/pipeline/${jobId}/candidates/import`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(extractErrorMessage(err.detail, 'Import failed'))
+  }
+
+  return res.json()
+}
+
 export async function getAvailableInterviews(jobId?: string): Promise<AvailableInterview[]> {
   const headers = await getAuthHeaders()
   const params = jobId ? `?job_id=${jobId}` : ''

@@ -42,6 +42,7 @@ pdf2image==1.16.3
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
+slowapi>=0.1.9
 
 # Utilities
 python-dotenv==1.0.0

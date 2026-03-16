@@ -39,9 +39,11 @@ import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonTable } from '@/components/ui/skeleton'
+import { useOrg } from '@/contexts/OrganizationContext'
 
 export default function CodingInterviewsPage() {
   const router = useRouter()
+  const { can } = useOrg()
   const [interviews, setInterviews] = useState<Interview[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -188,7 +190,7 @@ export default function CodingInterviewsPage() {
       <PageHeader
         title="Technical Assessments"
         description="Create and manage time-bound technical assessments across all domains."
-        action={
+        action={can('interview:create') ? (
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => setVoiceModalOpen(true)}>
               <Bot className="mr-2 h-4 w-4" />
@@ -199,7 +201,7 @@ export default function CodingInterviewsPage() {
               Create Interview
             </Button>
           </div>
-        }
+        ) : undefined}
       />
 
       {/* Stats */}
@@ -264,7 +266,7 @@ export default function CodingInterviewsPage() {
               <p className="text-sm text-slate-400 mb-4">
                 {searchQuery ? 'Try a different search term.' : 'Create your first technical assessment.'}
               </p>
-              {!searchQuery && (
+              {!searchQuery && can('interview:create') && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -338,9 +340,11 @@ export default function CodingInterviewsPage() {
                           <Button size="sm" variant="ghost" onClick={() => handleShareWhatsApp(interview.access_token, interview.title)} title="Share on WhatsApp">
                             <Share2 className="h-4 w-4" />
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleDelete(interview.id)} title="Delete" className="text-red-500 hover:text-red-600 hover:bg-red-50">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          {can('interview:create') && (
+                            <Button size="sm" variant="ghost" onClick={() => handleDelete(interview.id)} title="Delete" className="text-red-500 hover:text-red-600 hover:bg-red-50">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

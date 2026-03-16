@@ -11,6 +11,7 @@ import io
 import json
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from pydantic import BaseModel, Field
 from app.services.llm_orchestrator import LLMOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,42 @@ try:
     from docx import Document as DocxDocument
 except ImportError:
     DocxDocument = None
+
+
+# ── Pydantic schemas for LLM grammar-constrained output ───────────────────
+
+class _ExperienceEntry(BaseModel):
+    title: Optional[str] = None
+    company: Optional[str] = None
+    duration: Optional[str] = None
+    description: Optional[str] = None
+
+class _EducationEntry(BaseModel):
+    degree: Optional[str] = None
+    institution: Optional[str] = None
+    year: Optional[str] = None
+
+class _ParsedResume(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    summary: Optional[str] = None
+    skills: List[str] = []
+    experience: List[_ExperienceEntry] = []
+    education: List[_EducationEntry] = []
+    years_of_experience: Optional[int] = None
+
+class _MatchResult(BaseModel):
+    match_score: int = Field(0, ge=0, le=100)
+    overall_assessment: Optional[str] = None
+    strengths: List[str] = []
+    weaknesses: List[str] = []
+    missing_skills: List[str] = []
+    matching_skills: List[str] = []
+    experience_match: Optional[str] = None
+    education_match: Optional[str] = None
+    recommendation: Optional[str] = None
+    reasoning: Optional[str] = None
 
 
 class ResumeParserLLM:
@@ -121,76 +158,37 @@ class ResumeParserLLM:
 
             logger.info(f"Extracted {len(resume_text)} chars from resume: {filename}")
 
-            # Parse resume using LLM
+            # Parse resume using LLM with schema-constrained output + retry
             prompt = f"""Parse the following resume and extract structured information.
 
-Resume Text:
+EXAMPLE INPUT:
+John Smith | john@example.com | +1-555-0100
+Software Engineer at Acme Corp (2021-2023): Built REST APIs using Python/FastAPI.
+B.Sc Computer Science, MIT, 2021. Skills: Python, FastAPI, PostgreSQL, Docker.
+
+EXAMPLE OUTPUT:
+{{"name":"John Smith","email":"john@example.com","phone":"+1-555-0100","summary":"Software engineer with 2 years of backend experience.","skills":["Python","FastAPI","PostgreSQL","Docker"],"experience":[{{"title":"Software Engineer","company":"Acme Corp","duration":"2021-2023","description":"Built REST APIs using Python/FastAPI."}}],"education":[{{"degree":"B.Sc Computer Science","institution":"MIT","year":"2021"}}],"years_of_experience":2}}
+
+Now parse this resume:
 {resume_text[:6000]}
 
-Extract the following information and return as JSON:
-{{
-  "name": "Candidate's full name",
-  "email": "Email address",
-  "phone": "Phone number",
-  "summary": "Brief professional summary (2-3 sentences)",
-  "skills": ["skill1", "skill2", "skill3", ...],
-  "experience": [
-    {{
-      "title": "Job title",
-      "company": "Company name",
-      "duration": "Duration (e.g., 2020-2022)",
-      "description": "Brief description"
-    }}
-  ],
-  "education": [
-    {{
-      "degree": "Degree name",
-      "institution": "Institution name",
-      "year": "Graduation year"
-    }}
-  ],
-  "years_of_experience": 5
-}}
+Return ONLY the JSON object. Use null for missing fields, empty array [] for missing lists."""
 
-Important:
-- If information is not found, use null or empty array
-- Extract ALL skills mentioned (technical, soft skills, tools, frameworks)
-- Be thorough with experience and education
+            parsed_data = await self.llm.generate_with_retry(
+                prompt=prompt,
+                schema_class=_ParsedResume,
+                schema=_ParsedResume.model_json_schema(),
+                temperature=0.1,
+                max_tokens=1024,
+            )
 
-Return ONLY the JSON object, no additional text."""
+            logger.info(f"Successfully parsed resume: {parsed_data.get('name', 'Unknown')}")
 
-            result = await self.llm.generate_completion(prompt)
-
-            # Parse LLM response as JSON
-            try:
-                if not result or not result.get('response'):
-                    logger.error(f"LLM returned empty response for resume: {filename}")
-                    raise ValueError("LLM returned empty response")
-
-                # Extract JSON from response (handle markdown code blocks)
-                json_text = result['response'].strip()
-                if json_text.startswith('```'):
-                    json_text = json_text.split('```')[1]
-                    if json_text.startswith('json'):
-                        json_text = json_text[4:]
-                json_text = json_text.strip()
-
-                parsed_data = json.loads(json_text)
-
-                logger.info(f"Successfully parsed resume: {parsed_data.get('name', 'Unknown')}")
-
-                return {
-                    'parsed_data': parsed_data,
-                    'raw_text': resume_text,
-                    'filename': filename
-                }
-
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM response as JSON: {e}")
-                # Log a snippet of the response safely
-                response_preview = str(result.get('response', ''))[:500]
-                logger.error(f"LLM Response snippet: {response_preview}")
-                raise ValueError("Failed to parse resume structure from LLM response")
+            return {
+                'parsed_data': parsed_data,
+                'raw_text': resume_text,
+                'filename': filename
+            }
 
         except Exception as e:
             logger.error(f"Error parsing resume {filename}: {e}")
@@ -231,61 +229,34 @@ Candidate Information:
 - Education: {json.dumps(parsed.get('education', [])[:3])}
 - Recent Experience: {json.dumps(parsed.get('experience', [])[:3])}
 
-Provide a detailed match analysis in JSON format:
-{{
-  "match_score": 85,
-  "overall_assessment": "Strong match / Good match / Partial match / Weak match",
-  "strengths": [
-    "Has 5 years Python experience matching job requirement",
-    "Strong background in cloud technologies (AWS, Docker)",
-    "Relevant education in Computer Science"
-  ],
-  "weaknesses": [
-    "No experience with Kubernetes mentioned",
-    "Limited frontend development experience"
-  ],
-  "missing_skills": ["Kubernetes", "React"],
-  "matching_skills": ["Python", "AWS", "Docker", "PostgreSQL"],
-  "experience_match": "Exceeds requirements / Meets requirements / Below requirements",
-  "education_match": "Strong match / Good match / Acceptable / Not relevant",
-  "recommendation": "Strong recommend / Recommend / Consider / Not recommended",
-  "reasoning": "Detailed explanation of the recommendation (2-3 sentences)"
-}}
-
-Important:
-- match_score: 0-100 (0=no match, 100=perfect match)
-- Be objective and specific
-- Focus on job requirements vs candidate qualifications
+Return a JSON object with these fields:
+- match_score: integer 0-100 (0=no match, 100=perfect match)
+- overall_assessment: "Strong match", "Good match", "Partial match", or "Weak match"
+- strengths: array of strings (specific matching points)
+- weaknesses: array of strings (gaps)
+- missing_skills: array of skill name strings
+- matching_skills: array of skill name strings
+- experience_match: "Exceeds requirements", "Meets requirements", or "Below requirements"
+- education_match: "Strong match", "Good match", "Acceptable", or "Not relevant"
+- recommendation: "Strong recommend", "Recommend", "Consider", or "Not recommended"
+- reasoning: 2-3 sentence explanation
 
 Return ONLY the JSON object."""
 
-            result = await self.llm.generate_completion(prompt)
+            match_result = await self.llm.generate_with_retry(
+                prompt=prompt,
+                schema_class=_MatchResult,
+                schema=_MatchResult.model_json_schema(),
+                temperature=0.1,
+                max_tokens=1024,
+            )
 
-            # Parse LLM response
-            try:
-                if not result or not result.get('response'):
-                    logger.error(f"LLM returned empty response for match analysis: {candidate_name}")
-                    raise ValueError("LLM returned empty match response")
+            # Clamp score to valid range regardless of schema enforcement
+            match_result['match_score'] = min(100, max(0, match_result.get('match_score', 0)))
 
-                json_text = result['response'].strip()
-                if json_text.startswith('```'):
-                    json_text = json_text.split('```')[1]
-                    if json_text.startswith('json'):
-                        json_text = json_text[4:]
-                json_text = json_text.strip()
+            logger.info(f"Match score for {candidate_name}: {match_result['match_score']}/100")
 
-                match_result = json.loads(json_text)
-
-                logger.info(f"Match score for {candidate_name}: {match_result.get('match_score', 0)}/100")
-
-                return match_result
-
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse match result: {e}")
-                # Log a snippet of the response safely
-                response_preview = str(result.get('response', ''))[:500]
-                logger.error(f"LLM Response snippet: {response_preview}")
-                raise ValueError("Failed to parse match analysis from LLM response")
+            return match_result
 
         except Exception as e:
             logger.error(f"Error matching resume with job: {e}")

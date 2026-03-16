@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/video-interviews", tags=["Video Interviews"])
 
 
-from app.auth.dependencies import get_current_user_id
-from app.services.user_service import get_user_service
+from app.auth.dependencies import OrgContext
+from app.auth.permissions import require_permission
 
 
 @router.post(
@@ -41,7 +41,7 @@ from app.services.user_service import get_user_service
 )
 async def schedule_interview(
     request: ScheduleInterviewRequest,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:create"))
 ):
     """
     Schedule a new video interview.
@@ -58,10 +58,6 @@ async def schedule_interview(
     - **questions**: Optional pre-loaded interview questions
     """
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(user_id)
-        
         service = get_video_interview_service()
 
         result = await service.schedule_interview(
@@ -78,7 +74,8 @@ async def schedule_interview(
                 }
                 for interviewer in request.interviewers
             ],
-            created_by=current_internal_id,
+            created_by=ctx.user_id,
+            org_id=ctx.org_id,
             resume_id=request.resume_id,
             title=request.title,
             description=request.description,
@@ -111,7 +108,7 @@ async def list_interviews(
     job_id: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:view"))
 ):
     """
     List all video interviews with optional filters.
@@ -122,17 +119,13 @@ async def list_interviews(
     - **page_size**: Items per page (default: 20)
     """
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(user_id)
-        
         client = get_supabase()
 
         # Build query
         query = client.table("video_interviews").select("*", count="exact")
-        
-        # Filter by owner
-        query = query.eq("created_by", current_internal_id)
+
+        # Filter by organization
+        query = query.eq("org_id", ctx.org_id)
 
         # Apply filters
         if status_filter:
@@ -171,7 +164,7 @@ async def list_interviews(
 )
 async def get_interview(
     interview_id: str,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:view"))
 ):
     """
     Get detailed information about a specific interview.
@@ -179,15 +172,11 @@ async def get_interview(
     Includes participants, questions, and evaluations.
     """
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(user_id)
-        
         service = get_video_interview_service()
 
         # Get interview
         interview = await service.get_interview_by_id(interview_id)
-        if not interview or interview["created_by"] != current_internal_id:
+        if not interview or interview.get("org_id") != ctx.org_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Interview not found"
@@ -229,14 +218,10 @@ async def get_interview(
 async def update_interview(
     interview_id: str,
     request: UpdateInterviewRequest,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:create"))
 ):
     """Update interview details (scheduled time, duration, status)."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(user_id)
-        
         client = get_supabase()
 
         # Build update data
@@ -250,11 +235,11 @@ async def update_interview(
         if request.description is not None:
             update_data["description"] = request.description
 
-        # Update interview
+        # Update interview (scoped to org)
         result = client.table("video_interviews") \
             .update(update_data) \
             .eq("id", interview_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .execute()
 
         if not result.data:
@@ -282,21 +267,17 @@ async def update_interview(
 )
 async def delete_interview(
     interview_id: str,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:create"))
 ):
     """Delete or cancel an interview."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(user_id)
-        
         client = get_supabase()
 
-        # Check if interview exists and belongs to user
+        # Check if interview exists and belongs to org
         result = client.table("video_interviews") \
             .select("*") \
             .eq("id", interview_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -310,7 +291,7 @@ async def delete_interview(
         client.table("video_interviews") \
             .delete() \
             .eq("id", interview_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .execute()
 
         return None
@@ -332,7 +313,7 @@ async def delete_interview(
 )
 async def get_participants(
     interview_id: str,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:view"))
 ):
     """Get all participants for an interview."""
     try:
@@ -355,7 +336,7 @@ async def get_participants(
 )
 async def get_questions(
     interview_id: str,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:view"))
 ):
     """Get all questions for an interview."""
     try:
@@ -460,30 +441,26 @@ async def recording_ready_webhook(webhook: RecordingReadyWebhook):
 async def create_evaluation(
     interview_id: str,
     request: CreateEvaluationRequest,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:evaluate"))
 ):
     """Create a human evaluation for an interview."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(user_id)
-        
         client = get_supabase()
-        
-        # Verify interview ownership
+
+        # Verify interview belongs to org
         interview_check = client.table("video_interviews") \
             .select("id") \
             .eq("id", interview_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
-            
+
         if not interview_check.data:
             raise HTTPException(status_code=404, detail="Interview not found")
 
         evaluation_data = {
             "video_interview_id": interview_id,
-            "evaluator_id": current_internal_id,
+            "evaluator_id": ctx.user_id,
             "evaluation_type": "human",
             "overall_score": request.overall_score,
             "communication_score": request.communication_score,
@@ -518,7 +495,7 @@ async def create_evaluation(
 )
 async def get_recording_url(
     interview_id: str,
-    user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission("interview:view"))
 ):
     """Get a signed URL to access the interview recording."""
     try:

@@ -31,15 +31,10 @@ class VoiceScreeningService:
         email: Optional[str] = None,
         phone: Optional[str] = None,
         is_fresher: bool = False,
-        campaign_id: Optional[str] = None
+        campaign_id: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> dict:
-        """
-        Create a single voice screening candidate.
-
-        BACKWARD COMPATIBLE: campaign_id is optional
-        - If campaign_id provided: Uses campaign's dynamic VAPI config
-        - If campaign_id is None: Uses static VAPI_ASSISTANT_ID (legacy workflow)
-        """
+        """Create a single voice screening candidate."""
         user_id = self.user_service.resolve_user_id(user_id)
         token = self._generate_token()
 
@@ -49,10 +44,12 @@ class VoiceScreeningService:
             "email": email,
             "phone": phone,
             "is_fresher": is_fresher,
-            "campaign_id": campaign_id,  # NEW: Optional campaign link
+            "campaign_id": campaign_id,
             "status": "pending",
             "created_by": user_id,
         }
+        if org_id:
+            data["org_id"] = org_id
 
         result = self.client.table("voice_candidates").insert(data).execute()
 
@@ -64,13 +61,14 @@ class VoiceScreeningService:
     async def bulk_create_candidates(
         self,
         candidates: List[dict],
-        user_id: str
+        user_id: str,
+        org_id: Optional[str] = None
     ) -> dict:
         """Bulk create voice screening candidates."""
         user_id = self.user_service.resolve_user_id(user_id)
         records = []
         for c in candidates:
-            records.append({
+            record = {
                 "interview_token": self._generate_token(),
                 "name": c.get("name", ""),
                 "email": c.get("email"),
@@ -78,7 +76,10 @@ class VoiceScreeningService:
                 "is_fresher": c.get("is_fresher", False),
                 "status": "pending",
                 "created_by": user_id,
-            })
+            }
+            if org_id:
+                record["org_id"] = org_id
+            records.append(record)
 
         result = self.client.table("voice_candidates").insert(records).execute()
 
@@ -92,18 +93,19 @@ class VoiceScreeningService:
         user_id: str,
         limit: int = 100,
         offset: int = 0,
-        status_filter: Optional[str] = None
+        status_filter: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> dict:
-        """List voice candidates created by a specific user."""
+        """List voice candidates for the user's org or by created_by."""
         user_id = self.user_service.resolve_user_id(user_id)
-        query = (
-            self.client.table("voice_candidates")
-            .select("*")
-            .eq("created_by", user_id)
-            .order("created_at", desc=True)
-            .limit(limit)
-            .offset(offset)
-        )
+        query = self.client.table("voice_candidates").select("*")
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        query = query.order("created_at", desc=True).limit(limit).offset(offset)
 
         if status_filter:
             query = query.eq("status", status_filter)
@@ -129,16 +131,17 @@ class VoiceScreeningService:
 
         return result.data[0]
 
-    async def get_candidate_by_id(self, candidate_id: str, user_id: str) -> dict:
-        """Get candidate by ID (requires ownership)."""
+    async def get_candidate_by_id(self, candidate_id: str, user_id: str, org_id: Optional[str] = None) -> dict:
+        """Get candidate by ID (requires org membership or ownership)."""
         user_id = self.user_service.resolve_user_id(user_id)
-        result = (
-            self.client.table("voice_candidates")
-            .select("*")
-            .eq("id", candidate_id)
-            .eq("created_by", user_id)
-            .execute()
-        )
+        query = self.client.table("voice_candidates").select("*").eq("id", candidate_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.execute()
 
         if not result.data:
             raise ValueError("Candidate not found")
@@ -219,7 +222,7 @@ class VoiceScreeningService:
 
         # Check if candidate exists with this call_id
         result = self.client.table("voice_candidates").select("id").eq("call_id", call_id).execute()
-        
+
         # Fallback: If not found, it means the frontend failed to send the call_id when starting.
         # Find the most recently updated "in_progress" candidate and manually link them!
         if not result.data:
@@ -236,6 +239,31 @@ class VoiceScreeningService:
             "call_id", call_id
         ).execute()
 
+        # Send completion email to candidate (fire-and-forget)
+        try:
+            from app.services.email_service import send_voice_interview_completion
+
+            # Get candidate details for email
+            candidate_result = self.client.table("voice_candidates").select(
+                "name, email, campaign_name"
+            ).eq("call_id", call_id).execute()
+
+            if candidate_result.data:
+                candidate = candidate_result.data[0]
+                candidate_email = candidate.get("email") or update_data.get("email")
+                candidate_name = candidate.get("name", "Candidate")
+                campaign_name = candidate.get("campaign_name", "Voice Screening")
+
+                if candidate_email:
+                    send_voice_interview_completion(
+                        candidate_email=candidate_email,
+                        candidate_name=candidate_name,
+                        campaign_name=campaign_name
+                    )
+                    logger.info(f"Completion email sent to {candidate_email}")
+        except Exception as email_err:
+            logger.warning(f"Failed to send completion email: {email_err}")
+
         # Sync to pipeline if candidate exists there
         try:
             from app.services.pipeline_service import get_pipeline_service
@@ -247,34 +275,36 @@ class VoiceScreeningService:
         except Exception as pe:
             logger.debug(f"Pipeline sync skipped: {pe}")
 
-    async def delete_candidate(self, candidate_id: str, user_id: str):
+    async def delete_candidate(self, candidate_id: str, user_id: str, org_id: Optional[str] = None):
         """Delete a candidate."""
         user_id = self.user_service.resolve_user_id(user_id)
-        result = (
-            self.client.table("voice_candidates")
-            .delete()
-            .eq("id", candidate_id)
-            .eq("created_by", user_id)
-            .execute()
-        )
+        query = self.client.table("voice_candidates").delete().eq("id", candidate_id)
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.execute()
 
         if not result.data:
             raise ValueError("Candidate not found or not authorized")
 
         return {"message": "Candidate deleted"}
 
-    async def export_to_excel(self, user_id: str) -> bytes:
+    async def export_to_excel(self, user_id: str, org_id: Optional[str] = None) -> bytes:
         """Export all completed candidates to Excel."""
         user_id = self.user_service.resolve_user_id(user_id)
         import pandas as pd
 
-        result = (
-            self.client.table("voice_candidates")
-            .select("*")
-            .eq("created_by", user_id)
-            .order("created_at", desc=True)
-            .execute()
-        )
+        query = self.client.table("voice_candidates").select("*")
+
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.eq("created_by", user_id)
+
+        result = query.order("created_at", desc=True).execute()
 
         candidates = result.data or []
 
@@ -340,7 +370,7 @@ class VoiceScreeningService:
                         max_len = col_len + 2
                 except Exception:
                     max_len = col_len + 2
-                
+
                 col_letter = chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26)
                 worksheet.column_dimensions[col_letter].width = min(max_len, 40)
 

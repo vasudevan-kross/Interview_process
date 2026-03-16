@@ -10,8 +10,8 @@ import logging
 import hashlib
 
 from app.db.supabase_client import get_supabase
-from app.auth.dependencies import get_current_user_id
-from app.services.user_service import get_user_service
+from app.auth.dependencies import get_current_org_context, OrgContext
+from app.auth.permissions import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,8 @@ batch_status = {}
 
 
 async def process_single_paper(
+    file_data: bytes,
+    filename: str,
     test_id: str,
     candidate_name: str,
     batch_id: str,
@@ -123,7 +125,7 @@ async def batch_upload_papers(
     background_tasks: BackgroundTasks,
     test_id: str = Form(...),
     files: List[UploadFile] = File(...),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('test:create'))
 ):
     """
     Upload and process multiple answer sheets at once.
@@ -141,13 +143,9 @@ async def batch_upload_papers(
         if len(files) == 0:
             raise HTTPException(400, "No files provided")
 
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user_id)
-        
-        # Verify test ownership
+        # Verify test belongs to org
         client = get_supabase()
-        test_check = client.table("tests").select("id").eq("id", test_id).eq("created_by", current_internal_id).single().execute()
+        test_check = client.table("tests").select("id").eq("id", test_id).eq("org_id", ctx.org_id).single().execute()
         if not test_check.data:
             raise HTTPException(status_code=404, detail="Test not found")
 
@@ -177,7 +175,7 @@ async def batch_upload_papers(
             batch_id=batch_id,
             files_data=files_data,
             test_id=test_id,
-            user_id=current_user_id
+            user_id=ctx.user_id
         )
 
         return {
@@ -195,7 +193,7 @@ async def batch_upload_papers(
 @router.get("/status/{batch_id}")
 async def get_batch_status(
     batch_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('test:view'))
 ):
     """Get batch processing status and results"""
     if batch_id not in batch_status:
@@ -216,7 +214,7 @@ async def get_batch_status(
 @router.get("/results/{batch_id}")
 async def get_batch_results(
     batch_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('test:view'))
 ):
     """Get detailed results for a batch"""
     if batch_id not in batch_status:

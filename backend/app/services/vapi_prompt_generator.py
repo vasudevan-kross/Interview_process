@@ -18,12 +18,12 @@ class VAPIPromptGenerator:
     """
     Service for generating VAPI system prompts using Ollama LLM.
 
-    Uses Llama3.1:8b for better quality prompt generation with temperature 0.7.
+    Uses qwen2.5:7b for better quality prompt generation with temperature 0.7.
     """
 
     def __init__(self):
         self.settings = get_settings()
-        self.model = "llama3.1:8b"  # Upgraded for better prompt quality
+        self.model = "qwen2.5:7b"  # Upgraded for better prompt quality
         self.temperature = 0.7  # Balanced creativity for prompt generation
         self.base_url = self.settings.OLLAMA_BASE_URL
 

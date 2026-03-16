@@ -2,11 +2,13 @@
 LLM Orchestrator service for managing Ollama models and prompt execution.
 Handles model selection, prompt formatting, and response parsing.
 """
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any, Set, Type
 import asyncio
 import logging
 import json
 from datetime import datetime
+
+from pydantic import ValidationError
 
 try:
     import ollama
@@ -136,7 +138,7 @@ class LLMOrchestrator:
         Check if a model is available locally (uses cached model list).
 
         Args:
-            model_name: Name of the model (e.g., "llama3.1:8b")
+            model_name: Name of the model (e.g., "qwen2.5:7b")
 
         Returns:
             True if model is available
@@ -154,7 +156,8 @@ class LLMOrchestrator:
         model: Optional[str] = None,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        schema: Optional[dict] = None
     ) -> Dict[str, Any]:
         """
         Generate a completion using Ollama.
@@ -188,16 +191,20 @@ class LLMOrchestrator:
             # Generate completion
             options = {
                 "temperature": temperature,
-                "num_ctx": 4096,
+                "num_ctx": settings.OLLAMA_NUM_CTX,
             }
             if max_tokens:
                 options["num_predict"] = max_tokens
 
-            response = await self._async_client.chat(
-                model=model,
-                messages=messages,
-                options=options
-            )
+            chat_kwargs: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "options": options,
+            }
+            if schema is not None:
+                chat_kwargs["format"] = schema
+
+            response = await self._async_client.chat(**chat_kwargs)
 
             # ollama >= 0.4 returns ChatResponse (Pydantic), older returns dict
             if hasattr(response, 'message'):
@@ -235,6 +242,71 @@ class LLMOrchestrator:
                 "model": model or "unknown",
                 "error": str(e)
             }
+
+    async def generate_with_retry(
+        self,
+        prompt: str,
+        schema_class: Type,
+        schema: dict,
+        model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: Optional[int] = 1024,
+        max_retries: int = 2,
+    ) -> dict:
+        """
+        Call generate_completion with a JSON schema and validate the response
+        against a Pydantic model. Retries up to max_retries times, feeding
+        the validation error back into the prompt so the model can self-correct.
+
+        Args:
+            prompt: User prompt
+            schema_class: Pydantic model class used to validate the response
+            schema: JSON Schema dict passed to Ollama for grammar-constrained generation
+            max_retries: Number of retry attempts after the first failure
+
+        Returns:
+            Validated dict from schema_class.model_dump()
+
+        Raises:
+            ValueError: If all attempts fail
+        """
+        current_prompt = prompt
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries + 1):
+            result = await self.generate_completion(
+                current_prompt,
+                model=model,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                schema=schema,
+            )
+            try:
+                json_text = result.get('response', '').strip()
+                # Strip markdown code fences if present
+                if json_text.startswith('```'):
+                    json_text = json_text.split('```')[1]
+                    if json_text.startswith('json'):
+                        json_text = json_text[4:]
+                json_text = json_text.strip()
+                validated = schema_class(**json.loads(json_text))
+                return validated.model_dump()
+            except (ValidationError, json.JSONDecodeError, Exception) as e:
+                last_error = e
+                logger.warning(
+                    f"LLM validation attempt {attempt + 1}/{max_retries + 1} failed: {e}"
+                )
+                if attempt < max_retries:
+                    current_prompt += (
+                        f"\n\nPrevious response was invalid: {e}. "
+                        "Fix and return only the valid JSON object."
+                    )
+
+        raise ValueError(
+            f"LLM failed after {max_retries + 1} attempts: {last_error}"
+        )
 
     async def extract_skills_from_text(
         self,
@@ -488,7 +560,7 @@ Provide a detailed match analysis as JSON."""
     ) -> Dict[str, Any]:
         """
         Evaluate a candidate's answer against the correct answer.
-        Uses llama3.1:8b for reasoning.
+        Uses qwen2.5:7b for reasoning.
 
         Args:
             question: The question text
@@ -550,7 +622,7 @@ CANDIDATE'S ANSWER:
 
 Provide evaluation as JSON."""
 
-            # Use llama3.1:8b for evaluation (domain-aware model selection)
+            # Use qwen2.5:7b for evaluation (domain-aware model selection)
             result = await self.evaluate_with_capable_model(
                 prompt=user_prompt,
                 domain=domain,

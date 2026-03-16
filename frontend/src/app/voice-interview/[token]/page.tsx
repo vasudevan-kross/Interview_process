@@ -1,15 +1,16 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { getCandidateByToken, startCall, fetchCallData, type VoiceCandidatePublic } from '@/lib/api/voice-screening'
 import { Phone, Mic, MicOff, Loader2, CheckCircle, AlertCircle, WifiOff, MicOff as MicOffIcon } from 'lucide-react'
 import Vapi from '@vapi-ai/web'
+import { DisconnectionModal } from '@/components/voice-screening/DisconnectionModal'
 
 const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || ''
 const VAPI_ASSISTANT_ID = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID || ''
 
-type ErrorType = 'mic_denied' | 'mic_not_found' | 'network' | 'generic'
+type ErrorType = 'mic_denied' | 'mic_not_found' | 'mic_disconnected' | 'network' | 'generic'
 
 function classifyError(err: any): ErrorType {
     const msg = (err?.message || err?.error?.message || JSON.stringify(err) || '').toLowerCase()
@@ -18,6 +19,12 @@ function classifyError(err: any): ErrorType {
     if (msg.includes('permission') || msg.includes('notallowederror') || msg.includes('not allowed')
         || msg.includes('denied') || msg.includes('dismissed the prompt')) {
         return 'mic_denied'
+    }
+
+    // Microphone disconnected during call
+    if (msg.includes('device') && (msg.includes('disconnect') || msg.includes('removed') || msg.includes('unplugged'))
+        || msg.includes('track ended') || msg.includes('audio input lost')) {
+        return 'mic_disconnected'
     }
 
     // No microphone found
@@ -47,6 +54,11 @@ const ERROR_MESSAGES: Record<ErrorType, { title: string; message: string; action
         message: 'We could not detect a microphone on your device. Please connect a microphone and try again.',
         action: 'Try Again',
     },
+    mic_disconnected: {
+        title: 'Microphone Disconnected',
+        message: 'Your microphone was disconnected during the interview. We saved your partial responses.',
+        action: 'Close',
+    },
     network: {
         title: 'Connection Lost',
         message: 'Your internet connection appears to be unstable. Please check your connection and try again.',
@@ -61,6 +73,7 @@ const ERROR_MESSAGES: Record<ErrorType, { title: string; message: string; action
 
 export default function VoiceInterviewPage() {
     const params = useParams()
+    const router = useRouter()
     const token = params?.token as string
 
     const [candidate, setCandidate] = useState<VoiceCandidatePublic | null>(null)
@@ -69,8 +82,22 @@ export default function VoiceInterviewPage() {
     const [callState, setCallState] = useState<'idle' | 'connecting' | 'active' | 'ended' | 'processing' | 'error'>('idle')
     const [errorType, setErrorType] = useState<ErrorType>('generic')
     const [isOnline, setIsOnline] = useState(true)
+    const [showDisconnectionModal, setShowDisconnectionModal] = useState(false)
     const vapiRef = useRef<Vapi | null>(null)
     const capturedCallIdRef = useRef<string | null>(null)
+    const disconnectTimeRef = useRef<string | null>(null)
+
+    // Redirect to setup page if microphone setup hasn't been completed
+    // Microphone is MANDATORY for voice interviews - no skip option
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const micSetupCompleted = sessionStorage.getItem('micSetupCompleted')
+
+            if (!micSetupCompleted && token) {
+                router.push(`/voice-interview/${token}/setup`)
+            }
+        }
+    }, [token, router])
 
     // Monitor network connectivity
     useEffect(() => {
@@ -117,6 +144,74 @@ export default function VoiceInterviewPage() {
         setCallState('error')
         vapiRef.current = null
     }, [])
+
+    const handleMicrophoneDisconnection = useCallback(() => {
+        console.warn('[Interview] Microphone disconnected during call')
+
+        // Record disconnection time
+        disconnectTimeRef.current = new Date().toISOString()
+
+        // Show disconnection modal
+        setShowDisconnectionModal(true)
+
+        // Log disconnect event to backend
+        if (capturedCallIdRef.current && token) {
+            fetch(`/api/v1/voice-screening/candidates/token/${token}/reconnect?call_id=${capturedCallIdRef.current}&timestamp=${disconnectTimeRef.current}&event_type=disconnect`, {
+                method: 'POST'
+            }).catch((err: any) => console.error('Failed to log disconnect event:', err))
+        }
+    }, [token])
+
+    const handleReconnect = useCallback(async () => {
+        console.log('[Interview] Attempting to reconnect microphone...')
+
+        // Log reconnection attempt
+        const attemptTime = new Date().toISOString()
+        if (capturedCallIdRef.current && token) {
+            try {
+                await fetch(`/api/v1/voice-screening/candidates/token/${token}/reconnect?call_id=${capturedCallIdRef.current}&timestamp=${attemptTime}&event_type=reconnect_attempt`, {
+                    method: 'POST'
+                })
+            } catch (err: any) {
+                console.error('Failed to log reconnect attempt:', err)
+            }
+        }
+
+        // VAPI doesn't support mid-call stream replacement
+        // So reconnection is not possible - must end call
+        throw new Error('Mid-call reconnection is not supported. Please end the call.')
+    }, [token])
+
+    const handleEndCallGracefully = useCallback(async () => {
+        console.log('[Interview] Ending call gracefully due to disconnection')
+
+        // Close modal
+        setShowDisconnectionModal(false)
+
+        // Stop VAPI call
+        if (vapiRef.current) {
+            try {
+                vapiRef.current.stop()
+            } catch (err) {
+                console.error('Error stopping VAPI:', err)
+            }
+            vapiRef.current = null
+        }
+
+        // Set error state with mic_disconnected type
+        setErrorType('mic_disconnected')
+        setCallState('error')
+
+        // Try to save partial transcript
+        if (capturedCallIdRef.current) {
+            try {
+                console.log('[Interview] Attempting to save partial transcript...')
+                await fetchCallData(token, capturedCallIdRef.current)
+            } catch (err) {
+                console.error('Failed to fetch partial call data:', err)
+            }
+        }
+    }, [token])
 
     const handleStartInterview = async () => {
         if (!VAPI_PUBLIC_KEY || !candidate) return
@@ -175,7 +270,14 @@ export default function VoiceInterviewPage() {
                     return
                 }
                 console.error('Vapi error:', error)
-                showError(error)
+
+                // Check if it's a microphone disconnection
+                const errType = classifyError(error)
+                if (errType === 'mic_disconnected' && callState === 'active') {
+                    handleMicrophoneDisconnection()
+                } else {
+                    showError(error)
+                }
             })
 
             // NEW WORKFLOW: Use dynamic campaign config if available
@@ -183,7 +285,6 @@ export default function VoiceInterviewPage() {
             if (candidate.vapi_config) {
                 console.log('Using dynamic campaign configuration')
                 const {
-                    name,
                     knowledgeBase,
                     functions,
                     endOfSpeechTimeout,
@@ -333,6 +434,15 @@ Be conversational and professional.`,
                             <p>Please ensure your microphone is enabled and you&apos;re in a quiet place.</p>
                             <p>The call will take approximately 5-10 minutes.</p>
                         </div>
+
+                        {/* Screen monitoring notice */}
+                        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-left text-sm">
+                            <p className="text-yellow-200 font-medium flex items-start gap-2">
+                                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                <span>Your screen is continuously captured and monitored during the interview to ensure authenticity.</span>
+                            </p>
+                        </div>
+
                         <button
                             onClick={handleStartInterview}
                             disabled={!isOnline}
@@ -436,6 +546,14 @@ Be conversational and professional.`,
                     </div>
                 )}
             </div>
+
+            {/* Disconnection Modal */}
+            <DisconnectionModal
+                isOpen={showDisconnectionModal}
+                onReconnect={handleReconnect}
+                onEndCall={handleEndCallGracefully}
+                reconnectTimeoutSeconds={30}
+            />
         </div>
     )
 }

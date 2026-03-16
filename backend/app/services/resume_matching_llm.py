@@ -5,17 +5,25 @@ Replaces the PyTorch-based approach with LLM-only matching.
 No vector embeddings needed - uses direct LLM comparison.
 """
 
+import hashlib
 import logging
 import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
+from pydantic import BaseModel
 from app.services.resume_parser_llm import get_resume_parser_llm
 from app.db.supabase_client import get_supabase
 from app.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
+
+
+# ── Pydantic schema for job skills extraction ──────────────────────────────
+
+class _JobSkills(BaseModel):
+    skills: List[str] = []
 
 
 # ── Deterministic skill matching helpers ───────────────────────────────────
@@ -119,7 +127,8 @@ class ResumeMatchingServiceLLM:
         user_id: str,
         title: str,
         department: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process job description file.
@@ -152,49 +161,35 @@ class ResumeMatchingServiceLLM:
 Job Description:
 {job_text[:3000]}
 
-List all required skills, technologies, tools, and qualifications.
-Return as JSON array of strings:
-{{"skills": ["skill1", "skill2", "skill3", ...]}}
-
-Include:
-- Programming languages
-- Frameworks and libraries
-- Tools and platforms
-- Soft skills
-- Years of experience
-- Education requirements
-
+Return a JSON object with a single "skills" array listing all required skills, technologies, tools, frameworks, languages, and qualifications.
 Return ONLY the JSON object."""
 
-            result = await llm.generate_completion(prompt)
-
-            # Parse skills
             try:
-                json_text = result['response'].strip()
-                if json_text.startswith('```'):
-                    json_text = json_text.split('```')[1]
-                    if json_text.startswith('json'):
-                        json_text = json_text[4:]
-                json_text = json_text.strip()
-
-                skills_data = json.loads(json_text)
+                skills_data = await llm.generate_with_retry(
+                    prompt=prompt,
+                    schema_class=_JobSkills,
+                    schema=_JobSkills.model_json_schema(),
+                    temperature=0.1,
+                    max_tokens=512,
+                )
                 required_skills = skills_data.get('skills', [])
-
-            except:
-                logger.warning("Failed to parse skills JSON, using empty list")
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+                logger.warning(f"Failed to parse skills JSON: {e}. Using empty list.")
                 required_skills = []
 
             # Ensure user exists in the users table
             db_user_id = self._ensure_user_exists(user_id)
 
             # Dedup: return existing record if same title + filename uploaded by same user recently
-            existing = self.client.table('job_descriptions') \
+            existing_query = self.client.table('job_descriptions') \
                 .select('id') \
                 .eq('title', title) \
-                .eq('file_path', filename) \
-                .eq('created_by', db_user_id) \
-                .limit(1) \
-                .execute()
+                .eq('file_path', filename)
+            if org_id:
+                existing_query = existing_query.eq('org_id', org_id)
+            else:
+                existing_query = existing_query.eq('created_by', db_user_id)
+            existing = existing_query.limit(1).execute()
             if existing.data:
                 existing_id = existing.data[0]['id']
                 logger.info(f"Returning existing job description {existing_id} for title='{title}' file='{filename}'")
@@ -224,6 +219,8 @@ Return ONLY the JSON object."""
                 'created_at': datetime.now().isoformat(),
                 'status': 'active'
             }
+            if org_id:
+                job_data['org_id'] = org_id
 
             self.client.table('job_descriptions').insert(job_data).execute()
 
@@ -250,7 +247,8 @@ Return ONLY the JSON object."""
         job_id: str,
         candidate_name: Optional[str] = None,
         candidate_email: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process resume and match with job.
@@ -268,6 +266,43 @@ Return ONLY the JSON object."""
             dict with resume_id, match_score, parsed_data, match_analysis
         """
         try:
+            # Content-hash deduplication: return cached result for identical file+job
+            file_hash = hashlib.sha256(file_data).hexdigest()
+            cached_query = self.client.table('resumes') \
+                .select('*') \
+                .eq('job_description_id', job_id)
+            if org_id:
+                cached_query = cached_query.eq('org_id', org_id)
+            cached_rows = cached_query.execute()
+            for row in (cached_rows.data or []):
+                stored_hash = (row.get('parsed_data') or {}).get('file_hash')
+                if stored_hash == file_hash:
+                    logger.info(f"Cache hit for file_hash={file_hash[:12]}… — returning stored result")
+                    pd = row.get('parsed_data', {})
+                    return {
+                        'resume_id': row['id'],
+                        'candidate_name': row.get('candidate_name', 'Unknown'),
+                        'candidate_email': row.get('candidate_email'),
+                        'extracted_text': row.get('raw_text', ''),
+                        'skills': pd.get('skills_extracted', {
+                            'technical_skills': [], 'soft_skills': [],
+                            'tools': [], 'languages': [], 'certifications': []
+                        }),
+                        'match_score': row.get('match_score', 0),
+                        'match_details': row.get('skill_match', {}),
+                        'file_info': {
+                            'filename': row.get('file_path', filename),
+                            'file_size': len(file_data),
+                            'file_type': filename.split('.')[-1] if '.' in filename else 'unknown'
+                        },
+                        'metadata': {
+                            'processed_at': row.get('created_at'),
+                            'years_of_experience': pd.get('years_of_experience'),
+                            'education': pd.get('education', []),
+                            'experience': pd.get('experience', [])
+                        }
+                    }
+
             # Get job description
             job_result = self.client.table('job_descriptions').select('*').eq('id', job_id).execute()
 
@@ -367,7 +402,8 @@ Return ONLY the JSON object."""
                 'experience': parsed.get('experience', []),
                 'education': parsed.get('education', []),
                 'years_of_experience': parsed.get('years_of_experience'),
-                'file_name': filename
+                'file_name': filename,
+                'file_hash': file_hash
             }
 
             resume_db_data = {
@@ -385,6 +421,8 @@ Return ONLY the JSON object."""
                 'uploaded_by': db_user_id,
                 'created_at': datetime.now().isoformat()
             }
+            if org_id:
+                resume_db_data['org_id'] = org_id
 
             self.client.table('resumes').insert(resume_db_data).execute()
 
@@ -427,7 +465,8 @@ Return ONLY the JSON object."""
         resumes: List[Dict[str, Any]],
         job_id: str,
         user_id: str,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        org_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process multiple resumes in batch.
@@ -458,7 +497,8 @@ Return ONLY the JSON object."""
                     job_id=job_id,
                     candidate_name=candidate_name,
                     candidate_email=candidate_email,
-                    model=model
+                    model=model,
+                    org_id=org_id
                 )
                 successful.append(result)
 
@@ -496,23 +536,21 @@ Return ONLY the JSON object."""
     async def get_ranked_candidates(
         self,
         job_id: str,
-        user_id: str,
+        org_id: str,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """Get all candidates for a job, ranked by match score."""
         try:
-            db_user_id = self._ensure_user_exists(user_id)
-            
-            # Verify job ownership first
-            job_check = self.client.table('job_descriptions').select('id').eq('id', job_id).eq('created_by', db_user_id).execute()
+            # Verify job belongs to org
+            job_check = self.client.table('job_descriptions').select('id').eq('id', job_id).eq('org_id', org_id).execute()
             if not job_check.data:
-                logger.warning(f"Ownership check failed for job {job_id} by user {db_user_id}")
+                logger.warning(f"Job {job_id} not found for org {org_id}")
                 return []
 
             result = self.client.table('resumes').select('*').eq(
                 'job_description_id', job_id
-            ).eq('uploaded_by', db_user_id).order('match_score', desc=True).limit(limit).offset(offset).execute()
+            ).eq('org_id', org_id).order('match_score', desc=True).limit(limit).offset(offset).execute()
 
             # Transform database rows to match CandidateInfo schema
             candidates = []
@@ -571,7 +609,7 @@ Return ONLY the JSON object."""
             logger.error(f"Error getting job statistics: {e}")
             raise
 
-    async def delete_resumes(self, resume_ids: List[str], user_id: str) -> Dict[str, Any]:
+    async def delete_resumes(self, resume_ids: List[str], org_id: str) -> Dict[str, Any]:
         """Delete multiple resumes."""
         try:
             deleted_count = 0
@@ -579,11 +617,9 @@ Return ONLY the JSON object."""
 
             for resume_id in resume_ids:
                 try:
-                    db_user_id = self._ensure_user_exists(user_id)
-                    # Delete the resume with ownership check
                     result = self.client.table('resumes').delete().eq(
                         'id', resume_id
-                    ).eq('uploaded_by', db_user_id).execute()
+                    ).eq('org_id', org_id).execute()
 
                     if result.data and len(result.data) > 0:
                         deleted_count += 1
@@ -608,27 +644,19 @@ Return ONLY the JSON object."""
             logger.error(f"Error deleting resumes: {e}")
             raise
 
-    async def delete_job_description(self, job_id: str, user_id: str) -> Dict[str, Any]:
+    async def delete_job_description(self, job_id: str, org_id: str) -> Dict[str, Any]:
         """
         Delete a job description and all its associated resumes (cascade).
 
         Args:
             job_id: Job description ID
-            user_id: User ID (for ownership check)
+            org_id: Organization ID (for access control)
 
         Returns:
             dict with deleted job_id
         """
         try:
-            db_user_id = self._ensure_user_exists(user_id)
-
-            # Verify ownership — check both possible stored user IDs
-            result = self.client.table('job_descriptions') \
-                .select('id') \
-                .eq('id', job_id) \
-                .in_('created_by', [user_id, db_user_id]) \
-                .limit(1) \
-                .execute()
+            result = self.client.table('job_descriptions').select('id').eq('id', job_id).eq('org_id', org_id).limit(1).execute()
 
             if not result.data:
                 raise ValueError(f"Job description {job_id} not found or access denied")
@@ -643,20 +671,19 @@ Return ONLY the JSON object."""
             logger.error(f"Error deleting job description {job_id}: {e}")
             raise
 
-    async def get_job_description(self, job_id: str, user_id: str) -> Dict[str, Any]:
+    async def get_job_description(self, job_id: str, org_id: str) -> Dict[str, Any]:
         """
-        Get job description details by ID with ownership check.
+        Get job description details by ID with org-level access control.
 
         Args:
             job_id: Job description ID
-            user_id: User ID
+            org_id: Organization ID
 
         Returns:
             dict with job description details including raw_text
         """
         try:
-            db_user_id = self._ensure_user_exists(user_id)
-            result = self.client.table("job_descriptions").select("*").eq("id", job_id).eq("created_by", db_user_id).single().execute()
+            result = self.client.table("job_descriptions").select("*").eq("id", job_id).eq("org_id", org_id).single().execute()
             if not result.data:
                 raise ValueError(f"Job description with ID {job_id} not found or access denied")
             return result.data
@@ -664,20 +691,20 @@ Return ONLY the JSON object."""
             logger.error(f"Error getting job description: {e}")
             raise
 
-    async def get_job_statistics(self, job_id: str, user_id: str) -> Dict[str, Any]:
+    async def get_job_statistics(self, job_id: str, org_id: str) -> Dict[str, Any]:
         """
         Get statistics for a job posting.
 
         Args:
             job_id: Job description ID
-            user_id: User ID (for authentication)
+            org_id: Organization ID
 
         Returns:
             dict with statistics
         """
         try:
             # Get all resumes for this job
-            resumes = await self.get_ranked_candidates(job_id, user_id, limit=1000)
+            resumes = await self.get_ranked_candidates(job_id, org_id, limit=1000)
 
             if not resumes:
                 return {
@@ -688,7 +715,7 @@ Return ONLY the JSON object."""
                     "score_distribution": {}
                 }
 
-            scores = [r.get("match_score", 0) for r in resumes]
+            scores = [float(r.get("match_score") or 0) for r in resumes]
 
             # Calculate score distribution
             score_ranges = {

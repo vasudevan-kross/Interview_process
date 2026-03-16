@@ -110,17 +110,16 @@ class QuestionGenerator:
         from app.model_config import ModelConfig
         self.model = os.getenv('QUESTION_GENERATION_MODEL', ModelConfig.DEFAULT_MODEL)
 
-    async def _generate_with_llm(self, prompt: str, temperature: float = 0.8) -> str:
+    async def _generate_with_llm(self, prompt: str, temperature: float = 0.4, max_tokens: int = 2048) -> str:
         """
         Call the LLM orchestrator and return the text response.
-        Uses higher temperature for diverse question generation.
         """
         result = await self.llm.generate_completion(
             prompt=prompt,
             model=self.model,
-            system_prompt="You are an expert technical interviewer. Generate diverse, unique interview questions. Always return valid JSON arrays.",
+            system_prompt="You are an expert technical interviewer. Generate diverse, unique interview questions. CRITICAL: Return only valid JSON arrays with NO trailing commas. Ensure JSON is strictly RFC 8259 compliant.",
             temperature=temperature,
-            max_tokens=4000
+            max_tokens=max_tokens
         )
         return result.get("response", "")
 
@@ -180,7 +179,16 @@ Return ONLY a valid JSON array with this exact structure:
 
 Generate exactly {num_questions} UNIQUE questions now. Each must test a DIFFERENT concept. Return ONLY the JSON array, no other text."""
 
-            response = await self._generate_with_llm(prompt)
+            # Calculate max_tokens based on number of questions
+            # Each question is ~300-400 tokens, add buffer for prompt
+            # Optimized for 1-5 questions (recommended range)
+            if num_questions <= 5:
+                max_tokens = 3000  # Sufficient for 5 questions with safety margin
+            else:
+                max_tokens = max(3000, num_questions * 400 + 500)
+                logger.warning(f"Requesting {num_questions} questions - may be unreliable. Recommend <= 5 questions.")
+
+            response = await self._generate_with_llm(prompt, max_tokens=max_tokens)
             questions = self._extract_json_from_response(response)
 
             if not isinstance(questions, list) or len(questions) == 0:
@@ -677,6 +685,36 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
         ]
         return questions[:num]
 
+    def _clean_json_string(self, json_str: str) -> str:
+        """Clean common JSON errors from LLM output."""
+        import re
+        # Remove trailing commas before closing braces/brackets
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*]', ']', json_str)
+
+        # Fix incomplete JSON - add missing closing brackets if needed
+        # Count opening and closing brackets
+        open_brackets = json_str.count('[') - json_str.count(']')
+        open_braces = json_str.count('{') - json_str.count('}')
+
+        # If JSON starts with [ but doesn't end with ], try to close it
+        if json_str.strip().startswith('['):
+            # Remove incomplete last object if it exists
+            last_complete = json_str.rfind('}')
+            if last_complete > 0:
+                json_str = json_str[:last_complete + 1]
+                # Recount after truncation
+                open_brackets = json_str.count('[') - json_str.count(']')
+                open_braces = json_str.count('{') - json_str.count('}')
+
+            # Add missing closing brackets
+            if open_braces > 0:
+                json_str += '}' * open_braces
+            if open_brackets > 0:
+                json_str += ']' * open_brackets
+
+        return json_str
+
     def _extract_json_from_response(self, response: str) -> List[Dict[str, Any]]:
         """Extract JSON array from LLM response."""
         try:
@@ -687,19 +725,34 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
             start = response.find('[')
             end = response.rfind(']') + 1
             if start != -1 and end > start:
+                json_candidate = response[start:end]
+
+                # Try cleaning common JSON errors
                 try:
-                    return json.loads(response[start:end])
+                    cleaned = self._clean_json_string(json_candidate)
+                    return json.loads(cleaned)
                 except:
-                    pass
+                    # Try without cleaning
+                    try:
+                        return json.loads(json_candidate)
+                    except:
+                        pass
 
             # Try line by line
             for line in response.split('\n'):
                 if line.strip().startswith('['):
                     try:
-                        return json.loads(line.strip())
+                        cleaned = self._clean_json_string(line.strip())
+                        return json.loads(cleaned)
                     except:
                         continue
 
+            # Log the problematic response for debugging
+            logger.error(f"Failed to parse JSON. Response preview: {response[:500]}...")
+            logger.error(f"Response end: ...{response[-200:]}")
+            logger.error(f"Response length: {len(response)} characters")
+            logger.error(f"Open brackets: [ = {response.count('[')} ] = {response.count(']')}")
+            logger.error(f"Open braces: {{ = {response.count('{')} }} = {response.count('}')}")
             raise ValueError("No valid JSON found in response")
 
     def _get_fallback_coding_questions(

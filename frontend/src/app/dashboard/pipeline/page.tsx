@@ -19,7 +19,7 @@ import { toast } from 'sonner'
 import {
   Users, ArrowRight, CheckCircle2, Code, Phone, FileText,
   Settings2, ThumbsUp, ThumbsDown, Minus, MoreHorizontal, Trash2,
-  ChevronRight, Search, Sliders,
+  ChevronRight, Search, Sliders, Plus, Loader2,
 } from 'lucide-react'
 import {
   getPipelineBoard, getPipelineStats, getPipelineSettings, updatePipelineSettings,
@@ -32,6 +32,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { useOrganization } from '@/hooks/useOrganization'
 
 type Stage = 'resume_screening' | 'technical_assessment' | 'voice_screening' | 'completed'
 
@@ -46,6 +47,7 @@ const STAGES: Stage[] = ['resume_screening', 'technical_assessment', 'voice_scre
 
 export default function PipelinePage() {
   const router = useRouter()
+  const { org } = useOrganization()
 
   // Job selection
   const [jobs, setJobs] = useState<any[]>([])
@@ -90,13 +92,20 @@ export default function PipelinePage() {
     open: boolean; targetStage: Stage; candidateIds: string[]
   }>({ open: false, targetStage: 'technical_assessment', candidateIds: [] })
 
+  // Delete dialog
+  const [deleteDialog, setDeleteDialog] = useState<{
+    open: boolean; candidateIds: string[]
+  }>({ open: false, candidateIds: [] })
+
   // Search
   const [searchTerm, setSearchTerm] = useState('')
 
-  // Load jobs list
+  // Load jobs list when org is ready
   useEffect(() => {
-    loadJobs()
-  }, [])
+    if (org) {
+      loadJobs()
+    }
+  }, [org])
 
   const loadJobs = async () => {
     setLoadingJobs(true)
@@ -105,20 +114,30 @@ export default function PipelinePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const { data: userRecord } = await supabase
-        .from('users')
-        .select('id')
-        .eq('auth_user_id', user.id)
-        .single()
-
-      const userIds = [user.id]
-      if (userRecord && userRecord.id !== user.id) userIds.push(userRecord.id)
-
-      const { data: jobsData, error } = await supabase
+      // Build query - filter by org_id if available, otherwise by created_by
+      let query = supabase
         .from('job_descriptions')
-        .select('id, title, department, created_at')
-        .in('created_by', userIds)
+        .select('id, title, department, created_at, org_id')
+        .is('deleted_at', null)  // Exclude soft-deleted jobs
         .order('created_at', { ascending: false })
+
+      // Filter by org_id if organization context is available
+      if (org?.id) {
+        query = query.eq('org_id', org.id)
+      } else {
+        // Fallback to created_by filter for backward compatibility
+        const { data: userRecord } = await supabase
+          .from('users')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .single()
+
+        const userIds = [user.id]
+        if (userRecord && userRecord.id !== user.id) userIds.push(userRecord.id)
+        query = query.in('created_by', userIds)
+      }
+
+      const { data: jobsData, error } = await query
 
       if (error) {
         toast.error('Failed to load jobs')
@@ -310,6 +329,22 @@ export default function PipelinePage() {
     }
   }
 
+  const handleBulkDelete = (candidateIds: string[]) => {
+    setDeleteDialog({ open: true, candidateIds })
+  }
+
+  const executeDelete = async () => {
+    try {
+      await Promise.all(deleteDialog.candidateIds.map(id => deletePipelineCandidate(id)))
+      toast.success(`Removed ${deleteDialog.candidateIds.length} candidate(s) from pipeline`)
+      setDeleteDialog({ open: false, candidateIds: [] })
+      setSelected(new Set())
+      loadPipeline()
+    } catch {
+      toast.error('Failed to remove some candidates')
+    }
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────
 
   const getRecommendationBadge = (rec: string) => {
@@ -379,11 +414,24 @@ export default function PipelinePage() {
         <CardContent className="pt-4 pb-4">
           <div className="flex items-center gap-4">
             <label className="text-sm font-medium text-slate-700 whitespace-nowrap">Select Job:</label>
-            <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+            <Select value={selectedJobId} onValueChange={(value) => {
+              if (value === '__create_new__') {
+                router.push('/dashboard/resume-matching')
+              } else {
+                setSelectedJobId(value)
+              }
+            }}>
               <SelectTrigger className="max-w-md">
                 <SelectValue placeholder="Choose a job description..." />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="__create_new__" className="text-indigo-600 font-medium">
+                  <div className="flex items-center gap-2">
+                    <Plus className="h-4 w-4" />
+                    Create New Job
+                  </div>
+                </SelectItem>
+                {jobs.length > 0 && <div className="h-px bg-slate-200 my-1" />}
                 {jobs.map((job) => (
                   <SelectItem key={job.id} value={job.id}>
                     {job.title || 'Untitled Job'} {job.department ? `(${job.department})` : ''}
@@ -392,7 +440,7 @@ export default function PipelinePage() {
               </SelectContent>
             </Select>
             {jobs.length === 0 && (
-              <p className="text-sm text-slate-400">No jobs found. Upload a job description in Resume Matching first.</p>
+              <p className="text-sm text-slate-400">No jobs found. Create one above or upload a job description in Resume Matching first.</p>
             )}
           </div>
         </CardContent>
@@ -528,14 +576,14 @@ export default function PipelinePage() {
                 </div>
 
                 {/* Bulk action for this column */}
-                {stageSelected.length > 0 && stage !== 'completed' && (
-                  <div className="flex gap-1">
-                    {getNextStages(stage).map(nextStage => (
+                {stageSelected.length > 0 && (
+                  <div className="relative z-10 flex gap-1">
+                    {stage !== 'completed' && getNextStages(stage).map(nextStage => (
                       <Button
                         key={nextStage}
                         size="sm"
                         variant="outline"
-                        className="text-xs h-7 flex-1"
+                        className="text-xs h-7 flex-1 cursor-pointer"
                         onClick={() => openAdvanceDialog(nextStage, stageSelected.map(c => c.id))}
                         disabled={advancing}
                       >
@@ -543,6 +591,15 @@ export default function PipelinePage() {
                         {STAGE_CONFIG[nextStage].label.split(' ')[0]}
                       </Button>
                     ))}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 cursor-pointer"
+                      onClick={() => handleBulkDelete(stageSelected.map(c => c.id))}
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      Delete ({stageSelected.length})
+                    </Button>
                   </div>
                 )}
 
@@ -814,6 +871,25 @@ export default function PipelinePage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDecisionDialog({ ...decisionDialog, open: false })}>Cancel</Button>
             <Button onClick={saveDecision}>Save Decision</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Confirmation Dialog ────────────────────────────────── */}
+      <Dialog open={deleteDialog.open} onOpenChange={(o) => !o && setDeleteDialog({ ...deleteDialog, open: false })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Candidates from Pipeline</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove {deleteDialog.candidateIds.length} candidate(s) from the pipeline? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog({ open: false, candidateIds: [] })}>Cancel</Button>
+            <Button variant="destructive" onClick={executeDelete}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Remove {deleteDialog.candidateIds.length} Candidate{deleteDialog.candidateIds.length !== 1 ? 's' : ''}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -25,7 +25,8 @@ from postgrest import APIError
 
 from app.db.supabase_client import get_supabase
 from app.core.config import get_settings
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_org_context, OrgContext
+from app.auth.permissions import require_permission
 from app.schemas.voice_screening import (
     CampaignCreateRequest,
     CampaignResponse,
@@ -56,7 +57,7 @@ router = APIRouter(prefix="/voice-screening", tags=["voice-screening"])
 @router.post("/campaigns", response_model=CampaignResponse)
 async def create_campaign(
     request: CampaignCreateRequest,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """
     Create a new voice screening campaign with AI-generated VAPI configuration.
@@ -101,13 +102,10 @@ async def create_campaign(
             }
         ]
 
-        # Get user service for ID resolution
-        user_service = get_user_service()
-        resolved_user_id = user_service.resolve_user_id(current_user["id"])
-
         # Insert campaign into database
         campaign_data = {
-            "created_by": resolved_user_id,
+            "created_by": ctx.user_id,
+            "org_id": ctx.org_id,
             "name": request.name,
             "job_role": request.job_role,
             "description": request.description,
@@ -123,7 +121,7 @@ async def create_campaign(
             "vapi_config": vapi_config,
             "knowledge_base_file_ids": request.knowledge_base_file_ids,
             "vapi_functions": vapi_functions,
-            "generation_model": "llama3.1:8b",
+            "generation_model": "qwen2.5:7b",
             "generation_metadata": {
                 "expected_questions": generated_config.get("expected_questions", []),
                 "conversation_flow": generated_config.get("conversation_flow", "")
@@ -153,19 +151,16 @@ async def create_campaign(
 @router.get("/campaigns", response_model=List[CampaignResponse])
 async def list_campaigns(
     is_active: Optional[bool] = None,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:view'))
 ):
-    """List all voice screening campaigns for current user."""
+    """List all voice screening campaigns for current org."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         query = (supabase.table("voice_screening_campaigns")
             .select("*")
-            .eq("created_by", current_internal_id)
+            .eq("org_id", ctx.org_id)
+            .is_("deleted_at", "null")
             .order("created_at", desc=True))
 
         if is_active is not None:
@@ -183,20 +178,16 @@ async def list_campaigns(
 @router.get("/campaigns/{campaign_id}", response_model=CampaignResponse)
 async def get_campaign(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:view'))
 ):
     """Get campaign details by ID."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         result = supabase.table("voice_screening_campaigns") \
             .select("*") \
             .eq("id", campaign_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -218,21 +209,17 @@ async def get_campaign(
 async def update_campaign(
     campaign_id: str,
     updates: Dict[str, Any],
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Update campaign details. If system prompt is changed, vapi_config is rebuilt."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
-        # Verify ownership and get current data
+        # Verify org membership and get current data
         existing_result = supabase.table("voice_screening_campaigns") \
             .select("*") \
             .eq("id", campaign_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -281,26 +268,23 @@ async def update_campaign(
 @router.delete("/campaigns/{campaign_id}")
 async def delete_campaign(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Delete campaign (cascades to candidates and call history)."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         result = supabase.table("voice_screening_campaigns") \
-            .delete() \
+            .update({"deleted_at": datetime.utcnow().isoformat()}) \
             .eq("id", campaign_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
+            .is_("deleted_at", "null") \
             .execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        logger.info(f"✅ Deleted campaign: {campaign_id}")
+        logger.info(f"✅ Soft-deleted campaign: {campaign_id}")
         return {"message": "Campaign deleted successfully"}
 
     except Exception as e:
@@ -315,21 +299,17 @@ async def delete_campaign(
 @router.post("/candidates", response_model=VoiceCandidateResponse)
 async def create_candidate(
     request: VoiceCandidateCreate,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Create a single voice screening candidate."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
-        # Verify campaign exists and belongs to user
+        # Verify campaign exists and belongs to org
         campaign_check = supabase.table("voice_screening_campaigns") \
             .select("id") \
             .eq("id", request.campaign_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -341,7 +321,8 @@ async def create_candidate(
 
         # Insert candidate
         candidate_data = {
-            "created_by": current_internal_id,
+            "created_by": ctx.user_id,
+            "org_id": ctx.org_id,
             "campaign_id": request.campaign_id,
             "interview_token": interview_token,
             "name": request.name,
@@ -370,21 +351,17 @@ async def create_candidate(
 @router.post("/candidates/bulk", response_model=List[VoiceCandidateResponse])
 async def bulk_create_candidates(
     request: VoiceCandidateBulkCreate,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Bulk create candidates for a campaign."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         # Verify campaign
         campaign_check = supabase.table("voice_screening_campaigns") \
             .select("id") \
             .eq("id", request.campaign_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -395,7 +372,8 @@ async def bulk_create_candidates(
         candidates_data = []
         for candidate in request.candidates:
             candidates_data.append({
-                "created_by": current_internal_id,
+                "created_by": ctx.user_id,
+                "org_id": ctx.org_id,
                 "campaign_id": request.campaign_id,
                 "interview_token": uuid.uuid4().hex[:12],
                 "name": candidate.get("name", ""),
@@ -422,20 +400,16 @@ async def bulk_create_candidates(
 async def upload_candidates_file(
     campaign_id: str,
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Upload CSV/Excel file to bulk create candidates."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         # Verify campaign
         supabase = get_supabase()
         campaign_check = supabase.table("voice_screening_campaigns") \
             .select("id") \
             .eq("id", campaign_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -461,7 +435,8 @@ async def upload_candidates_file(
         candidates_data = []
         for _, row in df.iterrows():
             candidates_data.append({
-                "created_by": current_internal_id,
+                "created_by": ctx.user_id,
+                "org_id": ctx.org_id,
                 "campaign_id": campaign_id,
                 "interview_token": uuid.uuid4().hex[:12],
                 "name": str(row.get("name", "")),
@@ -491,20 +466,16 @@ async def upload_candidates_file(
 async def list_candidates(
     campaign_id: Optional[str] = None,
     status: Optional[str] = None,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:view'))
 ):
-    """List all candidates for current user with campaign name."""
+    """List all candidates for current org with campaign name."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         # Select with campaign name join
         query = supabase.table("voice_candidates") \
             .select("*, voice_screening_campaigns(name)") \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .order("created_at", desc=True)
 
         if campaign_id:
@@ -597,20 +568,16 @@ async def get_candidate_by_token(token: str):
 @router.get("/candidates/{candidate_id}", response_model=VoiceCandidateResponse)
 async def get_candidate(
     candidate_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:view'))
 ):
     """Get candidate details."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         result = supabase.table("voice_candidates") \
             .select("*") \
             .eq("id", candidate_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -630,21 +597,17 @@ async def get_candidate(
 async def update_candidate(
     candidate_id: str,
     updates: VoiceCandidateUpdate,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Update candidate details (name, email, phone)."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
-        # Verify ownership
+        # Verify org membership
         existing = supabase.table("voice_candidates") \
             .select("id, status") \
             .eq("id", candidate_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -685,20 +648,16 @@ async def update_candidate(
 @router.delete("/candidates/{candidate_id}")
 async def delete_candidate(
     candidate_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Delete candidate (cascades to call history)."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
         result = supabase.table("voice_candidates") \
             .delete() \
             .eq("id", candidate_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .execute()
 
         if not result.data:
@@ -750,6 +709,88 @@ async def start_call(token: str, call_id: Optional[str] = None):
     except Exception as e:
         logger.error(f"❌ Error starting call: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start call: {str(e)}")
+
+
+@router.post("/candidates/token/{token}/reconnect", summary="Log microphone reconnection event (public)")
+async def log_reconnection_event(token: str, call_id: str, timestamp: str, event_type: str = "reconnect_attempt"):
+    """
+    Log a microphone disconnection/reconnection event during an active call.
+
+    This is a public endpoint (no auth) used by the interview page to track
+    when candidates experience microphone issues during calls.
+
+    Args:
+        token: Candidate interview token
+        call_id: VAPI call ID
+        timestamp: ISO 8601 timestamp of the event
+        event_type: Type of event (disconnect, reconnect_attempt, reconnect_success)
+    """
+    try:
+        supabase = get_supabase()
+
+        # Find candidate by token
+        candidate_result = supabase.table("voice_candidates") \
+            .select("id") \
+            .eq("interview_token", token) \
+            .single() \
+            .execute()
+
+        if not candidate_result.data:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        # Find the call history record
+        call_result = supabase.table("voice_call_history") \
+            .select("id, disconnect_events") \
+            .eq("call_id", call_id) \
+            .eq("candidate_id", candidate_result.data["id"]) \
+            .execute()
+
+        if not call_result.data:
+            # Call might not be in history yet (early disconnect)
+            logger.warning(f"Call {call_id} not found in history - event logged to candidate notes")
+            return {"status": "logged_to_notes"}
+
+        call_record = call_result.data[0]
+
+        # Get existing disconnect events or initialize empty array
+        disconnect_events = call_record.get("disconnect_events") or []
+
+        # Determine reconnection attempt number
+        reconnection_attempt = sum(
+            1 for e in disconnect_events if e.get("event_type") == "reconnect_attempt"
+        ) + 1
+
+        # Add new event
+        new_event = {
+            "timestamp": timestamp,
+            "event_type": event_type,
+            "reconnection_attempt": reconnection_attempt if "reconnect" in event_type else None
+        }
+
+        disconnect_events.append(new_event)
+
+        # Update call history
+        supabase.table("voice_call_history") \
+            .update({"disconnect_events": disconnect_events}) \
+            .eq("id", call_record["id"]) \
+            .execute()
+
+        logger.info(
+            f"✅ Logged {event_type} event for call {call_id}, "
+            f"attempt #{reconnection_attempt if 'reconnect' in event_type else 'N/A'}"
+        )
+
+        return {
+            "status": "logged",
+            "event_type": event_type,
+            "reconnection_attempt": reconnection_attempt if "reconnect" in event_type else None
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error logging reconnection event: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to log event: {str(e)}")
 
 
 # ============================================================================
@@ -995,21 +1036,17 @@ async def generate_and_save_summary(
 @router.get("/candidates/{candidate_id}/call-history", response_model=List[CallHistoryResponse])
 async def get_call_history(
     candidate_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:view'))
 ):
     """Get all calls for a candidate."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-        
         supabase = get_supabase()
 
-        # Verify candidate belongs to user
+        # Verify candidate belongs to org
         candidate_check = supabase.table("voice_candidates") \
             .select("id") \
             .eq("id", candidate_id) \
-            .eq("created_by", current_internal_id) \
+            .eq("org_id", ctx.org_id) \
             .single() \
             .execute()
 
@@ -1035,7 +1072,7 @@ async def get_call_history(
 @router.post("/call-history/{call_history_id}/re-evaluate")
 async def re_evaluate_interview(
     call_history_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """
     Re-generate AI summary and technical assessment from existing transcript.
@@ -1044,9 +1081,9 @@ async def re_evaluate_interview(
     try:
         supabase = get_supabase()
 
-        # Get call history record
+        # Get call history record with org check via voice_candidates
         call_result = supabase.table("voice_call_history") \
-            .select("*, voice_candidates!inner(created_by, campaign_id)") \
+            .select("*, voice_candidates!inner(org_id, campaign_id)") \
             .eq("id", call_history_id) \
             .single() \
             .execute()
@@ -1056,12 +1093,8 @@ async def re_evaluate_interview(
 
         call_data = call_result.data
 
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        current_internal_id = user_service.resolve_user_id(current_user["id"])
-
-        # Verify ownership
-        if call_data["voice_candidates"]["created_by"] != current_internal_id:
+        # Verify org membership
+        if call_data["voice_candidates"]["org_id"] != ctx.org_id:
             raise HTTPException(status_code=403, detail="Access denied")
 
         # Check if transcript exists
@@ -1125,12 +1158,9 @@ async def re_evaluate_interview(
 @router.post("/files/upload")
 async def upload_file_to_vapi(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Upload file to VAPI for knowledge base."""
-    # Resolve raw user ID to internal UUID (even if not strictly used for ownership on VAPI side, good for consistency)
-    user_service = get_user_service()
-    _ = user_service.resolve_user_id(current_user["id"])
     
     import tempfile
     import os
@@ -1166,13 +1196,9 @@ async def upload_file_to_vapi(
 
 
 @router.get("/files")
-async def list_vapi_files(current_user: dict = Depends(get_current_user)):
+async def list_vapi_files(ctx: OrgContext = Depends(require_permission('campaign:view'))):
     """List all files in VAPI."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        _ = user_service.resolve_user_id(current_user["id"])
-        
         vapi_file_service = get_vapi_file_service()
         files = await vapi_file_service.list_files()
 
@@ -1186,13 +1212,10 @@ async def list_vapi_files(current_user: dict = Depends(get_current_user)):
 @router.delete("/files/{file_id}")
 async def delete_vapi_file(
     file_id: str,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Delete file from VAPI."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        _ = user_service.resolve_user_id(current_user["id"])
         
         vapi_file_service = get_vapi_file_service()
         success = await vapi_file_service.delete_file(file_id)
@@ -1214,13 +1237,10 @@ async def delete_vapi_file(
 @router.post("/generate-questions", response_model=QuestionGenerationResponse)
 async def generate_questions(
     request: QuestionGenerationRequest,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:create'))
 ):
     """Generate interview questions using Ollama."""
     try:
-        # Resolve raw user ID to internal UUID
-        user_service = get_user_service()
-        _ = user_service.resolve_user_id(current_user["id"])
         
         import ollama
 
@@ -1273,7 +1293,7 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
 """
 
         response = ollama.chat(
-            model="llama3.1:8b",
+            model="qwen2.5:7b",
             messages=[
                 {"role": "system", "content": "You are an expert technical recruiter. Generate high-quality interview questions that feel natural and conversational."},
                 {"role": "user", "content": prompt}
@@ -1310,7 +1330,7 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
 
         return QuestionGenerationResponse(
             questions=questions[:request.num_questions],
-            model="llama3.1:8b"
+            model="qwen2.5:7b"
         )
 
     except Exception as e:
@@ -1366,14 +1386,19 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
                     logger.info(f"ℹ️ Call {call_id} already saved in voice_call_history, skipping webhook save")
                 else:
                     # Find candidate by latest_call_id
-                    candidate_result = supabase.table("voice_candidates") \
-                        .select("id, campaign_id") \
-                        .eq("latest_call_id", call_id) \
-                        .single() \
-                        .execute()
-
-                    if candidate_result.data:
+                    try:
+                        candidate_result = supabase.table("voice_candidates") \
+                            .select("id, campaign_id") \
+                            .eq("latest_call_id", call_id) \
+                            .single() \
+                            .execute()
                         candidate = candidate_result.data
+                    except Exception as e:
+                        # No candidate found with this call_id (Vapi sent event for unknown call)
+                        logger.info(f"No candidate found for call_id {call_id}, skipping webhook save")
+                        candidate = None
+
+                    if candidate:
 
                         started_at = call_data.get("startedAt")
                         ended_at = call_data.get("endedAt")
@@ -1462,7 +1487,7 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
 @router.get("/export")
 async def export_candidates(
     campaign_id: Optional[str] = None,
-    current_user: dict = Depends(get_current_user)
+    ctx: OrgContext = Depends(require_permission('campaign:view'))
 ):
     """Export candidates to Excel with call history and summaries."""
     try:
@@ -1471,7 +1496,7 @@ async def export_candidates(
         # Fetch candidates
         query = supabase.table("voice_candidates") \
             .select("*") \
-            .eq("created_by", current_user["id"])
+            .eq("org_id", ctx.org_id)
 
         if campaign_id:
             query = query.eq("campaign_id", campaign_id)

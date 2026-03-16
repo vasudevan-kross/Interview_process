@@ -20,6 +20,13 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'AI Interview Platform | Transform Your Hiring Process',
   description: 'AI-powered recruitment platform with intelligent resume matching, automated test evaluation, and automated voice screening. Hire faster, smarter, better.',
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon.png', type: 'image/png', sizes: '512x512' },
+    ],
+    apple: '/icon.png',
+  },
 }
 
 export default function RootLayout({

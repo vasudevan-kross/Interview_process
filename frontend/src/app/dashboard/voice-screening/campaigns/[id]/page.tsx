@@ -1003,7 +1003,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                                         </svg>
                                       )}
                                     </div>
-                                    <p className={`text-sm font-medium break-words ${isEmpty
+                                    <div className={`text-sm font-medium break-words ${isEmpty
                                       ? 'text-gray-400 italic'
                                       : 'text-gray-900'
                                       }`}>
@@ -1014,7 +1014,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                                       ) : (
                                         displayValue
                                       )}
-                                    </p>
+                                    </div>
                                   </div>
                                 )
                               })}

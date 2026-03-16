@@ -13,33 +13,33 @@ class ModelConfig:
 
     # Task-based model assignments
     TASK_MODELS: Dict[str, str] = {
-        # Fast parsing tasks - upgraded to llama3.1:8b for better quality
-        "question_parsing": "llama3.1:8b",
-        "resume_parsing": "llama3.1:8b",
-        "jd_parsing": "llama3.1:8b",
-        "skill_extraction": "llama3.1:8b",
+        # Fast parsing tasks - upgraded to qwen2.5:7b for better quality
+        "question_parsing": "qwen2.5:7b",
+        "resume_parsing": "qwen2.5:7b",
+        "jd_parsing": "qwen2.5:7b",
+        "skill_extraction": "qwen2.5:7b",
 
         # Evaluation tasks
-        "answer_evaluation": "llama3.1:8b",
-        "resume_matching": "llama3.1:8b",
+        "answer_evaluation": "qwen2.5:7b",
+        "resume_matching": "qwen2.5:7b",
 
         # Specialized tasks
-        "code_evaluation": "llama3.1:8b",
-        "code_parsing": "llama3.1:8b",
+        "code_evaluation": "qwen2.5:7b",
+        "code_parsing": "qwen2.5:7b",
     }
 
     # Domain-specific model overrides
     DOMAIN_MODELS: Dict[str, str] = {
-        "coding": "llama3.1:8b",
-        "development": "llama3.1:8b",
-        "sql": "llama3.1:8b",  # Can be changed to sqlcoder if available
-        "general": "llama3.1:8b",
-        "testing": "llama3.1:8b",
-        "devops": "llama3.1:8b",
+        "coding": "qwen2.5:7b",
+        "development": "qwen2.5:7b",
+        "sql": "qwen2.5:7b",  # Can be changed to sqlcoder if available
+        "general": "qwen2.5:7b",
+        "testing": "qwen2.5:7b",
+        "devops": "qwen2.5:7b",
     }
 
     # Fallback model if specified model is not available
-    DEFAULT_MODEL = "llama3.1:8b"
+    DEFAULT_MODEL = "qwen2.5:7b"
 
     # Vision model for handwritten answer sheet evaluation
     VISION_EVAL_MODELS: List[str] = [

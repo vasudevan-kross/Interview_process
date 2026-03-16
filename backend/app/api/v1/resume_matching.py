@@ -1,11 +1,14 @@
 """
 API endpoints for resume matching functionality.
 """
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, status, Body
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, status, Body, Request
 from typing import List, Optional
 import logging
+from pathlib import Path
 from pydantic import BaseModel
 
+from app.config import settings
+from app.core.limiter import limiter
 from app.schemas.resume_matching import (
     JobDescriptionResponse,
     ResumeResponse,
@@ -19,7 +22,8 @@ from app.schemas.resume_matching import (
     ErrorResponse,
     CandidateInfo
 )
-from app.auth.dependencies import get_current_user_id
+from app.auth.dependencies import get_current_org_context, OrgContext
+from app.auth.permissions import require_permission
 
 
 class DeleteResumesRequest(BaseModel):
@@ -31,18 +35,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/resume-matching", tags=["Resume Matching"])
 
 
+def _validate_upload(file_data: bytes, filename: str) -> None:
+    """Raise HTTPException if file is too large or has a disallowed extension."""
+    if len(file_data) > settings.MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Max {settings.MAX_UPLOAD_SIZE // 1048576}MB."
+        )
+    ext = Path(filename).suffix.lower().lstrip('.')
+    if ext not in settings.allowed_extensions_list:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type .{ext} not allowed. Allowed: {', '.join(settings.allowed_extensions_list)}"
+        )
+
+
 @router.post(
     "/job-description",
     response_model=JobDescriptionResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload and process a job description"
 )
+@limiter.limit("20/minute")
 async def upload_job_description(
+    request: Request,
     file: UploadFile = File(..., description="Job description file (PDF, DOCX, TXT)"),
     title: str = Form(..., description="Job title"),
     department: Optional[str] = Form(None, description="Department name"),
     model: Optional[str] = Form(None, description="LLM model to use"),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('jd:create'))
 ):
     """
     Upload and process a job description file.
@@ -58,12 +79,14 @@ async def upload_job_description(
 
         # Read file data
         file_data = await file.read()
+        _validate_upload(file_data, file.filename)
 
         # Process job description
         result = await service.process_job_description(
             file_data=file_data,
             filename=file.filename,
-            user_id=current_user_id,
+            user_id=ctx.user_id,
+            org_id=ctx.org_id,
             title=title,
             department=department,
             model=model
@@ -84,13 +107,15 @@ async def upload_job_description(
     status_code=status.HTTP_201_CREATED,
     summary="Upload and process a single resume"
 )
+@limiter.limit("20/minute")
 async def upload_resume(
+    request: Request,
     file: UploadFile = File(..., description="Resume file (PDF, DOCX, TXT, images)"),
     job_id: str = Form(..., description="Job description ID"),
     candidate_name: Optional[str] = Form(None, description="Candidate name"),
     candidate_email: Optional[str] = Form(None, description="Candidate email"),
     model: Optional[str] = Form(None, description="LLM model to use"),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('resume:upload'))
 ):
     """
     Upload and process a single resume.
@@ -107,12 +132,14 @@ async def upload_resume(
 
         # Read file data
         file_data = await file.read()
+        _validate_upload(file_data, file.filename)
 
         # Process resume
         result = await service.process_resume(
             file_data=file_data,
             filename=file.filename,
-            user_id=current_user_id,
+            user_id=ctx.user_id,
+            org_id=ctx.org_id,
             job_id=job_id,
             candidate_name=candidate_name,
             candidate_email=candidate_email,
@@ -134,11 +161,13 @@ async def upload_resume(
     status_code=status.HTTP_201_CREATED,
     summary="Upload and process multiple resumes"
 )
+@limiter.limit("10/minute")
 async def upload_multiple_resumes(
+    request: Request,
     files: List[UploadFile] = File(..., description="Multiple resume files"),
     job_id: str = Form(..., description="Job description ID"),
     model: Optional[str] = Form(None, description="LLM model to use"),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('resume:upload'))
 ):
     """
     Upload and process multiple resumes for a job.
@@ -156,6 +185,7 @@ async def upload_multiple_resumes(
         resumes = []
         for file in files:
             file_data = await file.read()
+            _validate_upload(file_data, file.filename)
             resumes.append({
                 "file_data": file_data,
                 "filename": file.filename,
@@ -167,7 +197,8 @@ async def upload_multiple_resumes(
         result = await service.process_multiple_resumes(
             resumes=resumes,
             job_id=job_id,
-            user_id=current_user_id,
+            user_id=ctx.user_id,
+            org_id=ctx.org_id,
             model=model
         )
 
@@ -188,7 +219,7 @@ async def upload_multiple_resumes(
 async def get_ranked_candidates(
     job_id: str,
     limit: int = 50,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('resume:view'))
 ):
     """
     Get a ranked list of candidates for a specific job.
@@ -198,7 +229,7 @@ async def get_ranked_candidates(
     try:
         service = get_resume_matching_service()
 
-        candidates = await service.get_ranked_candidates(job_id=job_id, user_id=current_user_id, limit=limit)
+        candidates = await service.get_ranked_candidates(job_id=job_id, org_id=ctx.org_id, limit=limit)
 
         return RankedCandidatesResponse(
             job_id=job_id,
@@ -217,14 +248,14 @@ async def get_ranked_candidates(
 )
 async def get_job_description(
     job_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('resume:view'))
 ):
     """
     Get job description details by ID.
     """
     try:
         service = get_resume_matching_service()
-        job = await service.get_job_description(job_id=job_id, user_id=current_user_id)
+        job = await service.get_job_description(job_id=job_id, org_id=ctx.org_id)
         return job
 
     except Exception as e:
@@ -239,7 +270,7 @@ async def get_job_description(
 )
 async def get_job_statistics(
     job_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('resume:view'))
 ):
     """
     Get statistics for a job posting.
@@ -252,7 +283,7 @@ async def get_job_statistics(
     try:
         service = get_resume_matching_service()
 
-        stats = await service.get_job_statistics(job_id=job_id, user_id=current_user_id)
+        stats = await service.get_job_statistics(job_id=job_id, org_id=ctx.org_id)
 
         return JobStatistics(
             job_id=job_id,
@@ -350,7 +381,7 @@ async def list_models():
 )
 async def delete_job_description(
     job_id: str,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('jd:create'))
 ):
     """
     Delete a job description by ID.
@@ -358,7 +389,7 @@ async def delete_job_description(
     """
     try:
         service = get_resume_matching_service()
-        await service.delete_job_description(job_id=job_id, user_id=current_user_id)
+        await service.delete_job_description(job_id=job_id, org_id=ctx.org_id)
         return {"message": "Job description and all associated resumes deleted successfully", "job_id": job_id}
 
     except ValueError as e:
@@ -374,7 +405,7 @@ async def delete_job_description(
 )
 async def delete_resumes(
     request: DeleteResumesRequest = Body(...),
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: OrgContext = Depends(require_permission('resume:upload'))
 ):
     """
     Delete multiple resumes by their IDs.
@@ -389,7 +420,7 @@ async def delete_resumes(
 
         result = await service.delete_resumes(
             resume_ids=request.resume_ids,
-            user_id=current_user_id
+            org_id=ctx.org_id
         )
 
         return {

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { useUserRole } from '@/hooks/useUserRole'
+import { useOrg } from '@/contexts/OrganizationContext'
 import { toast } from 'sonner'
 import { LogOut, Shield } from 'lucide-react'
 
@@ -15,7 +15,7 @@ interface DashboardHeaderProps {
 
 export function DashboardHeader({ user }: DashboardHeaderProps) {
   const router = useRouter()
-  const { role } = useUserRole()
+  const { role } = useOrg()
 
   const handleLogout = async () => {
     const supabase = createClient()
@@ -28,18 +28,18 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   const getRoleBadge = () => {
     if (!role) return null
 
-    const roleConfig = {
-      admin: { label: 'Admin' },
-      hr: { label: 'HR' },
-      interviewer: { label: 'Interviewer' },
+    const roleLabels: Record<string, string> = {
+      owner: 'Owner',
+      admin: 'Admin',
+      hr: 'HR',
+      interviewer: 'Interviewer',
+      viewer: 'Viewer',
     }
-
-    const config = roleConfig[role as keyof typeof roleConfig] || roleConfig.hr
 
     return (
       <Badge className="flex items-center gap-1.5 px-2.5 py-1 border border-slate-200 text-slate-600 bg-transparent text-xs font-medium">
         <Shield className="h-3 w-3" />
-        {config.label}
+        {roleLabels[role] || role}
       </Badge>
     )
   }

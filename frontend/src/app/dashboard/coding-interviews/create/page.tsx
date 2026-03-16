@@ -93,6 +93,8 @@ export default function CreateInterviewPage() {
   const [numQuestions, setNumQuestions] = useState<string>('3')
   const [totalMarks, setTotalMarks] = useState<string>('100')
 
+  const MAX_AI_QUESTIONS = 5 // Limit for reliable AI generation
+
   // Questions
   const [questions, setQuestions] = useState<Question[]>([])
   const [shareableLink, setShareableLink] = useState('')
@@ -137,12 +139,18 @@ export default function CreateInterviewPage() {
       return
     }
 
+    const numQs = parseInt(numQuestions) || 3
+    if (numQs > MAX_AI_QUESTIONS) {
+      toast.error(`AI can reliably generate up to ${MAX_AI_QUESTIONS} questions. Use "Add Manual Question" for more.`)
+      return
+    }
+
     try {
       setGenerating(true)
       const response = await generateQuestions({
         job_description: jobDescription,
         difficulty,
-        num_questions: parseInt(numQuestions) || 3,
+        num_questions: numQs,
         programming_language: interviewType === 'coding' || interviewType === 'fullstack' || interviewType === 'data_science' ? programmingLanguage : undefined,
         test_framework: interviewType === 'testing' ? testFramework : undefined,
         domain_tool: ['devops', 'sql'].includes(interviewType) ? domainTool : undefined,
@@ -754,7 +762,7 @@ export default function CreateInterviewPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="numQuestions">Number of Questions</Label>
+                  <Label htmlFor="numQuestions">Number of Questions (Max {MAX_AI_QUESTIONS})</Label>
                   <Input
                     id="numQuestions"
                     type="number"
@@ -763,11 +771,14 @@ export default function CreateInterviewPage() {
                     onBlur={(e) => {
                       const val = e.target.value
                       if (val === '' || parseInt(val) < 1) setNumQuestions('1')
-                      else if (parseInt(val) > 10) setNumQuestions('10')
+                      else if (parseInt(val) > MAX_AI_QUESTIONS) setNumQuestions(MAX_AI_QUESTIONS.toString())
                     }}
                     min="1"
-                    max="10"
+                    max={MAX_AI_QUESTIONS}
                   />
+                  <p className="text-xs text-slate-500">
+                    Need more? Generate {MAX_AI_QUESTIONS}, then click "Add Manual Question" below to add more.
+                  </p>
                 </div>
               </div>
 
@@ -989,14 +1000,24 @@ export default function CreateInterviewPage() {
                         />
                       </div>
                     </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-slate-500">Topics (comma-separated)</Label>
+                      <Input
+                        value={Array.isArray(question.topics) ? question.topics.join(', ') : ''}
+                        onChange={(e) => handleUpdateQuestion(index, 'topics', e.target.value.split(',').map(t => t.trim()).filter(t => t))}
+                        placeholder="e.g., arrays, sorting, recursion"
+                        className="h-9"
+                      />
+                    </div>
                   </CardContent>
                 </Card>
               ))}
 
-              {activeTab === 'manual' && (
+              {(activeTab === 'manual' || activeTab === 'ai-generate' || activeTab === 'upload-document') && (
                 <Button onClick={handleAddManualQuestion} variant="outline" className="w-full">
                   <Plus className="mr-2 h-4 w-4" />
-                  Add Another Question
+                  {activeTab === 'ai-generate' || activeTab === 'upload-document' ? 'Add Manual Question' : 'Add Another Question'}
                 </Button>
               )}
             </div>

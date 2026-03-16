@@ -138,7 +138,8 @@ class CodingInterviewService:
         require_signature: bool = False,
         bond_years: int = 2,
         bond_timing: str = 'before_submission',
-        job_id: Optional[str] = None
+        job_id: Optional[str] = None,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """
         Create a new coding interview with questions.
@@ -203,7 +204,8 @@ class CodingInterviewService:
                 'bond_years': bond_years,
                 'bond_timing': bond_timing,
                 'created_by': user_id,
-                'job_id': job_id
+                'job_id': job_id,
+                **({'org_id': org_id} if org_id else {})
             }
 
             interview_result = self.client.table('coding_interviews').insert(interview_data).execute()
@@ -1116,7 +1118,8 @@ Language:"""
         self,
         interview_id: str,
         candidates: List[Dict[str, Any]],
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Import a list of pre-registered candidates for an interview."""
         # Resolve raw user ID to internal UUID
@@ -1125,9 +1128,12 @@ Language:"""
         client = get_supabase()
 
         # Verify interview ownership
-        interview_result = client.table('coding_interviews').select('id').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('id').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
 
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
@@ -1272,7 +1278,8 @@ Language:"""
         name: str,
         email: Optional[str],
         phone: Optional[str],
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Update a pre-registered candidate's details."""
         # Resolve raw user ID to internal UUID
@@ -1281,9 +1288,12 @@ Language:"""
         client = get_supabase()
 
         # Verify interview ownership
-        interview_result = client.table('coding_interviews').select('id').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('id').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
 
@@ -1302,7 +1312,8 @@ Language:"""
         self,
         interview_id: str,
         candidate_id: str,
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> None:
         """Delete a pre-registered candidate from the interview."""
         # Resolve raw user ID to internal UUID
@@ -1311,9 +1322,12 @@ Language:"""
         client = get_supabase()
 
         # Verify interview ownership
-        interview_result = client.table('coding_interviews').select('id').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('id').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
 
@@ -1327,7 +1341,8 @@ Language:"""
     async def delete_submission(
         self,
         submission_id: str,
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> None:
         """Delete a candidate submission (any status). Requires interview ownership."""
         # Resolve raw user ID to internal UUID
@@ -1345,9 +1360,12 @@ Language:"""
         interview_id = sub_result.data[0]['interview_id']
 
         # Verify interview ownership
-        interview_result = client.table('coding_interviews').select('id').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('id').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
 
@@ -1468,7 +1486,8 @@ Language:"""
     async def clone_interview(
         self,
         interview_id: str,
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Copy an interview (+ all questions) with a fresh access token."""
         # Resolve raw user ID to internal UUID
@@ -1476,9 +1495,12 @@ Language:"""
         
         client = get_supabase()
 
-        interview_result = client.table('coding_interviews').select('*').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('*').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
 
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
@@ -1511,6 +1533,7 @@ Language:"""
             'bond_years': src.get('bond_years', 2),
             'bond_timing': src.get('bond_timing', 'before_submission'),
             'created_by': user_id,
+            **({'org_id': org_id} if org_id else {}),
         }
 
         clone_result = client.table('coding_interviews').insert(clone_data).execute()
@@ -1546,7 +1569,8 @@ Language:"""
     async def send_interview_invites(
         self,
         interview_id: str,
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Email the interview link to all pre-registered candidates who haven't submitted."""
         # Resolve raw user ID to internal UUID
@@ -1554,9 +1578,14 @@ Language:"""
         
         client = get_supabase()
 
-        interview_result = client.table('coding_interviews').select(
+        query = client.table('coding_interviews').select(
             'id, title, access_token'
-        ).eq('id', interview_id).eq('created_by', user_id).execute()
+        ).eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
 
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
@@ -1608,7 +1637,8 @@ Language:"""
         interview_id: str,
         submission_ids: List[str],
         decision: str,
-        decided_by: str
+        decided_by: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Set the same decision on multiple submissions at once."""
         # Resolve raw user ID to internal UUID
@@ -1616,9 +1646,12 @@ Language:"""
         
         client = get_supabase()
 
-        interview_result = client.table('coding_interviews').select('id').eq(
-            'id', interview_id
-        ).eq('created_by', decided_by).execute()
+        query = client.table('coding_interviews').select('id').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', decided_by)
+        interview_result = query.execute()
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
 
@@ -1645,7 +1678,8 @@ Language:"""
         self,
         interview_id: str,
         candidate_ids: List[str],
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Delete multiple pre-registered candidates."""
         # Resolve raw user ID to internal UUID
@@ -1653,9 +1687,12 @@ Language:"""
         
         client = get_supabase()
 
-        interview_result = client.table('coding_interviews').select('id').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('id').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
 
@@ -1675,7 +1712,8 @@ Language:"""
         self,
         interview_id: str,
         update_data: Dict[str, Any],
-        user_id: str
+        user_id: str,
+        org_id: str = None
     ) -> Dict[str, Any]:
         """Update interview fields including bond settings and questions."""
         # Resolve raw user ID to internal UUID
@@ -1683,9 +1721,12 @@ Language:"""
         
         client = get_supabase()
 
-        interview_result = client.table('coding_interviews').select('*').eq(
-            'id', interview_id
-        ).eq('created_by', user_id).execute()
+        query = client.table('coding_interviews').select('*').eq('id', interview_id)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+        interview_result = query.execute()
         if not interview_result.data:
             raise ValueError("Interview not found or access denied")
 
@@ -1715,6 +1756,41 @@ Language:"""
                 end_time = datetime.fromisoformat(end_str)
             grace = new_grace if new_grace is not None else src.get('grace_period_minutes', 15)
             patch['link_expires_at'] = (end_time + timedelta(minutes=grace)).isoformat()
+
+        # Recalculate status if start or end time changed
+        if update_data.get('scheduled_start_time') or new_end:
+            # Get the new start and end times (ensure all are naive UTC for comparison)
+            start_time = update_data.get('scheduled_start_time')
+            if start_time is None:
+                start_str = src['scheduled_start_time'].replace('Z', '').replace('+00:00', '')
+                start_time = datetime.fromisoformat(start_str)
+            else:
+                # Strip timezone info if present to make it naive UTC
+                if hasattr(start_time, 'tzinfo') and start_time.tzinfo is not None:
+                    start_time = start_time.replace(tzinfo=None)
+
+            end_time = new_end
+            if end_time is None:
+                end_str = src['scheduled_end_time'].replace('Z', '').replace('+00:00', '')
+                end_time = datetime.fromisoformat(end_str)
+            else:
+                # Strip timezone info if present to make it naive UTC
+                if hasattr(end_time, 'tzinfo') and end_time.tzinfo is not None:
+                    end_time = end_time.replace(tzinfo=None)
+
+            now = datetime.utcnow()
+
+            # Determine new status based on times
+            if now < start_time:
+                patch['status'] = 'scheduled'
+            elif start_time <= now <= end_time:
+                patch['status'] = 'active'
+            else:
+                # Check if there are any submissions
+                subs = client.table('coding_submissions').select('id').eq(
+                    'interview_id', interview_id
+                ).limit(1).execute()
+                patch['status'] = 'completed' if subs.data else 'expired'
 
         # Bond fields
         if update_data.get('require_signature') is not None:

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_NAME: str = "Interview Management API"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database & Vector Store
     DB_TYPE: str = "supabase"  # or 'local'
@@ -25,7 +25,8 @@ class Settings(BaseSettings):
 
     # Ollama
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    DEFAULT_OLLAMA_MODEL: str = "llama3.1:8b"
+    DEFAULT_OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_NUM_CTX: int = 8192
 
     # Ollama OCR Models (for fallback layers)
     OLLAMA_OCR_MODEL: str = "llava:7b"
@@ -39,8 +40,6 @@ class Settings(BaseSettings):
     # OCR Strategy
     OCR_STRATEGY: str = "auto"  # auto, paddleocr, ollama
 
-    # Redis (optional)
-    REDIS_URL: Optional[str] = "redis://localhost:6379"
 
     # Security
     SECRET_KEY: str
@@ -75,15 +74,15 @@ class Settings(BaseSettings):
     CODING_INTERVIEW_DEFAULT_GRACE_PERIOD: int = 15  # minutes
     CODING_INTERVIEW_AUTO_SAVE_INTERVAL: int = 30    # seconds
     CODING_INTERVIEW_MAX_DURATION: int = 240         # minutes (4 hours max)
-    QUESTION_GENERATION_MODEL: str = "llama3.1:8b"
-    QUESTION_GENERATION_TEMPERATURE: float = 0.7
+    QUESTION_GENERATION_MODEL: str = "qwen2.5:7b"
+    QUESTION_GENERATION_TEMPERATURE: float = 0.4
 
     # Vapi Voice Screening
     VAPI_PRIVATE_KEY: Optional[str] = None
     VAPI_ASSISTANT_ID: Optional[str] = None
 
     # Gmail SMTP (for transactional emails)
-    GMAIL_SENDER: str = "vasudevan.r@krossark.com"
+    GMAIL_SENDER: Optional[str] = None          # Set in .env — e.g. yourname@gmail.com
     GMAIL_APP_PASSWORD: Optional[str] = None   # 16-char Google App Password
 
     # Vision-based evaluation (for handwritten answer sheets)

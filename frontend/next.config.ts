@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
     // Performance optimizations
-    reactStrictMode: true,
+    reactStrictMode: false,
 
     // Hide Next.js dev indicator (the "N" icon)
     devIndicators: false,
