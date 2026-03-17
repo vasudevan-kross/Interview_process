@@ -75,6 +75,7 @@ export interface Interview {
   allowed_languages?: string[];  // Languages candidates can choose from. undefined/[] = ANY language
   total_marks: number;
   duration_minutes?: number;
+  submission_count?: number;
   resume_required: 'mandatory' | 'optional' | 'disabled';
   bond_terms?: string;  // Terms and conditions text
   bond_document_url?: string;  // URL to uploaded bond document

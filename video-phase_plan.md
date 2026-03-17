@@ -2031,3 +2031,18 @@ COMMENT ON COLUMN coding_interviews.enable_face_detection IS
   </p>
 </div>
 ```
+
+---
+
+## Hardware Missing & Fault Tolerance Strategies (Alternatives)
+To handle scenarios where a candidate lacks a working webcam but still needs to proceed with the interview, the following features will be added to the flow:
+
+### 1. Degrade to "Screen-Only" Mode Logging
+If the webcam fails (`NotFoundError`) but screen sharing succeeds, the system can programmatically downgrade the requirement for that session to prevent blocking the candidate entirely.
+- **Action:** Show a message on the setup screen: *"Webcam not detected. We will proceed with Screen Recording only."*
+- **Resolution:** Allow the candidate to proceed. Heavily flag the `submission` record in the database as **"Screen-Only (Hardware Failure)"**. This ensures the evaluator knows exactly why the video is missing and can evaluate purely based on code playback and browser tab-switching metrics (anti-cheating logs).
+
+### 2. Pre-Interview "System Check" Link
+Currently, candidates find out their camera is broken *when* they are trying to start the interview, adding unnecessary stress.
+- **Action:** When sending the invite email for the interview, include a "Test My Setup" link.
+- **Resolution:** This allows candidates to test their camera, microphone, and screen sharing days in advance. If they discover it's faulty, they have time to borrow a laptop or reach out to the recruiter before the deadline to make alternative arrangements.

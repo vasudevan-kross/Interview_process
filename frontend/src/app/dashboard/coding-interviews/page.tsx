@@ -32,11 +32,20 @@ import {
   Pencil,
   FileText,
   Bot,
+  MoreHorizontal,
 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { VoiceCreateModal } from '@/components/coding-interviews/VoiceCreateModal'
 import { listInterviews, deleteInterview, generateShareableLink, cloneInterview, type Interview } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
-import { format } from 'date-fns'
+import { format, differenceInMinutes, differenceInHours, differenceInDays } from 'date-fns'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonTable } from '@/components/ui/skeleton'
 import { useOrg } from '@/contexts/OrganizationContext'
@@ -122,13 +131,22 @@ export default function CodingInterviewsPage() {
     const styles: Record<string, string> = {
       scheduled: 'border-blue-200 bg-blue-50 text-blue-700',
       in_progress: 'border-green-200 bg-green-50 text-green-700',
+      active: 'border-green-200 bg-green-50 text-green-700',
       completed: 'border-slate-200 bg-slate-50 text-slate-600',
       expired: 'border-red-200 bg-red-50 text-red-700',
     }
 
+    const labels: Record<string, string> = {
+      scheduled: 'Scheduled',
+      in_progress: 'In Progress',
+      active: 'In Progress',
+      completed: 'Completed',
+      expired: 'Expired',
+    }
+
     return (
       <Badge className={styles[status] || styles.scheduled}>
-        {status.replace('_', ' ')}
+        {labels[status] || status.replace('_', ' ')}
       </Badge>
     )
   }
@@ -170,17 +188,54 @@ export default function CodingInterviewsPage() {
     const effectiveEnd = new Date(endTime.getTime() + graceMs)
 
     if (interview.status === 'scheduled' && now > effectiveEnd) return 'expired'
-    if (interview.status === 'in_progress' && now > effectiveEnd) return 'completed'
+    if (['in_progress', 'active'].includes(interview.status) && now > effectiveEnd) return 'completed'
     return interview.status
   }
 
-  const filteredInterviews = interviews.filter((interview) =>
-    interview.title.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const getTimeRemainingText = (interview: Interview): string | null => {
+    const status = computeEffectiveStatus(interview)
+    if (status === 'completed' || status === 'expired') return null
+
+    const now = new Date()
+    
+    if (status === 'scheduled') {
+      const startTime = new Date(interview.scheduled_start_time)
+      const mins = differenceInMinutes(startTime, now)
+      
+      if (mins < 0) return 'Starting now'
+      if (mins < 60) return `Starts in ${mins} min${mins !== 1 ? 's' : ''}`
+      if (mins < 24 * 60) {
+        const hrs = differenceInHours(startTime, now)
+        return `Starts in ${hrs} hr${hrs !== 1 ? 's' : ''}`
+      }
+      const days = differenceInDays(startTime, now)
+      return `Starts in ${days} day${days !== 1 ? 's' : ''}`
+    }
+
+    if (['in_progress', 'active'].includes(status)) {
+      const endTime = new Date(interview.scheduled_end_time)
+      const graceMs = (interview.grace_period_minutes || 0) * 60 * 1000
+      const effectiveEnd = new Date(endTime.getTime() + graceMs)
+      
+      const mins = differenceInMinutes(effectiveEnd, now)
+      if (mins < 0) return 'Ending now'
+      if (mins < 60) return `${mins} min${mins !== 1 ? 's' : ''} left`
+      const hrs = differenceInHours(effectiveEnd, now)
+      return `${hrs} hr${hrs !== 1 ? 's' : ''} left`
+    }
+
+    return null
+  }
+
+  const filteredInterviews = interviews.filter((interview) => {
+    const matchesSearch = interview.title.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesStatus = statusFilter === 'all' || computeEffectiveStatus(interview) === statusFilter
+    return matchesSearch && matchesStatus
+  })
 
   const counts = {
     total: interviews.length,
-    inProgress: interviews.filter((i) => computeEffectiveStatus(i) === 'in_progress').length,
+    inProgress: interviews.filter((i) => ['in_progress', 'active'].includes(computeEffectiveStatus(i))).length,
     completed: interviews.filter((i) => computeEffectiveStatus(i) === 'completed').length,
     scheduled: interviews.filter((i) => computeEffectiveStatus(i) === 'scheduled').length,
   }
@@ -287,6 +342,7 @@ export default function CodingInterviewsPage() {
                     <TableHead>Scheduled</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Language</TableHead>
+                    <TableHead>Submissions</TableHead>
                     <TableHead>Marks</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -297,11 +353,24 @@ export default function CodingInterviewsPage() {
                       <TableCell className="font-medium text-slate-900">{interview.title}</TableCell>
                       <TableCell>{getInterviewTypeBadge(interview.interview_type)}</TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5 text-sm text-slate-600">
-                          <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                          {format(new Date(interview.scheduled_start_time), 'MMM dd, yyyy')}
-                          <Clock className="h-3.5 w-3.5 text-slate-400 ml-1" />
-                          {format(new Date(interview.scheduled_start_time), 'HH:mm')}
+                        <div className="flex flex-col gap-1 text-sm text-slate-600">
+                          <div className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                            {format(new Date(interview.scheduled_start_time), 'MMM dd, yyyy')}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-slate-400" />
+                            {format(new Date(interview.scheduled_start_time), 'hh:mm a')} - {format(new Date(interview.scheduled_end_time), 'hh:mm a')}
+                          </div>
+                          {getTimeRemainingText(interview) && (
+                            <div className={`text-xs font-medium w-fit px-1.5 py-0.5 rounded border ${
+                              ['in_progress', 'active'].includes(computeEffectiveStatus(interview))
+                                ? 'text-green-600 bg-green-50 border-green-100'
+                                : 'text-blue-600 bg-blue-50 border-blue-100'
+                            }`}>
+                              {getTimeRemainingText(interview)}
+                            </div>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>{getStatusBadge(computeEffectiveStatus(interview))}</TableCell>
@@ -312,39 +381,66 @@ export default function CodingInterviewsPage() {
                             : interview.programming_language}
                         </Badge>
                       </TableCell>
+                      <TableCell className="text-slate-600">
+                        {interview.submission_count || 0}
+                      </TableCell>
                       <TableCell className="text-slate-600">{interview.total_marks}</TableCell>
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}`)} title="View details">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleCopyLink(interview.access_token)} title="Copy link">
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/submissions`)} title="View Submissions">
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/candidates`)} title="Candidate pipeline">
-                            <Users className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/edit`)} title="Edit">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleClone(interview.id)} title="Clone" disabled={cloningId === interview.id}>
-                            {cloningId === interview.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <GitFork className="h-4 w-4" />
-                            )}
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleShareWhatsApp(interview.access_token, interview.title)} title="Share on WhatsApp">
-                            <Share2 className="h-4 w-4" />
-                          </Button>
-                          {can('interview:create') && (
-                            <Button size="sm" variant="ghost" onClick={() => handleDelete(interview.id)} title="Delete" className="text-red-500 hover:text-red-600 hover:bg-red-50">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
+                        <div className="flex items-center justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" className="h-8 w-8 p-0">
+                                <span className="sr-only">Open menu</span>
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-[180px]">
+                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}`)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                <span>View details</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/submissions`)}>
+                                <FileText className="mr-2 h-4 w-4" />
+                                <span>Submissions</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/candidates`)}>
+                                <Users className="mr-2 h-4 w-4" />
+                                <span>Candidates</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleCopyLink(interview.access_token)}>
+                                <Copy className="mr-2 h-4 w-4" />
+                                <span>Copy link</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleShareWhatsApp(interview.access_token, interview.title)}>
+                                <Share2 className="mr-2 h-4 w-4" />
+                                <span>Share WhatsApp</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => router.push(`/dashboard/coding-interviews/${interview.id}/edit`)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                <span>Edit</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleClone(interview.id)} disabled={cloningId === interview.id}>
+                                {cloningId === interview.id ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <GitFork className="mr-2 h-4 w-4" />
+                                )}
+                                <span>Clone</span>
+                              </DropdownMenuItem>
+                              {can('interview:create') && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => handleDelete(interview.id)} className="text-red-500 hover:text-red-600 focus:bg-red-50 focus:text-red-600 cursor-pointer">
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    <span>Delete</span>
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </TableCell>
                     </TableRow>

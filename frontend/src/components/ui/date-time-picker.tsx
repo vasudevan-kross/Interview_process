@@ -34,6 +34,9 @@ export function DateTimePicker({
   // Hours/minutes from the value (or defaults)
   const hours = selectedDate ? selectedDate.getHours() : 9
   const minutes = selectedDate ? selectedDate.getMinutes() : 0
+  
+  const ampm = hours >= 12 ? 'PM' : 'AM'
+  const displayHours = hours % 12 === 0 ? 12 : hours % 12
 
   const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -46,14 +49,28 @@ export function DateTimePicker({
     onChange(buildValue(day, hours, minutes))
   }
 
-  const handleHourChange = (h: number) => {
+  const handleHourChange12 = (h12: number) => {
+    let newH = h12;
+    if (ampm === 'PM' && newH !== 12) newH += 12;
+    if (ampm === 'AM' && newH === 12) newH = 0;
     const base = selectedDate || new Date()
-    onChange(buildValue(base, h, minutes))
+    onChange(buildValue(base, newH, minutes))
   }
 
   const handleMinuteChange = (m: number) => {
     const base = selectedDate || new Date()
     onChange(buildValue(base, hours, m))
+  }
+
+  const handleAmPmChange = (newAmPm: string) => {
+    let newH = hours;
+    if (newAmPm === 'PM' && ampm === 'AM') {
+      newH = (newH % 12) + 12;
+    } else if (newAmPm === 'AM' && ampm === 'PM') {
+      newH = newH % 12;
+    }
+    const base = selectedDate || new Date()
+    onChange(buildValue(base, newH, minutes))
   }
 
   const displayLabel = selectedDate
@@ -108,11 +125,11 @@ export function DateTimePicker({
             <div className="flex flex-col items-center">
               <span className="text-[10px] text-slate-400 mb-1">Hour</span>
               <select
-                value={hours}
-                onChange={(e) => handleHourChange(Number(e.target.value))}
+                value={displayHours}
+                onChange={(e) => handleHourChange12(Number(e.target.value))}
                 className="h-9 w-16 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
               >
-                {Array.from({ length: 24 }, (_, i) => (
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((i) => (
                   <option key={i} value={i}>{pad(i)}</option>
                 ))}
               </select>
@@ -134,10 +151,23 @@ export function DateTimePicker({
               </select>
             </div>
 
+            {/* AM/PM */}
+            <div className="flex flex-col items-center ml-2">
+              <span className="text-[10px] text-slate-400 mb-1">AM/PM</span>
+              <select
+                value={ampm}
+                onChange={(e) => handleAmPmChange(e.target.value)}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+              >
+                <option value="AM">AM</option>
+                <option value="PM">PM</option>
+              </select>
+            </div>
+
             {/* Preview */}
             <div className="ml-auto bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 mt-4">
               <span className="text-indigo-700 font-semibold text-sm tabular-nums">
-                {pad(hours)}:{pad(minutes)}
+                {pad(displayHours)}:{pad(minutes)} {ampm}
               </span>
             </div>
           </div>

@@ -308,7 +308,7 @@ export default function SubmissionsPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>All Submissions</CardTitle>
+              <CardTitle>All Submissions ({submissions.length})</CardTitle>
               <CardDescription>Review candidate submissions and evaluations</CardDescription>
             </div>
             <div className="flex items-center gap-2">

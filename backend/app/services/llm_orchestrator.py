@@ -937,7 +937,9 @@ Provide evaluation as JSON."""
             return True
 
         # If it's a short text with very few code symbols and no keywords, it's likely just natural language
-        if len(answer_clean) < 150 and code_symbol_count < 3 and not has_keyword:
+        code_symbol_count = sum(c in code_symbols for c in answer_clean)
+        has_any_keyword = any(kw in answer_clean for kw in programming_keywords)
+        if len(answer_clean) < 150 and code_symbol_count < 3 and not has_any_keyword:
             logger.warning(f"Secondary check: Answer detected as natural language (symbols: {code_symbol_count}). Marking as invalid.")
             return True
 

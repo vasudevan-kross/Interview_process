@@ -434,15 +434,26 @@ async def list_interviews(
 
         result = query.execute()
 
-        # Calculate duration_minutes dynamically for each interview
         interviews = result.data or []
-        for interview in interviews:
-            try:
-                start_time = datetime.fromisoformat(interview['scheduled_start_time'].replace('Z', '+00:00'))
-                end_time = datetime.fromisoformat(interview['scheduled_end_time'].replace('Z', '+00:00'))
-                interview['duration_minutes'] = int((end_time - start_time).total_seconds() / 60)
-            except (ValueError, KeyError, TypeError):
-                interview['duration_minutes'] = None
+        
+        # Get submission counts
+        if interviews:
+            interview_ids = [i['id'] for i in interviews]
+            subs_result = client.table('coding_submissions').select('interview_id').in_('interview_id', interview_ids).in_('status', ['submitted', 'auto_submitted', 'evaluated']).execute()
+            counts = {}
+            if subs_result.data:
+                for sub in subs_result.data:
+                    counts[sub['interview_id']] = counts.get(sub['interview_id'], 0) + 1
+                    
+            # Calculate duration_minutes and attach submission_count dynamically for each interview
+            for interview in interviews:
+                interview['submission_count'] = counts.get(interview['id'], 0)
+                try:
+                    start_time = datetime.fromisoformat(interview['scheduled_start_time'].replace('Z', '+00:00'))
+                    end_time = datetime.fromisoformat(interview['scheduled_end_time'].replace('Z', '+00:00'))
+                    interview['duration_minutes'] = int((end_time - start_time).total_seconds() / 60)
+                except (ValueError, KeyError, TypeError):
+                    interview['duration_minutes'] = None
 
         return {
             'interviews': interviews,
@@ -1484,10 +1495,20 @@ async def export_submissions_zip(
             'id, candidate_name, candidate_email, total_marks_obtained, percentage, '
             'submitted_at, status, resume_path, candidate_decision'
         ).eq('interview_id', interview_id).in_(
-            'status', ['submitted', 'auto_submitted']
+            'status', ['submitted', 'auto_submitted', 'evaluated']
         ).execute()
 
-        submissions = subs_result.data or []
+        all_submissions = subs_result.data or []
+        
+        # Keep only evaluated ones
+        submissions = [s for s in all_submissions if s.get('total_marks_obtained') is not None]
+
+        # Pre-process to identify duplicate candidate names
+        name_counts = {}
+        for sub in submissions:
+            candidate_name = sub.get('candidate_name') or 'Unknown'
+            safe_base = _sanitize_name(candidate_name).lower()
+            name_counts[safe_base] = name_counts.get(safe_base, 0) + 1
 
         from docx import Document
         from docx.shared import Pt, RGBColor, Inches
@@ -1652,6 +1673,16 @@ async def export_submissions_zip(
                 sub_id = sub['id']
                 candidate_name = sub.get('candidate_name') or 'Unknown'
                 safe_candidate = _sanitize_name(candidate_name)
+                
+                # Check for duplicate names and append email if needed
+                if name_counts.get(safe_candidate.lower(), 0) > 1:
+                    email = sub.get('candidate_email')
+                    if email:
+                        safe_email = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', email)
+                        safe_candidate = f"{safe_candidate}_{safe_email}"
+                    else:
+                        safe_candidate = f"{safe_candidate}_{sub_id[-6:]}"
+
                 folder = f"{safe_title}/{safe_candidate}"
 
                 # Fetch answers for this submission
@@ -1663,7 +1694,7 @@ async def export_submissions_zip(
 
                 # Build styled Word document
                 docx_bytes = _build_docx(sub, answers)
-                zf.writestr(f"{folder}/answers.docx", docx_bytes)
+                zf.writestr(f"{folder}/{safe_candidate}_answers.docx", docx_bytes)
 
                 # Download and add resume if present
                 resume_path = sub.get('resume_path')
@@ -1671,7 +1702,7 @@ async def export_submissions_zip(
                     try:
                         resume_bytes = client.storage.from_('documents').download(resume_path)
                         ext = resume_path.rsplit('.', 1)[-1] if '.' in resume_path else 'pdf'
-                        zf.writestr(f"{folder}/resume.{ext}", resume_bytes)
+                        zf.writestr(f"{folder}/{safe_candidate}_resume.{ext}", resume_bytes)
                     except Exception as resume_err:
                         logger.warning(f"Could not download resume for {sub_id}: {resume_err}")
 

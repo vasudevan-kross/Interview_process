@@ -363,7 +363,8 @@ class CodingInterviewService:
             logger.info(f"Time check: now={now}, start={scheduled_start}, expires={link_expires_at}")
 
             if now < scheduled_start:
-                raise ValueError(f"Interview has not started yet. Starts at {scheduled_start}")
+                start_fmt = scheduled_start.strftime('%Y-%m-%d %I:%M %p')
+                raise ValueError(f"Interview has not started yet. Starts at {start_fmt}")
 
             if now > link_expires_at:
                 raise ValueError("Interview time window has expired")
