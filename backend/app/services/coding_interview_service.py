@@ -17,6 +17,8 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from collections import deque
 
+import pandas as pd
+import io
 from app.db.supabase_client import get_supabase
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.services.hybrid_scorer import HybridScorer
@@ -1721,7 +1723,96 @@ Language:"""
 
         return {'deleted': deleted}
 
+    async def get_interview(self, interview_id: str) -> Dict[str, Any]:
+        """Get basic interview details."""
+        client = get_supabase()
+        result = client.table('coding_interviews').select('*').eq('id', interview_id).execute()
+        if not result.data:
+            raise ValueError("Interview not found")
+        return result.data[0]
+
     # ── Edit Interview ────────────────────────────────────────────────────────
+
+    async def export_submissions_csv(
+        self,
+        interview_id: str,
+        user_id: str,
+        org_id: str = None
+    ) -> str:
+        """
+        Export candidate submissions (details + scores per question) to CSV.
+        Returns the CSV content as a string.
+        """
+        # Resolve user ID
+        user_id = self.user_service.resolve_user_id(user_id)
+        client = get_supabase()
+
+        # 1. Fetch interview and questions
+        iv_result = client.table('coding_interviews').select('title, total_marks').eq('id', interview_id).execute()
+        if not iv_result.data:
+            raise ValueError("Interview not found")
+        interview = iv_result.data[0]
+
+        q_result = client.table('coding_questions').select(
+            'id, question_number, question_text, marks'
+        ).eq('interview_id', interview_id).order('question_number').execute()
+        questions = q_result.data or []
+
+        # 2. Fetch all submissions (only submitted/evaluated ones)
+        sub_query = client.table('coding_submissions').select(
+            'id, candidate_name, candidate_email, candidate_phone, total_marks_obtained, percentage, started_at, submitted_at, status, user_agent'
+        ).eq('interview_id', interview_id).in_('status', ['submitted', 'auto_submitted', 'evaluated'])
+        
+        subs_result = sub_query.execute()
+        submissions = subs_result.data or []
+
+        if not submissions:
+            # Return CSV with just headers if no submissions
+            headers = ["Candidate Name", "Email", "Phone", "Status", "Started At", "Submitted At", "Device Type", "Total Score", "Percentage (%)"]
+            for q in questions:
+                headers.append(f"Q{q['question_number']} Score (max {q['marks']})")
+            df = pd.DataFrame(columns=headers)
+            return df.to_csv(index=False)
+
+        # Helper for device detection
+        def get_device_type(ua: str) -> str:
+            if not ua: return "Unknown"
+            ua = ua.lower()
+            mobile_keywords = ['mobile', 'android', 'iphone', 'ipad', 'windows phone']
+            if any(k in ua for k in mobile_keywords):
+                return "Mobile"
+            return "Laptop/Desktop"
+
+        # 3. For each submission, fetch answers to get question scores
+        rows = []
+        for sub in submissions:
+            # Fetch answers for this submission
+            ans_result = client.table('coding_answers').select(
+                'question_id, marks_awarded'
+            ).eq('submission_id', sub['id']).execute()
+            answers = {a['question_id']: a['marks_awarded'] for a in (ans_result.data or [])}
+
+            row = {
+                "Candidate Name": sub.get('candidate_name'),
+                "Email": sub.get('candidate_email'),
+                "Phone": sub.get('candidate_phone'),
+                "Status": sub.get('status', '').upper(),
+                "Started At": sub.get('started_at'),
+                "Submitted At": sub.get('submitted_at'),
+                "Device Type": get_device_type(sub.get('user_agent', '')),
+                "Total Score": sub.get('total_marks_obtained'),
+                "Percentage (%)": sub.get('percentage'),
+            }
+
+            # Add question scores
+            for q in questions:
+                score = answers.get(q['id'])
+                row[f"Q{q['question_number']} Score (max {q['marks']})"] = score if score is not None else 0
+
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        return df.to_csv(index=False)
 
     async def update_interview(
         self,

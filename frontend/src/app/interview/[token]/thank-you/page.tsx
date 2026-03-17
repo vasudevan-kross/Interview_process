@@ -1,39 +1,107 @@
 'use client'
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { CheckCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useParams } from 'next/navigation'
+import { Card, CardContent } from '@/components/ui/card'
+import { 
+  CheckCircle, 
+  Terminal, 
+  HardDrive, 
+  ShieldCheck, 
+  Zap, 
+  Database, 
+  Lock, 
+  Eye, 
+  ChevronDown,
+  ChevronUp,
+  FileCode
+} from 'lucide-react'
+import { joinInterview, type Interview } from '@/lib/api/coding-interviews'
+import { Button } from '@/components/ui/button'
 
 export default function ThankYouPage() {
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50">
-      <Card className="max-w-2xl w-full">
-        <CardHeader className="text-center">
-          <div className="mx-auto w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center mb-4">
-            <CheckCircle className="h-10 w-10 text-white" />
-          </div>
-          <CardTitle className="text-3xl bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            Interview Submitted Successfully!
-          </CardTitle>
-          <CardDescription className="text-lg mt-2">
-            Thank you for taking the time to complete this interview
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="p-6 bg-green-50 border border-green-200 rounded-lg text-center">
-            <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-3" />
-            <h3 className="font-semibold text-green-900 mb-2">Application Complete!</h3>
-            <p className="text-green-800 text-sm">
-              Your interview submission has been received. We&apos;ll review your answers and get back to you soon.
-            </p>
-          </div>
+  const params = useParams()
+  const accessToken = params.token as string
+  const [interview, setInterview] = useState<Interview | null>(null)
+  const [showAnswers, setShowAnswers] = useState(false)
+  const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, string>>({})
 
-          <div className="text-center space-y-2">
-            <p className="text-gray-600 text-sm">
-              You can now close this tab. We&apos;ll contact you at the email address you provided.
+  useEffect(() => {
+    const data = localStorage.getItem(`ci_answers_${accessToken}`)
+    if (data) {
+      try {
+        setSubmittedAnswers(JSON.parse(data))
+      } catch (e) {
+        console.error("Failed to parse submitted answers", e)
+      }
+    }
+    
+    // Load interview for question titles
+    joinInterview(accessToken).then(setInterview).catch(console.error)
+  }, [accessToken])
+
+  return (
+    <div className="min-h-screen bg-[#0A0A0B] cyber-grid text-white font-mono-tech flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      {/* Scanline Effect Overlay */}
+      <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] z-50 bg-[length:100%_2px,3px_100%]"></div>
+      
+      <div className="max-w-2xl w-full text-center space-y-12 animate-in zoom-in duration-700 relative z-10">
+        {/* Header Status */}
+        <div className="flex flex-col items-center gap-6">
+          <div className="relative inline-flex">
+            <div className="absolute inset-0 bg-[#00E5FF] blur-3xl opacity-10"></div>
+            <div className="relative inline-flex items-center justify-center w-24 h-24 bg-[#00E5FF]/5 border border-[#00E5FF]/20 rounded-full">
+              <CheckCircle className="h-12 w-12 text-[#00E5FF]" />
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white">
+              Submitted
+            </h1>
+            <p className="text-gray-400 text-sm font-medium tracking-wide">
+              Your submission has been received successfully.
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+
+        <Card className="bg-[#141416]/50 border-[#ffffff08] backdrop-blur-xl text-left shadow-2xl">
+          <CardContent className="p-8 md:p-12 space-y-10">
+            <div className="space-y-10">
+              <div className="flex gap-6">
+                <div className="w-12 h-12 rounded-xl bg-[#00E5FF]/10 flex items-center justify-center shrink-0 border border-[#00E5FF]/20">
+                  <ShieldCheck className="h-6 w-6 text-[#00E5FF]" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-lg font-semibold text-white">Submitted Successfully</h3>
+                  <p className="text-gray-400 text-sm leading-relaxed">
+                    Your responses have been recorded. <span className="text-[#00E5FF] font-medium">Submissions are final.</span> You cannot view, edit, or recover your responses after transmission has completed.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-6">
+                <div className="w-12 h-12 rounded-xl bg-[#FF3D00]/10 flex items-center justify-center shrink-0 border border-[#FF3D00]/20">
+                  <Zap className="h-6 w-6 text-[#FF3D00]" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-lg font-semibold text-white">Evaluation Pending</h3>
+                  <p className="text-gray-400 text-sm leading-relaxed">
+                    Once evaluated, we will let you know the results via your registered email or phone number.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+
+          </CardContent>
+        </Card>
+
+
+      </div>
+
+      {/* Decorative scanline bars */}
+      <div className="absolute top-0 left-0 w-full h-[1px] bg-[#00E5FF]/20 animate-scanline"></div>
     </div>
   )
 }

@@ -29,6 +29,7 @@ export interface EnhancedAntiCheatingTracker {
   getFingerprint: () => Promise<string>
   checkFullscreen: () => boolean
   requestFullscreen: () => Promise<void>
+  exitFullscreen: () => Promise<void>
 }
 
 /**
@@ -602,6 +603,22 @@ export async function initializeEnhancedAntiCheating(
     }
   }
 
+  const exitFullscreen = async (): Promise<void> => {
+    if (checkFullscreen()) {
+      try {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen()
+        } else if ((document as any).webkitExitFullscreen) {
+          await (document as any).webkitExitFullscreen()
+        } else if ((document as any).mozCancelFullScreen) {
+          await (document as any).mozCancelFullScreen()
+        }
+      } catch (error) {
+        console.error('Fullscreen exit failed:', error)
+      }
+    }
+  }
+
   // Return enhanced tracker interface
   return {
     updateQuestionId: (questionId: string) => {
@@ -624,6 +641,7 @@ export async function initializeEnhancedAntiCheating(
     },
     cleanup: () => {
       listeners.forEach((cleanup) => cleanup())
+      exitFullscreen()
     },
     getFingerprint: async () => {
       if (fingerprintCache) return fingerprintCache
@@ -634,6 +652,7 @@ export async function initializeEnhancedAntiCheating(
     },
     checkFullscreen,
     requestFullscreen,
+    exitFullscreen,
   }
 }
 

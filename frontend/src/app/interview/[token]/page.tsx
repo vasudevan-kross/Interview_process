@@ -101,7 +101,7 @@ export default function CandidateInterviewPage() {
     try {
       localStorage.removeItem(SESSION_KEY)
       localStorage.removeItem(ANSWERS_KEY)
-    } catch {}
+    } catch { }
   }
 
   // Load interview details — and restore any saved session on refresh
@@ -234,7 +234,7 @@ export default function CandidateInterviewPage() {
           candidateEmail,
           token: accessToken,   // validated on restore to reject stale/foreign sessions
         }))
-      } catch {}
+      } catch { }
 
       // Initialize enhanced anti-cheating
       const currentQuestionId = interview?.questions?.[0]?.id || '0'
@@ -290,7 +290,7 @@ export default function CandidateInterviewPage() {
     }, 30000)
 
     return () => clearInterval(interval)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasStarted, currentQuestionIndex, autoSaveCode, interview])
 
   // Timer countdown - single interval created when interview loads
@@ -313,7 +313,7 @@ export default function CandidateInterviewPage() {
     }, 1000)
 
     return () => clearInterval(interval)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interview])
 
   // Update anti-cheating tracker when question changes
@@ -327,14 +327,18 @@ export default function CandidateInterviewPage() {
 
   // Measure signature container so canvas pixel width matches displayed width
   useEffect(() => {
+    const container = bondSigContainerRef.current
+    if (!container) return
+
     const measure = () => {
-      if (bondSigContainerRef.current) {
-        setBondSigWidth(bondSigContainerRef.current.clientWidth)
-      }
+      setBondSigWidth(container.clientWidth)
     }
+
     measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    const observer = new ResizeObserver(measure)
+    observer.observe(container)
+
+    return () => observer.disconnect()
   }, [])
 
   // Keep perf refs in sync with their state counterparts
@@ -354,7 +358,7 @@ export default function CandidateInterviewPage() {
     // Debounce localStorage writes — at most once every 2 s to avoid blocking the main thread
     if (lsDebounceRef.current) clearTimeout(lsDebounceRef.current)
     lsDebounceRef.current = setTimeout(() => {
-      try { localStorage.setItem(ANSWERS_KEY, JSON.stringify(codeAnswersRef.current)) } catch {}
+      try { localStorage.setItem(ANSWERS_KEY, JSON.stringify(codeAnswersRef.current)) } catch { }
     }, 2000)
 
     // Track code change (already debounced to 5 s inside createCodeChangeTracker)
@@ -537,262 +541,240 @@ export default function CandidateInterviewPage() {
   // Pre-start screen
   if (!hasStarted && interview) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50">
-        <Card className="max-w-4xl w-full shadow-xl">
-          <CardHeader className="pb-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-lg">
-            <div className="mx-auto w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-3">
-              <Code className="h-6 w-6 text-white" />
+      <div className="min-h-screen bg-[#0A0A0B] text-white selection:bg-[#00E5FF]/30 cyber-theme cyber-grid flex overflow-hidden">
+        {/* Left Side Panel - Metadata & Instructions */}
+        <div className="w-[30%] h-full border-r border-[#1e1e22] cyber-glass p-8 flex flex-col gap-8 overflow-y-auto hidden md:flex">
+          <div className="space-y-4">
+            <div className="h-12 w-12 bg-[#00E5FF]/10 rounded-sm border border-[#00E5FF]/30 flex items-center justify-center cyber-glow-cyan">
+              <Code className="h-6 w-6 text-[#00E5FF]" />
             </div>
-            <CardTitle className="text-2xl text-center">{interview.title}</CardTitle>
-            {interview.description && (
-              <CardDescription className="text-center text-indigo-100">{interview.description}</CardDescription>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-5 p-6">
-            {/* Interview Info */}
-            <div className="grid gap-4 md:grid-cols-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border border-gray-200">
-              <div>
-                <p className="text-xs text-gray-500 mb-1">Interview Type</p>
-                <p className="font-semibold text-sm">{interview.interview_type.toUpperCase()}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 mb-1">
-                  {interview.interview_type === 'testing' ? 'Test Framework' : 'Programming Language'}
-                </p>
-                <p className="font-semibold text-sm">{interview.programming_language.toUpperCase()}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 mb-1">Total Questions</p>
-                <p className="font-semibold text-sm">{interview.questions?.length || 0}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 mb-1">Total Marks</p>
-                <p className="font-semibold text-sm">{interview.total_marks}</p>
-              </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white mb-1 uppercase tracking-widest">{interview.title}</h1>
+              <Badge variant="outline" className="text-[#00E5FF] border-[#00E5FF]/40 rounded-sm text-[10px] font-mono-tech uppercase">
+                {interview.interview_type} ASSESSMENT
+              </Badge>
             </div>
+          </div>
 
-            {/* Important Information - Side by Side */}
-            <div className="grid md:grid-cols-2 gap-3">
-              {/* Test Instructions */}
-              <div className="p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
-                <p className="text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                  <span>📋</span> Instructions
-                </p>
-                <ul className="text-xs text-gray-700 space-y-1.5">
-                  <li>• Write code in any language</li>
-                  <li>• Auto-saved every 30 seconds</li>
-                  <li>• No tab switching or copy-paste</li>
-                  <li>• Submit before time expires</li>
-                  <li>• All activities are monitored</li>
-                </ul>
-              </div>
-
-              {/* Bond Agreement Notice — only shown here for before_submission timing */}
-              {interview.require_signature && interview.bond_timing !== 'before_start' && (
-                <div className="p-4 bg-amber-50 border-l-4 border-amber-500 rounded-lg">
-                  <p className="text-sm font-semibold text-amber-900 mb-2 flex items-center gap-2">
-                    <span>⚠️</span> Bond Agreement Required
-                  </p>
-                  <ul className="text-xs text-amber-800 space-y-1.5">
-                    <li>• Digital signature required after submission</li>
-                    <li>• {interview.bond_years || 2} year bond period</li>
-                    <li>• Certificates collected until completion</li>
-                    {interview.bond_document_url && (
-                      <li>
-                        •{' '}
-                        <a href={interview.bond_document_url} target="_blank" rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline font-medium">
-                          View bond document
-                        </a>
-                      </li>
-                    )}
-                  </ul>
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <h3 className="text-[10px] font-mono-tech text-gray-500 uppercase tracking-widest">Protocol Stats</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 bg-white/5 border border-white/10 rounded-sm">
+                  <p className="text-[10px] font-mono-tech text-gray-500 uppercase">Questions</p>
+                  <p className="text-lg font-bold font-mono-tech">{interview.questions?.length || 0}</p>
                 </div>
-              )}
+                <div className="p-3 bg-white/5 border border-white/10 rounded-sm">
+                  <p className="text-[10px] font-mono-tech text-gray-500 uppercase">Points</p>
+                  <p className="text-lg font-bold font-mono-tech">{interview.total_marks}</p>
+                </div>
+              </div>
             </div>
 
-            {/* Candidate Details */}
-            <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
-              <h3 className="font-semibold text-base mb-4 text-gray-800">Your Details</h3>
-              <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-4">
+              <h3 className="text-[10px] font-mono-tech text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 bg-[#00E5FF] animate-pulse"></span>
+                Security Protocols
+              </h3>
+              <ul className="space-y-3 text-xs text-gray-400 font-mono-tech">
+                <li className="flex gap-2">
+                  <span className="text-[#00E5FF]">[01]</span> No tab switching or duplicate windows.
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-[#00E5FF]">[02]</span> Copy-paste disabled across workspace.
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-[#00E5FF]">[03]</span> Auto-save active every 30 seconds.
+                </li>
+                <li className="flex gap-2">
+                  <span className="text-[#00E5FF]">[04]</span> Full system activity monitoring.
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-auto pt-8 border-t border-white/5">
+            <div className={`p-4 rounded-sm border ${timerExpired ? 'border-red-500/30 bg-red-500/5' : 'border-[#FF3D00]/30 bg-[#FF3D00]/5'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className={`h-4 w-4 ${timerExpired ? 'text-red-500' : 'text-[#FF3D00]'}`} />
+                <span className="text-[10px] font-mono-tech uppercase text-gray-400">System Expiry</span>
+              </div>
+              <p className={`text-2xl font-mono-tech font-bold ${timerExpired ? 'text-red-500' : 'text-[#FF3D00]'}`}>
+                {formatTime(timeRemaining)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side - Input Form */}
+        <div className="flex-1 h-full overflow-y-auto bg-[#050505] p-6 lg:p-12 flex items-center justify-center">
+          <div className="max-w-2xl w-full space-y-12">
+            <div className="space-y-2">
+              <h2 className="text-3xl font-bold tracking-tighter text-white uppercase">Candidate Entry</h2>
+              <p className="text-gray-500 text-sm">Please provide credentials to initialize the assessment environment.</p>
+            </div>
+
+            <div className="space-y-8">
+              <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="name" className="text-sm">Full Name *</Label>
+                  <Label htmlFor="name" className="text-[10px] font-mono-tech text-gray-500 uppercase">Access Name</Label>
                   <Input
                     id="name"
                     value={candidateName}
                     onChange={(e) => setCandidateName(e.target.value)}
-                    placeholder="Enter your full name"
-                    className="h-10"
+                    placeholder="FULL NAME"
+                    className="bg-white/5 border-white/10 h-12 rounded-sm focus:border-[#00E5FF]/60 focus:ring-1 focus:ring-[#00E5FF]/20 text-white placeholder:text-white/20"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm">Email *</Label>
+                  <Label htmlFor="email" className="text-[10px] font-mono-tech text-gray-500 uppercase">Comm Channel (Email)</Label>
                   <Input
                     id="email"
                     type="email"
                     value={candidateEmail}
                     onChange={(e) => setCandidateEmail(e.target.value)}
-                    placeholder="Enter your email"
-                    className="h-10"
+                    placeholder="EMAIL ADDRESS"
+                    className="bg-white/5 border-white/10 h-12 rounded-sm focus:border-[#00E5FF]/60 focus:ring-1 focus:ring-[#00E5FF]/20 text-white placeholder:text-white/20"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone" className="text-sm">Phone (optional)</Label>
-                  <Input
-                    id="phone"
-                    value={candidatePhone}
-                    onChange={(e) => setCandidatePhone(e.target.value)}
-                    placeholder="Enter your phone number"
-                    className="h-10"
-                  />
-                </div>
-
-                {/* Resume Upload */}
-                {interview.resume_required !== 'disabled' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="resume" className="text-sm">
-                      Resume {interview.resume_required === 'mandatory' ? '*' : '(optional)'}
-                    </Label>
-                    <label
-                      htmlFor="resume"
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-dashed border-gray-300 hover:border-indigo-500 cursor-pointer transition-colors w-full bg-white"
-                    >
-                      {resumeFile ? (
-                        <>
-                          <FileText className="h-5 w-5 text-green-600" />
-                          <span className="text-sm text-green-700 truncate">{resumeFile.name}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="h-5 w-5 text-gray-400" />
-                          <span className="text-sm text-gray-500">Upload PDF or DOCX</span>
-                        </>
-                      )}
-                    </label>
-                    <input
-                      id="resume"
-                      type="file"
-                      accept=".pdf,.docx,.doc"
-                      className="hidden"
-                      onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
-                    />
-                  </div>
-                )}
               </div>
-            </div>
 
-            {/* Bond Agreement — shown inline before start when bond_timing === 'before_start' */}
-            {interview.require_signature && interview.bond_timing === 'before_start' && (
-              <div className="border border-amber-300 bg-amber-50 rounded-lg p-5 space-y-4">
-                <div className="flex items-center gap-2">
-                  <PenTool className="h-5 w-5 text-amber-600" />
-                  <h3 className="font-semibold text-amber-900">Bond Agreement — Sign Before Starting</h3>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="phone" className="text-[10px] font-mono-tech text-gray-500 uppercase">Contact Link (Optional)</Label>
+                <Input
+                  id="phone"
+                  value={candidatePhone}
+                  onChange={(e) => setCandidatePhone(e.target.value)}
+                  placeholder="PHONE NUMBER"
+                  className="bg-white/5 border-white/10 h-12 rounded-sm focus:border-[#00E5FF]/60 focus:ring-1 focus:ring-[#00E5FF]/20 text-white placeholder:text-white/20"
+                />
+              </div>
 
-                {/* Bond terms text */}
-                {interview.bond_terms && (
-                  <div className="bg-white border border-amber-200 rounded-md p-4 max-h-48 overflow-y-auto">
-                    <p className="text-xs text-gray-700 whitespace-pre-wrap">{interview.bond_terms}</p>
-                  </div>
-                )}
-
-                {interview.bond_document_url && (
-                  <a href={interview.bond_document_url} target="_blank" rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline flex items-center gap-1">
-                    <FileText className="h-4 w-4" />
-                    View full bond document
-                  </a>
-                )}
-
-                {/* Signature pad */}
+              {/* Resume Upload */}
+              {interview.resume_required !== 'disabled' && (
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium text-amber-900">Your Signature *</Label>
-                  <div ref={bondSigContainerRef} className="border-2 border-amber-300 rounded-lg bg-white overflow-hidden">
-                    <SignatureCanvas
-                      ref={bondSignatureRef}
-                      penColor="black"
-                      canvasProps={{ width: bondSigWidth, height: 120 }}
-                      onEnd={() => {
-                        if (bondSignatureRef.current && !bondSignatureRef.current.isEmpty()) {
-                          setBondHasSignature(true)
-                          setBondSignatureData(bondSignatureRef.current.toDataURL())
-                        }
-                      }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      bondSignatureRef.current?.clear()
-                      setBondHasSignature(false)
-                      setBondSignatureData('')
-                    }}
-                    className="text-xs text-red-600 hover:underline"
-                  >
-                    Clear signature
-                  </button>
-                </div>
-
-                {/* Accept checkbox */}
-                <div className="flex items-start gap-3">
-                  <input
-                    type="checkbox"
-                    id="bondAccept"
-                    checked={bondTermsAccepted}
-                    onChange={(e) => setBondTermsAccepted(e.target.checked)}
-                    className="mt-1 h-4 w-4 rounded border-gray-300"
-                  />
-                  <Label htmlFor="bondAccept" className="text-sm text-amber-900 cursor-pointer leading-relaxed">
-                    I have read and agree to the bond terms above. I understand this is a {interview.bond_years || 2}-year bond agreement
-                    and my signature constitutes a legally binding acceptance.
+                  <Label htmlFor="resume" className="text-[10px] font-mono-tech text-gray-500 uppercase">
+                    Verification Document (Resume) {interview.resume_required === 'mandatory' ? '*' : ''}
                   </Label>
+                  <label
+                    htmlFor="resume"
+                    className="flex items-center gap-3 px-6 py-8 rounded-sm border-2 border-dashed border-white/5 hover:border-[#00E5FF]/30 hover:bg-[#00E5FF]/5 cursor-pointer transition-all bg-white/[0.02]"
+                  >
+                    {resumeFile ? (
+                      <>
+                        <FileText className="h-6 w-6 text-[#00E5FF]" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-white truncate">{resumeFile.name}</p>
+                          <p className="text-[10px] font-mono-tech text-gray-500">{(resumeFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="h-6 w-6 text-gray-600" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-400">SELECT PDF/DOCX SOURCE</p>
+                          <p className="text-[10px] font-mono-tech text-gray-600 uppercase">Max size 5MB</p>
+                        </div>
+                      </>
+                    )}
+                  </label>
+                  <input
+                    id="resume"
+                    type="file"
+                    accept=".pdf,.docx,.doc"
+                    className="hidden"
+                    onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
+                  />
                 </div>
-              </div>
-            )}
-
-            {/* Time Info */}
-            <div className={`p-3 rounded-lg border-l-4 ${timerExpired
-              ? 'bg-red-50 border-red-500'
-              : timeRemaining < 300
-                ? 'bg-orange-50 border-orange-500'
-                : 'bg-blue-50 border-blue-500'
-              }`}>
-              <p className={`text-sm font-medium ${timerExpired
-                ? 'text-red-800'
-                : timeRemaining < 300
-                  ? 'text-orange-800'
-                  : 'text-blue-800'
-                }`}>
-                <Clock className="inline h-4 w-4 mr-2" />
-                {timerExpired ? (
-                  <strong>Time has expired. You can no longer start this interview.</strong>
-                ) : (
-                  <>Time Remaining: <strong>{formatTime(timeRemaining)}</strong></>
-                )}
-              </p>
-            </div>
-
-            <Button
-              onClick={handleStartSubmission}
-              disabled={
-                loading || timerExpired ||
-                (interview.require_signature && interview.bond_timing === 'before_start' && (!bondTermsAccepted || !bondHasSignature))
-              }
-              className="w-full h-12 text-base font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Starting...
-                </>
-              ) : timerExpired ? (
-                'Interview Expired'
-              ) : (
-                'Start Interview'
               )}
-            </Button>
-          </CardContent>
-        </Card>
+
+              {/* Bond Section - Modern Look */}
+              {interview.require_signature && interview.bond_timing === 'before_start' && (
+                <div className="border border-[#FF3D00]/20 bg-[#FF3D00]/5 p-6 space-y-6 rounded-sm">
+                  <div className="flex items-center gap-2">
+                    <PenTool className="h-4 w-4 text-[#FF3D00]" />
+                    <h3 className="text-[10px] font-mono-tech font-bold text-[#FF3D00] uppercase tracking-widest">Bond Agreement Authentication</h3>
+                  </div>
+
+                  {interview.bond_terms && (
+                    <div className="bg-black/40 border border-[#FF3D00]/10 rounded-sm p-4 max-h-40 overflow-y-auto custom-scrollbar">
+                      <p className="text-[11px] font-mono-tech text-gray-400 leading-relaxed whitespace-pre-wrap">{interview.bond_terms}</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-mono-tech text-gray-500 uppercase">Input Signature</Label>
+                      <div ref={bondSigContainerRef} className="border border-white/10 rounded-sm bg-white/5 cyber-glow-cyan">
+                        <SignatureCanvas
+                          ref={bondSignatureRef}
+                          penColor="#00E5FF"
+                          canvasProps={{ 
+                            width: bondSigWidth, 
+                            height: 120,
+                            style: { touchAction: 'none' }
+                          }}
+                          onEnd={() => {
+                            if (bondSignatureRef.current && !bondSignatureRef.current.isEmpty()) {
+                              setBondHasSignature(true)
+                              setBondSignatureData(bondSignatureRef.current.toDataURL())
+                            }
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          bondSignatureRef.current?.clear()
+                          setBondHasSignature(false)
+                          setBondSignatureData('')
+                        }}
+                        className="text-[10px] font-mono-tech text-red-500/60 hover:text-red-500 uppercase tracking-widest mt-1"
+                      >
+                        [Reset Signature]
+                      </button>
+                    </div>
+
+                    <div className="flex items-start gap-3 p-3 bg-black/40 border border-white/5 rounded-sm">
+                      <input
+                        type="checkbox"
+                        id="bondAccept"
+                        checked={bondTermsAccepted}
+                        onChange={(e) => setBondTermsAccepted(e.target.checked)}
+                        className="mt-1 h-3 w-3 rounded-none border-white/20 bg-transparent text-[#00E5FF] focus:ring-0"
+                      />
+                      <Label htmlFor="bondAccept" className="text-[10px] font-mono-tech text-gray-500 cursor-pointer leading-relaxed">
+                        I ACKNOWLEDGE THAT I HAVE READ THE {interview.bond_years || 2}-YEAR BOND PROTOCOL. BY SIGNING, I AGREE TO ALL MANDATORY RETENTION CLAUSES.
+                      </Label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-8">
+                <Button
+                  onClick={handleStartSubmission}
+                  disabled={
+                    loading || timerExpired ||
+                    (interview.require_signature && interview.bond_timing === 'before_start' && (!bondTermsAccepted || !bondHasSignature))
+                  }
+                  className="w-full h-14 text-sm font-bold bg-[#00E5FF] hover:bg-[#00E5FF]/90 text-black rounded-sm cyber-glow-cyan shadow-[0_0_20px_rgba(0,229,255,0.2)] transition-all disabled:opacity-30 disabled:grayscale uppercase tracking-widest"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Initializing Link...
+                    </>
+                  ) : timerExpired ? (
+                    'System Link Terminated'
+                  ) : (
+                    'Initialize Assessment'
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
@@ -804,165 +786,217 @@ export default function CandidateInterviewPage() {
     const currentCode = codeAnswers[currentQuestionId] || ''
 
     return (
-      <div className="min-h-screen bg-gray-50">
-        {/* Header */}
-        <div className="bg-white border-b sticky top-0 z-10">
-          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-            <div>
-              <h1 className="font-semibold">{interview.title}</h1>
-              <p className="text-sm text-gray-600">{candidateName}</p>
+      <div className="h-screen bg-[#0A0A0B] text-white cyber-theme font-mono-tech flex flex-col overflow-hidden">
+        {/* Header - IDE Command Bar */}
+        <div className="bg-[#141416] border-b border-[#1e1e22] px-4 py-2 flex items-center justify-between h-14">
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-[#00E5FF]/10 border border-[#00E5FF]/30 flex items-center justify-center rounded-sm">
+                <Code className="h-4 w-4 text-[#00E5FF]" />
+              </div>
+              <div>
+                <h1 className="text-xs font-bold uppercase tracking-widest leading-none">{interview.title}</h1>
+                <p className="text-[10px] text-gray-500 uppercase mt-1">{candidateName}</p>
+              </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              {/* Auto-save indicator */}
-              <div className="flex items-center gap-2 text-sm">
-                {autoSaving ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                    <span className="text-gray-600">Saving...</span>
-                  </>
-                ) : lastSaved ? (
-                  <>
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span className="text-gray-600">
-                      Saved at {format(lastSaved, 'HH:mm:ss')}
-                    </span>
-                  </>
-                ) : null}
-              </div>
-
-              {/* Timer */}
-              <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${timeRemaining < 300 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
-                }`}>
-                <Clock className="h-5 w-5" />
-                <span className="font-mono text-lg font-bold">{formatTime(timeRemaining)}</span>
-              </div>
+            {/* Question Navigator - Mini Pills */}
+            <div className="hidden border-l border-white/10 pl-6 md:flex items-center gap-1.5">
+              {interview.questions?.map((q, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    if (idx !== currentQuestionIndex) {
+                      const fromId = interview.questions?.[currentQuestionIndex]?.id || currentQuestionIndex.toString()
+                      autoSaveCode(fromId, codeAnswersRef.current[fromId] || '')
+                    }
+                    setCurrentQuestionIndex(idx)
+                  }}
+                  className={`w-7 h-7 flex items-center justify-center text-[10px] rounded-sm transition-all border ${idx === currentQuestionIndex
+                    ? 'bg-[#00E5FF] border-[#00E5FF] text-black font-bold cyber-glow-cyan'
+                    : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                    }`}
+                >
+                  {idx + 1}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Question Navigator */}
-          <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-2 overflow-x-auto">
-            {interview.questions?.map((q, idx) => (
-              <button
-                key={idx}
-                onClick={() => {
-                  // Save the current question's code before jumping (same as Next/Prev)
-                  if (idx !== currentQuestionIndex) {
-                    const fromId = interview.questions?.[currentQuestionIndex]?.id || currentQuestionIndex.toString()
-                    autoSaveCode(fromId, codeAnswersRef.current[fromId] || '')
-                  }
-                  setCurrentQuestionIndex(idx)
-                }}
-                className={`px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap ${idx === currentQuestionIndex
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-              >
-                Q{idx + 1}
-              </button>
-            ))}
+          <div className="flex items-center gap-6">
+            {/* Auto-save Status */}
+            <div className="hidden sm:flex items-center gap-2 text-[10px] uppercase tracking-widest text-gray-500">
+              {autoSaving ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin text-[#00E5FF]" />
+                  <span>Syncing...</span>
+                </>
+              ) : lastSaved ? (
+                <>
+                  <CheckCircle className="h-3 w-3 text-green-500/50" />
+                  <span>Last Sync: {format(lastSaved, 'HH:mm:ss')}</span>
+                </>
+              ) : null}
+            </div>
+
+            {/* Timer - Tactical Display */}
+            <div className={`flex items-center gap-3 px-4 py-1.5 rounded-sm border ${timeRemaining < 300
+              ? 'border-[#FF3D00] bg-[#FF3D00]/10 text-[#FF3D00] cyber-glow-orange animate-pulse'
+              : 'border-white/10 bg-white/5 text-gray-300'
+              }`}>
+              <Clock className="h-4 w-4" />
+              <span className="text-lg font-bold tabular-nums tracking-tighter">{formatTime(timeRemaining)}</span>
+            </div>
           </div>
         </div>
 
-        {/* Main Content */}
-        <div className="max-w-7xl mx-auto p-4 space-y-4">
-          {/* Question */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Question {currentQuestionIndex + 1}</CardTitle>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">{currentQuestion?.difficulty}</Badge>
-                  <Badge>{currentQuestion?.marks} marks</Badge>
+        {/* Main Workspace Layout - Two Panels */}
+        <div className="h-[calc(100vh-3.5rem)] flex flex-col lg:flex-row overflow-hidden">
+          {/* Left Panel: Question Content */}
+          <div className="w-full lg:w-[35%] h-[40vh] lg:h-full border-b lg:border-r border-[#1e1e22] flex flex-col overflow-hidden bg-[#0A0A0B]">
+            <div className="p-4 lg:p-6 overflow-y-auto flex-1 space-y-6 lg:space-y-8 custom-scrollbar">
+              <div className="space-y-3 lg:space-y-4">
+                <div className="flex items-center justify-between font-mono">
+                  <h2 className="text-[10px] lg:text-[11px] font-black uppercase tracking-[0.4em] text-[#00E5FF]">Question_{currentQuestionIndex + 1}</h2>
+                  <div className="flex gap-2">
+                    <Badge variant="outline" className="text-[8px] lg:text-[9px] border-white/5 text-gray-500 font-normal uppercase rounded-none bg-white/[0.02]">
+                      {currentQuestion?.difficulty}
+                    </Badge>
+                    <Badge variant="outline" className="text-[8px] lg:text-[9px] border-[#00E5FF]/20 text-[#00E5FF] font-normal uppercase rounded-none bg-[#00E5FF]/[0.02]">
+                      {currentQuestion?.marks} PTS
+                    </Badge>
+                  </div>
+                </div>
+                <div className="prose prose-invert prose-sm max-w-none">
+                  <div className="text-gray-300 text-[12px] lg:text-[13px] leading-relaxed whitespace-pre-wrap font-sans opacity-90">
+                    {currentQuestion?.question_text}
+                  </div>
                 </div>
               </div>
-            </CardHeader>
-            <CardContent>
-              <p className="whitespace-pre-wrap">{currentQuestion?.question_text}</p>
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Code Editor */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Your Solution</CardTitle>
-            </CardHeader>
-            <CardContent>
+            {/* Panel Footer: Navigator Controls */}
+            <div className="p-3 lg:p-4 border-t border-[#1e1e22] bg-[#141416] flex items-center justify-between">
+              <Button
+                onClick={handlePreviousQuestion}
+                disabled={currentQuestionIndex === 0}
+                variant="ghost"
+                className="text-[9px] lg:text-[10px] uppercase text-[#00E5FF] hover:text-[#00E5FF] hover:bg-[#00E5FF]/5 rounded-none h-8 lg:h-10 px-3 lg:px-4 tracking-widest font-bold flex items-center border border-[#00E5FF]/10 disabled:opacity-30"
+              >
+                <ChevronLeft className="mr-1 h-3 w-3" />
+                Prev
+              </Button>
+
+              <span className="text-[8px] lg:text-[9px] text-gray-600 uppercase tracking-[0.2em] font-black">
+                {currentQuestionIndex + 1} / {interview.questions?.length}
+              </span>
+
+              {currentQuestionIndex < interview.questions!.length - 1 ? (
+                <Button
+                  onClick={handleNextQuestion}
+                  variant="ghost"
+                  className="text-[9px] lg:text-[10px] uppercase text-[#00E5FF] hover:text-[#00E5FF] hover:bg-[#00E5FF]/5 rounded-none h-8 lg:h-10 px-3 lg:px-4 tracking-widest font-bold flex items-center border border-[#00E5FF]/10 group/next"
+                >
+                  Next
+                  <ChevronRight className="h-3 w-3 ml-1 group-hover/next:translate-x-0.5 transition-transform" />
+                </Button>
+              ) : (
+                <div className="w-[60px] lg:w-[100px]"></div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Panel: Code Editor */}
+          <div className="flex-1 h-[60vh] lg:h-full flex flex-col bg-[#0A0A0B] border-t lg:border-l border-[#1e1e22] overflow-hidden">
+            {/* Editor Header - System Status */}
+            <div className="h-9 lg:h-10 border-b border-[#1e1e22] bg-[#141416] px-3 lg:px-4 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#00E5FF] animate-pulse"></div>
+                  <span className="text-[8px] lg:text-[9px] uppercase tracking-[0.2em] font-black text-[#00E5FF]">Terminal_Active</span>
+                </div>
+                <div className="hidden sm:block h-3 w-[1px] bg-white/10 mx-1"></div>
+                <div className="hidden sm:flex items-center gap-1.5">
+                  <span className="text-[8px] lg:text-[9px] uppercase tracking-[0.2em] font-bold text-gray-500">Buffer:</span>
+                  <span className="text-[8px] lg:text-[9px] uppercase tracking-[0.2em] font-bold text-gray-300">{interview.programming_language}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <span className="text-[8px] lg:text-[9px] uppercase tracking-[0.2em] font-bold text-gray-600">Secure_Sync</span>
+              </div>
+            </div>
+
+            {/* Main Editor Canvas */}
+            <div className="flex-1 relative group bg-[#0A0A0B] overflow-hidden flex flex-col min-h-0">
+              {/* Highlight Overlay */}
+              <div className="absolute inset-0 border border-[#00E5FF]/5 pointer-events-none z-30 group-focus-within:border-[#00E5FF]/20 transition-all"></div>
+
               <CodeEditor
                 value={currentCode}
                 onChange={(code) => handleCodeChange(currentQuestionId, code)}
                 language={interview.programming_language}
-                height="60vh"
+                className="z-10 h-full"
               />
-            </CardContent>
-          </Card>
 
-          {/* Navigation */}
-          <div className="flex items-center justify-between">
-            <Button
-              onClick={handlePreviousQuestion}
-              disabled={currentQuestionIndex === 0}
-              variant="outline"
-            >
-              <ChevronLeft className="mr-2 h-4 w-4" />
-              Previous
-            </Button>
-
-            <div className="text-sm text-gray-600">
-              Question {currentQuestionIndex + 1} of {interview.questions?.length}
+              {/* Floating Editor Label */}
+              <div className="absolute top-4 right-6 pointer-events-none opacity-10 group-focus-within:opacity-5 transition-opacity z-20 hidden lg:block">
+                <p className="text-[40px] font-black uppercase tracking-[0.5em] text-white/5 rotate-12 select-none">SOURCE_CODE</p>
+              </div>
             </div>
 
-            {currentQuestionIndex < interview.questions!.length - 1 ? (
-              <Button onClick={handleNextQuestion}>
-                Next
-                <ChevronRight className="ml-2 h-4 w-4" />
-              </Button>
-            ) : (
-              <Button
-                onClick={handleSubmit}
-                disabled={loading}
-                className="bg-gradient-to-r from-green-600 to-green-700"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <Send className="mr-2 h-4 w-4" />
-                    Submit Interview
-                  </>
-                )}
-              </Button>
-            )}
+            {/* Action Bar */}
+            <div className="h-12 lg:h-14 border-t border-[#1e1e22] bg-[#141416] px-4 lg:px-6 flex items-center justify-between shrink-0">
+              <div className="hidden sm:flex items-center gap-6">
+                <div className="text-[9px] lg:text-[10px] text-gray-500 uppercase flex items-center gap-2">
+                  <div className="w-1 h-1 rounded-full bg-gray-700"></div>
+                  <span>System_Ready</span>
+                </div>
+              </div>
+
+              {currentQuestionIndex === interview.questions!.length - 1 && (
+                <Button
+                  onClick={handleSubmit}
+                  disabled={loading}
+                  className="bg-[#00E5FF] hover:bg-[#00E5FF]/90 text-black font-black uppercase text-[9px] lg:text-[10px] tracking-[0.2em] lg:tracking-[0.3em] px-6 lg:px-10 rounded-sm cyber-glow-cyan h-8 lg:h-10 transition-all hover:scale-[1.02] active:scale-[0.98] w-full sm:w-auto"
+                >
+                  {loading ? (
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>Transmitting...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Send className="h-3 w-3" />
+                      <span>Submit Interview</span>
+                    </div>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
-
-          {/* Warning: all answers empty / starter code */}
-          <ConfirmDialog
-            open={emptySubmitDialogOpen}
-            onOpenChange={setEmptySubmitDialogOpen}
-            onConfirm={() => {
-              setEmptySubmitDialogOpen(false)
-              setSubmitDialogOpen(true)
-            }}
-            title="⚠️ Answers Look Empty"
-            description={
-              `All your answers appear to be empty or still contain only the default starter code. ` +
-              `Are you sure you want to submit without attempting the questions?`
-            }
-            confirmText="Yes, Submit Anyway"
-          />
-
-          <ConfirmDialog
-            open={submitDialogOpen}
-            onOpenChange={setSubmitDialogOpen}
-            onConfirm={confirmSubmit}
-            title="Submit Interview"
-            description="Are you sure you want to submit? You cannot change your answers after submission."
-            confirmText="Submit"
-          />
         </div>
+
+        {/* Dialogs - Styled with Cyber Theme */}
+        <ConfirmDialog
+          open={emptySubmitDialogOpen}
+          onOpenChange={setEmptySubmitDialogOpen}
+          onConfirm={() => {
+            setEmptySubmitDialogOpen(false)
+            setSubmitDialogOpen(true)
+          }}
+          title="PROTOCOL WARNING: EMPTY DATA"
+          description="Your solution buffer appears to be empty or uninitialized. Initializing submission without data will result in 0 score. Proceed?"
+          confirmText="CONSENT & SUBMIT"
+        />
+
+        <ConfirmDialog
+          open={submitDialogOpen}
+          onOpenChange={setSubmitDialogOpen}
+          onConfirm={confirmSubmit}
+          title="FINALIZE ASSESSMENT"
+          description="Confirming terminal submission will lock all answer buffers and terminate your session. Proceed?"
+          confirmText="Submit Interview"
+        />
       </div>
     )
   }

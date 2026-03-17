@@ -67,7 +67,7 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
     showEvents: false,
     showOperators: false,
     showUnits: false,
-    showValue: false,
+    showValues: false,
     showKeywords: false,
     showSnippets: false,
     showWords: false,
@@ -78,7 +78,6 @@ const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
     showTypeParameters: false,
     showIssues: false,
     showUsers: false,
-    showSnippetsFirst: false,
   },
 }
 
@@ -100,17 +99,20 @@ export default function CodeEditor({
   }
 
   return (
-    <div className={`border rounded-lg overflow-hidden ${className}`}>
+    <div 
+      className={`w-full flex-1 flex flex-col min-h-[200px] bg-[#1E1E1E] ${className}`}
+      style={height !== '100%' ? { height } : { flex: 1 }}
+    >
       <Editor
-        height={height}
+        height="100%"
         language={LANGUAGE_MAP[language.toLowerCase()] ?? 'plaintext'}
         value={value}
         onChange={onChange}
         onMount={handleEditorDidMount}
         theme="vs-dark"
         loading={
-          <div className="flex items-center justify-center h-full bg-gray-900">
-            <Loader2 className="h-8 w-8 animate-spin text-white" />
+          <div className="flex items-center justify-center h-full bg-[#1E1E1E]">
+            <Loader2 className="h-8 w-8 animate-spin text-[#00E5FF]" />
           </div>
         }
         options={{ ...EDITOR_OPTIONS, readOnly }}

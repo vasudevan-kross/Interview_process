@@ -14,7 +14,7 @@ import json
 import re
 import zipfile
 from datetime import datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Request, Body, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
@@ -1014,8 +1014,8 @@ async def get_submission(
 
         submission = submission_result.data[0]
 
-        # Verify interview org membership
-        interview_result = client.table('coding_interviews').select('id').eq(
+        # Verify interview org membership and fetch details like bond_terms
+        interview_result = client.table('coding_interviews').select('id, title, bond_terms').eq(
             'id', submission['interview_id']
         ).eq('org_id', ctx.org_id).execute()
 
@@ -1024,6 +1024,8 @@ async def get_submission(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to view this submission"
             )
+            
+        submission['interview'] = interview_result.data[0]
 
         # Get answers with evaluations
         answers_result = client.table('coding_answers').select('*').eq(
@@ -1452,6 +1454,40 @@ def _sanitize_name(name: str) -> str:
     sanitized = re.sub(r'[^\w\s\-]', '_', name)
     sanitized = re.sub(r'\s+', ' ', sanitized).strip()
     return sanitized or 'Unknown'
+
+
+@router.get("/{interview_id}/export-csv", summary="Export submissions as CSV")
+async def export_submissions_csv(
+    interview_id: str,
+    ctx: OrgContext = Depends(require_permission('interview:view'))
+):
+    """Export candidate submissions and question scores as a CSV file."""
+    try:
+        service = get_coding_interview_service()
+        
+        # Get interview title for filename
+        interview = await service.get_interview(interview_id)
+        title = _sanitize_name(interview.get('title', 'Assessment'))
+        filename = f"{title}_submissions.csv"
+        
+        csv_content = await service.export_submissions_csv(
+            interview_id=interview_id,
+            user_id=ctx.user_id,
+            org_id=ctx.org_id
+        )
+        
+        return StreamingResponse(
+            StringIO(csv_content),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error exporting CSV: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to export CSV: {str(e)}")
 
 
 @router.get("/{interview_id}/export", summary="Export submissions as ZIP")

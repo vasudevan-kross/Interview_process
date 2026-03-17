@@ -459,15 +459,25 @@ export default function SubmissionReviewPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Signature Image */}
-            <div className="border-2 border-amber-200 rounded-lg bg-white p-4">
-              <p className="text-sm font-medium text-gray-700 mb-3">Digital Signature:</p>
-              <div className="bg-gray-50 border border-gray-200 rounded p-4 inline-block">
-                <img
-                  src={submission.signature_data}
-                  alt="Candidate Signature"
-                  className="max-w-md h-auto"
-                />
+            {/* Bond Terms & Signature Image */}
+            <div className="border-2 border-amber-200 rounded-lg bg-white overflow-hidden">
+              {submission.interview?.bond_terms && (
+                <div className="bg-amber-50 p-4 border-b border-amber-200">
+                  <p className="text-sm font-medium text-amber-900 mb-2">Agreed Terms & Conditions:</p>
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    {submission.interview.bond_terms}
+                  </div>
+                </div>
+              )}
+              <div className="p-4">
+                <p className="text-sm font-medium text-gray-700 mb-3">Digital Signature:</p>
+                <div className="bg-gray-50 border border-gray-200 rounded p-4 inline-block">
+                  <img
+                    src={submission.signature_data}
+                    alt="Candidate Signature"
+                    className="max-w-md h-auto"
+                  />
+                </div>
               </div>
             </div>
 

@@ -56,6 +56,7 @@ async function getAuthHeaders(includeContentType = true): Promise<HeadersInit> {
 
 export interface Question {
   id?: string;
+  title?: string;
   question_text: string;
   difficulty: 'easy' | 'medium' | 'hard';
   marks: number;
@@ -114,6 +115,7 @@ export interface Submission {
   terms_ip_address?: string;  // IP address for audit trail
   answers?: Answer[];
   activities?: Activity[];
+  interview?: Interview;
 }
 
 export interface Answer {
@@ -769,6 +771,34 @@ export async function exportSubmissions(interviewId: string, interviewTitle: str
   const a = document.createElement('a');
   a.href = url;
   a.download = `${interviewTitle}_submissions.zip`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Export all candidate submissions and scores as a CSV file
+ */
+export async function exportSubmissionsCsv(interviewId: string, interviewTitle: string): Promise<void> {
+  const headers = await getAuthHeaders();
+  delete (headers as any)['Content-Type'];
+
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/${interviewId}/export-csv`,
+    { headers }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to export submissions CSV');
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${interviewTitle}_submissions.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

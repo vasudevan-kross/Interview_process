@@ -47,6 +47,29 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 224.3 76.3% 48%;
   }
+
+  .cyber-theme {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 5.5%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 180 100% 50%;
+    --primary-foreground: 240 10% 3.9%;
+    --secondary: 240 5% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 5% 12%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 14 100% 50%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5% 15%;
+    --input: 240 5% 15%;
+    --ring: 180 100% 50%;
+    --radius: 2px;
+  }
 }
 
 @layer base {
@@ -113,6 +136,28 @@
     );
     background-size: 200% 100%;
     animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  /* Cyber Technical Utilities */
+  .cyber-grid {
+    background-image: radial-gradient(circle at 2px 2px, rgba(0, 229, 255, 0.05) 1px, transparent 0);
+    background-size: 40px 40px;
+  }
+
+  .cyber-glow-cyan {
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.15), 0 0 5px rgba(0, 229, 255, 0.1);
+  }
+
+  .cyber-glow-orange {
+    box-shadow: 0 0 15px rgba(255, 61, 0, 0.15), 0 0 5px rgba(255, 61, 0, 0.1);
+  }
+
+  .cyber-glass {
+    @apply bg-black/40 backdrop-blur-md border border-white/5;
+  }
+
+  .font-mono-tech {
+    font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
   }
 }
 

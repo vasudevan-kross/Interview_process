@@ -30,10 +30,20 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonPageHeader, SkeletonTable } from '@/components/ui/skeleton'
-import { getInterview, listSubmissions, evaluateAllSubmissions, exportSubmissions, deleteSubmission, type Interview, type Submission } from '@/lib/api/coding-interviews'
+import {
+  getInterview,
+  listSubmissions,
+  evaluateAllSubmissions,
+  exportSubmissions,
+  exportSubmissionsCsv,
+  deleteSubmission,
+  type Interview,
+  type Submission
+} from '@/lib/api/coding-interviews'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import { FileText } from 'lucide-react'
 
 export default function SubmissionsPage() {
   const params = useParams()
@@ -45,6 +55,7 @@ export default function SubmissionsPage() {
   const [loading, setLoading] = useState(true)
   const [evaluating, setEvaluating] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportingCsv, setExportingCsv] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean
@@ -134,9 +145,21 @@ export default function SubmissionsPage() {
       await exportSubmissions(interviewId, interview?.title || 'Assessment')
       toast.success('ZIP downloaded')
     } catch (error: any) {
-      toast.error(error.message || 'Failed to export submissions')
+      toast.error(error.message || 'Failed to export submissions ZIP')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleExportCsv = async () => {
+    try {
+      setExportingCsv(true)
+      await exportSubmissionsCsv(interviewId, interview?.title || 'Assessment')
+      toast.success('CSV downloaded')
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to export submissions CSV')
+    } finally {
+      setExportingCsv(false)
     }
   }
 
@@ -314,6 +337,25 @@ export default function SubmissionsPage() {
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
+                size="sm"
+                onClick={handleExportCsv}
+                disabled={exportingCsv || loading || submissions.length === 0}
+              >
+                {exportingCsv ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Export CSV
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleExport}
                 disabled={exporting || loading || submissions.length === 0}
               >
@@ -330,6 +372,7 @@ export default function SubmissionsPage() {
                 )}
               </Button>
               <Button
+                size="sm"
                 onClick={handleEvaluateAll}
                 disabled={evaluating || loading || submissions.length === 0}
               >
