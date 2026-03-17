@@ -30,12 +30,12 @@ class ModelConfig:
 
     # Domain-specific model overrides
     DOMAIN_MODELS: Dict[str, str] = {
-        "coding": "qwen2.5:7b",
-        "development": "qwen2.5:7b",
-        "sql": "qwen2.5:7b",  # Can be changed to sqlcoder if available
+        "coding": "qwen2.5-coder:7b",
+        "development": "qwen2.5-coder:7b",
+        "sql": "qwen2.5-coder:7b",  # Optimized for SQL generation and evaluation
         "general": "qwen2.5:7b",
-        "testing": "qwen2.5:7b",
-        "devops": "qwen2.5:7b",
+        "testing": "qwen2.5-coder:7b",
+        "devops": "qwen2.5-coder:7b",
     }
 
     # Fallback model if specified model is not available

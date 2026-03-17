@@ -647,14 +647,14 @@ export default function SubmissionReviewPage() {
                     <p className="text-sm whitespace-pre-wrap">{answer.feedback}</p>
                   </div>
 
-                  {answer.code_quality_score && (
+                  {!!answer.code_quality_score && (
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-600">Code Quality:</span>
                       <Badge variant="outline">{answer.code_quality_score}/100</Badge>
                     </div>
                   )}
 
-                  {answer.similarity_score && (
+                  {!!answer.similarity_score && (
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-600">Similarity to Solution:</span>
                       <Badge variant="outline">{answer.similarity_score}%</Badge>

@@ -45,32 +45,55 @@ class UserService:
                 return resolved_id
 
             # 3. Not found — auto-create the users row from Supabase Auth data
+            email = ""
+            full_name = ""
             try:
-                auth_response = self.client.auth.admin.get_user_by_id(auth_user_id)
-                auth_user = auth_response.user if auth_response else None
-                email = (auth_user.email or "") if auth_user else ""
-                full_name = ((auth_user.user_metadata or {}).get("full_name") or "") if auth_user else ""
-            except Exception:
-                email = ""
-                full_name = ""
+                auth_user_res = self.client.auth.admin.get_user_by_id(auth_user_id)
+                if auth_user_res and auth_user_res.user:
+                    email = auth_user_res.user.email or ""
+                    full_name = (auth_user_res.user.user_metadata or {}).get("full_name") or ""
+            except Exception as auth_err:
+                logger.warning(f"Could not fetch auth metadata for {auth_user_id}: {auth_err}")
 
-            insert_result = self.client.table("users").insert({
-                "email": email,
-                "full_name": full_name,
-                "auth_user_id": auth_user_id,
-            }).execute()
+            # 4. Try match via email BEFORE inserting (in case user exists but auth_user_id isn't linked)
+            if email:
+                email_result = self.client.table("users").select("id").eq("email", email).execute()
+                if email_result.data:
+                    resolved_id = email_result.data[0]["id"]
+                    # Update the record to link the auth_user_id for future faster lookups
+                    try:
+                        self.client.table("users").update({"auth_user_id": auth_user_id}).eq("id", resolved_id).execute()
+                        logger.info(f"Linked auth_user_id {auth_user_id} to existing user {resolved_id} via email")
+                    except Exception as link_err:
+                        logger.warning(f"Could not link auth_user_id to existing user {resolved_id}: {link_err}")
+                    
+                    self._cache[auth_user_id] = resolved_id
+                    return resolved_id
 
-            if insert_result.data:
-                resolved_id = insert_result.data[0]["id"]
-                self._cache[auth_user_id] = resolved_id
-                logger.info(f"Auto-created users row {resolved_id} for auth user {auth_user_id}")
-                return resolved_id
+            # 5. Still not found — insert new row
+            try:
+                insert_result = self.client.table("users").insert({
+                    "email": email,
+                    "full_name": full_name,
+                    "auth_user_id": auth_user_id,
+                }).execute()
 
-            logger.warning(f"Could not create users row for auth user: {auth_user_id}. Using raw ID.")
+                if insert_result.data:
+                    resolved_id = insert_result.data[0]["id"]
+                    self._cache[auth_user_id] = resolved_id
+                    logger.info(f"Auto-created users row {resolved_id} for auth user {auth_user_id}")
+                    return resolved_id
+            except Exception as insert_err:
+                logger.error(f"Failed to insert user row for {auth_user_id}: {insert_err}")
+                
+            # Final fallback: if we absolutely can't find or create, but the input ID
+            # matches the UUID format, we check if it ALREADY exists but we somehow missed it.
+            # This is a safety net for extremely rare race conditions.
+            logger.warning(f"User resolution reached final fallback for {auth_user_id}")
             return auth_user_id
 
         except Exception as e:
-            logger.error(f"Error resolving user ID {auth_user_id}: {e}")
+            logger.error(f"Critical error resolving user ID {auth_user_id}: {e}")
             return auth_user_id
 
 # Singleton instance

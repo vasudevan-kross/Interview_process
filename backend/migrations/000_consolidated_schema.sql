@@ -430,7 +430,7 @@ CREATE TABLE coding_submissions (
     candidate_decision VARCHAR(20) DEFAULT 'pending',
     decision_notes TEXT,
     decided_at TIMESTAMPTZ,
-    decided_by UUID REFERENCES auth.users(id),
+    decided_by UUID REFERENCES users(id),
 
     -- Metadata
     created_at TIMESTAMP DEFAULT NOW(),
@@ -473,7 +473,7 @@ CREATE TABLE coding_answers (
     -- Metadata
     evaluated_at TIMESTAMP,
     evaluated_by_model VARCHAR(100),
-    evaluator_id UUID REFERENCES auth.users(id),
+    evaluator_id UUID REFERENCES users(id),
     evaluator_notes TEXT,
 
     created_at TIMESTAMP DEFAULT NOW(),

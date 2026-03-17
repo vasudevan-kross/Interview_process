@@ -693,8 +693,18 @@ class CodingInterviewService:
                     # Also check against known global templates
                     known_templates = [t.strip() for t in TEST_FRAMEWORK_TEMPLATES.values()]
 
+                    import re
+                    def strip_comments(c, lang='python'):
+                        if lang == 'python':
+                            return re.sub(r'#.*', '', c).strip()
+                        return re.sub(r'//.*|/\*[\s\S]*?\*/', '', c).strip()
+
+                    submitted_no_comments = strip_comments(submitted_stripped)
+                    starter_no_comments = strip_comments(starter_code)
+
                     is_starter_code = (
                         (starter_code and submitted_stripped == starter_code) or
+                        (starter_code and submitted_no_comments == starter_no_comments) or
                         submitted_stripped in known_templates
                     )
 
@@ -1413,9 +1423,7 @@ Language:"""
         evaluator_id: str
     ) -> Dict[str, Any]:
         """Save evaluator notes and optionally override the AI-assigned marks."""
-        # Resolve raw user ID to internal UUID
-        evaluator_id = self.user_service.resolve_user_id(evaluator_id)
-
+        # Note: evaluator_id is already an internal users.id UUID resolved at the API/Auth level
         client = get_supabase()
 
         # Verify answer belongs to this submission
@@ -1425,6 +1433,12 @@ Language:"""
 
         if not answer_result.data:
             raise ValueError("Answer not found")
+
+        # Double check evaluator exists in users table to avoid FK violation
+        user_check = client.table('users').select('id').eq('id', evaluator_id).execute()
+        if not user_check.data:
+            logger.error(f"Evaluator ID {evaluator_id} not found in users table. Notes cannot be saved.")
+            raise ValueError("Internal user record missing. Please contact support.")
 
         update_data: Dict[str, Any] = {
             'evaluator_notes': notes,

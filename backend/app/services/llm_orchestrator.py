@@ -886,6 +886,7 @@ Provide evaluation as JSON."""
     def _is_answer_invalid(self, answer: str) -> bool:
         """
         Check if candidate answer is invalid (empty, gibberish, or OCR error).
+        Also detects "comment-only" solutions that lack executable code.
 
         Returns True if answer should automatically get 0 marks.
         """
@@ -902,6 +903,44 @@ Provide evaluation as JSON."""
         if len(answer_clean) < 10:
             return True
 
+        # Code-specific check: Must have at least one line that isn't a comment or empty
+        # AND looks like actual code (has symbols or keywords)
+        lines = [line.strip() for line in answer_clean.split('\n') if line.strip()]
+        executable_lines = 0
+        
+        programming_keywords = [
+            'def ', 'func', 'function', 'return', 'var ', 'let ', 'const ', 'int ', 'string ', 
+            'if ', 'else', 'while', 'for ', 'print', 'cout', 'cin', 'import', 'include', 'class '
+        ]
+        code_symbols = '(){}[]=;:+*-/<>'
+
+        for line in lines:
+            # Basic comment detection for common languages
+            is_comment = (
+                line.startswith('#') or 
+                line.startswith('//') or 
+                line.startswith('/*') or 
+                line.startswith('*') or
+                line.startswith('--')
+            )
+            if not is_comment:
+                # Check if this "non-comment" line is actually code-like
+                has_code_syntax = any(c in code_symbols for c in line)
+                has_keyword = any(kw in line for kw in programming_keywords)
+                
+                if has_code_syntax or has_keyword:
+                    executable_lines += 1
+        
+        # If the candidate only wrote comments or words, mark as invalid for coding
+        if executable_lines == 0 and len(lines) > 0:
+            logger.warning(f"Answer detected as natural language or comments only (executable_lines: {executable_lines}). Marking as invalid.")
+            return True
+
+        # If it's a short text with very few code symbols and no keywords, it's likely just natural language
+        if len(answer_clean) < 150 and code_symbol_count < 3 and not has_keyword:
+            logger.warning(f"Secondary check: Answer detected as natural language (symbols: {code_symbol_count}). Marking as invalid.")
+            return True
+
         # Check for high ratio of non-alphanumeric characters (gibberish)
         alphanumeric_chars = sum(c.isalnum() or c.isspace() for c in answer_clean)
         total_chars = len(answer_clean)
@@ -912,7 +951,6 @@ Provide evaluation as JSON."""
             return True
 
         # Check for OCR garbage patterns (random special characters)
-        # e.g., "--erS :::-. [ 4 s ) 2...s f, I, !--"
         special_char_count = sum(not c.isalnum() and not c.isspace() for c in answer_clean)
         if special_char_count > len(answer_clean) * 0.5:  # More than 50% special chars
             return True
@@ -1201,18 +1239,22 @@ Provide evaluation as JSON."""
 {candidate_answer}
 ```
 
-**Evaluation Criteria:**
+**CRITICAL EVALUATION RULES:**
+1. **NO CODE = NO MARKS**: If the submission contains ONLY comments, natural language explanations, or just restates the problem without a functional code implementation, you MUST award **0 marks** for all categories.
+2. **STRICT CORRECTNESS**: Functional logic that solves the problem is required for any credit.
+3. **LOGIC FIRST**: Prioritize whether the code actually works over how clean it is.
+
+**Scoring Allocation:**
 1. **Correctness** (40%): Does the code solve the problem correctly?
 2. **Logic & Algorithm** (30%): Is the approach sound and efficient?
 3. **Code Quality** (20%): Clean code, good variable names, readable?
-4. **Best Practices** (10%): Follows language conventions and best practices?
+4. **Best Practices** (10%): Follows language conventions?
 
 **Instructions:**
-- Award marks out of {max_marks} based on the above criteria
-- Provide constructive feedback
-- List what the code does well
-- List what could be improved
-- Give a code quality score (0-100)
+- Award marks out of {max_marks} based on the above rules.
+- Be harsh on non-functional code. 
+- Provide constructive feedback.
+- Give a code quality score (0-100).
 
 **Response Format (JSON):**
 {{
@@ -1222,7 +1264,7 @@ Provide evaluation as JSON."""
     "key_points_covered": ["<strength 1>", "<strength 2>", ...],
     "key_points_missed": ["<issue 1>", "<issue 2>", ...],
     "code_quality_score": <0-100>,
-    "reasoning": "<explanation of scoring>"
+    "reasoning": "<strict explanation of scoring>"
 }}
 
 Return ONLY valid JSON."""
