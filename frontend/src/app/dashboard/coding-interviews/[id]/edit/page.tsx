@@ -122,6 +122,21 @@ export default function EditInterviewPage() {
     load()
   }, [interviewId])
 
+  // Sync question times when duration changes
+  useEffect(() => {
+    if (loading || questions.length === 0) return
+    const availableMinutes = getAvailableMinutes()
+    if (availableMinutes <= 0) return
+
+    const timePerQ = Math.floor(availableMinutes / questions.length)
+    if (timePerQ <= 0) return
+
+    setQuestions(prev => prev.map(q => ({
+      ...q,
+      time_estimate_minutes: timePerQ
+    })))
+  }, [startTime, endTime])
+
   const getAvailableMinutes = () => {
     if (!startTime || !endTime) return 0
     return Math.max(0, Math.floor((new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000))

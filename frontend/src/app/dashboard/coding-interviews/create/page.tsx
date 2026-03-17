@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -132,6 +132,12 @@ export default function CreateInterviewPage() {
       })))
     }
   }
+
+  // Sync question times when duration changes
+  useEffect(() => {
+    if (questions.length === 0) return
+    setQuestions(prev => distributeTimeAndMarks(prev))
+  }, [scheduledStartTime, scheduledEndTime])
 
   const handleGenerateQuestions = async () => {
     if (!jobDescription.trim()) {

@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { format, parse, isValid } from 'date-fns'
+import { format, parse, isValid, startOfDay } from 'date-fns'
 import { CalendarIcon, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -110,7 +110,7 @@ export function DateTimePicker({
           mode="single"
           selected={selectedDate}
           onSelect={handleDaySelect}
-          disabled={minDate ? (day) => day < minDate : undefined}
+          disabled={minDate ? (day) => day < startOfDay(minDate) : undefined}
           initialFocus
         />
 
