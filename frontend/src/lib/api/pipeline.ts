@@ -14,13 +14,16 @@ import { createClient } from '@/lib/supabase/client'
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || ''
 const API_PREFIX = '/api/v1'
 
-async function getAuthHeaders(): Promise<HeadersInit> {
+async function getAuthHeaders(includeContentType = true): Promise<HeadersInit> {
   const supabase = createClient()
   const { data: { session } } = await supabase.auth.getSession()
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
+  const headers: Record<string, string> = {
     'ngrok-skip-browser-warning': 'true',
+  }
+
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json'
   }
 
   if (session?.access_token) {
@@ -238,13 +241,7 @@ export async function importCandidatesFile(
   const formData = new FormData()
   formData.append('file', file)
 
-  const headers: HeadersInit = {
-    'ngrok-skip-browser-warning': 'true',
-  }
-
-  if (session?.access_token) {
-    headers['Authorization'] = `Bearer ${session.access_token}`
-  }
+  const headers = await getAuthHeaders(false)
 
   const res = await fetch(`${API_BASE_URL}${API_PREFIX}/pipeline/${jobId}/candidates/import`, {
     method: 'POST',

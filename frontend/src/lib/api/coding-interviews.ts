@@ -27,14 +27,20 @@ function extractErrorMessage(detail: any, fallback: string): string {
 /**
  * Get auth headers with current logged-in user's token
  */
-async function getAuthHeaders(): Promise<HeadersInit> {
+/**
+ * Get auth headers with current logged-in user's token
+ */
+async function getAuthHeaders(includeContentType = true): Promise<HeadersInit> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
+  const headers: Record<string, string> = {
     'ngrok-skip-browser-warning': 'true',
   };
+
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   // Add authorization header with user's JWT token
   if (session?.access_token) {
@@ -230,9 +236,10 @@ export async function extractQuestionsFromDocument(data: {
   formData.append('interview_type', data.interview_type || 'coding');
   formData.append('difficulty', data.difficulty || 'medium');
 
+  const headers = await getAuthHeaders(false);
   const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/extract-questions`, {
     method: 'POST',
-    headers: { 'ngrok-skip-browser-warning': 'true' },
+    headers,
     body: formData,
     // Note: Don't set Content-Type header - browser will set it with boundary for multipart/form-data
   });

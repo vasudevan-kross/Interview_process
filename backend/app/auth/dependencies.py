@@ -9,8 +9,7 @@ from app.db.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
 
-# System user UUID for development/testing (only when no auth provided)
-SYSTEM_USER_UUID = "00000000-0000-0000-0000-000000000000"
+# System user UUID for development
 
 
 @dataclass
@@ -42,14 +41,10 @@ async def get_current_user_id(
 
     # No authorization header provided
     if not authorization:
-        if settings.DEBUG:
-            # Development mode: Allow requests without auth
-            return SYSTEM_USER_UUID
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authorization header required"
-            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header required"
+        )
 
     # Authorization header provided - validate it
     try:

@@ -5,12 +5,14 @@ import { createClient } from '@/lib/supabase/client'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
+async function getAuthHeaders(includeContentType = true): Promise<Record<string, string>> {
   const supabase = createClient()
   const { data: { session } } = await supabase.auth.getSession()
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     'ngrok-skip-browser-warning': 'true',
+  }
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json'
   }
   if (session?.access_token) {
     headers['Authorization'] = `Bearer ${session.access_token}`
@@ -19,7 +21,9 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 }
 
 async function apiFetch(path: string, options: RequestInit = {}) {
-  const headers = await getAuthHeaders()
+  // Try to determine if we should include default Content-Type
+  const includeContentType = !options.body || !(options.body instanceof FormData)
+  const headers = await getAuthHeaders(includeContentType)
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: { ...headers, ...options.headers },

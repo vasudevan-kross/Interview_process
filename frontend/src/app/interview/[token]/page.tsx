@@ -121,10 +121,10 @@ export default function CandidateInterviewPage() {
       const diff = Math.floor((expires.getTime() - now.getTime()) / 1000)
       setTimeRemaining(Math.max(0, diff))
 
-      // Build initial answers from starter code
+      // Start with empty answers - no starter code allowed
       const initialAnswers: Record<string, string> = {}
       data.questions?.forEach((q, idx) => {
-        initialAnswers[q.id || idx.toString()] = q.starter_code || ''
+        initialAnswers[q.id || idx.toString()] = ''
       })
 
       // Restore session from localStorage if the interview hasn't expired
@@ -382,19 +382,18 @@ export default function CandidateInterviewPage() {
     }
   }
 
-  // Check if all answers are empty or match starter code (unattempted)
-  const hasAllEmptyOrStarterCode = (): boolean => {
+  // Check if all answers are empty (unattempted)
+  const hasAllEmptyAnswers = (): boolean => {
     if (!interview?.questions) return false
     return interview.questions.every((q, idx) => {
       const questionId = q.id || idx.toString()
       const currentCode = (codeAnswers[questionId] || '').trim()
-      const starter = (q.starter_code || '').trim()
-      return currentCode === '' || currentCode === starter
+      return currentCode === ''
     })
   }
 
   const handleSubmit = async () => {
-    if (hasAllEmptyOrStarterCode()) {
+    if (hasAllEmptyAnswers()) {
       setEmptySubmitDialogOpen(true)
     } else {
       setSubmitDialogOpen(true)
