@@ -349,7 +349,7 @@ export default function SubmissionsPage() {
                 ) : (
                   <>
                     <FileText className="h-4 w-4 mr-2" />
-                    Export CSV
+                    Export Marks CSV
                   </>
                 )}
               </Button>
@@ -367,7 +367,7 @@ export default function SubmissionsPage() {
                 ) : (
                   <>
                     <Download className="h-4 w-4 mr-2" />
-                    Export ZIP
+                    Export Resume and Answers ZIP
                   </>
                 )}
               </Button>

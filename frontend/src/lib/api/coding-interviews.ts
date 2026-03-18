@@ -136,6 +136,7 @@ export interface Answer {
   question_marks?: number;
   question_difficulty?: string;
   question_topics?: string[];
+  question_number?: number;
   evaluator_notes?: string;
   evaluator_id?: string;
 }

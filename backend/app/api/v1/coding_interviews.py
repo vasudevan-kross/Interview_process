@@ -1027,32 +1027,35 @@ async def get_submission(
             
         submission['interview'] = interview_result.data[0]
 
+        # Fetch questions to attach question_text to each answer - order by question_number
+        questions_result = client.table('coding_questions').select(
+            'id, question_number, question_text, difficulty, marks, topics'
+        ).eq('interview_id', submission['interview_id']).order('question_number').execute()
+
+        questions_list = questions_result.data or []
+        questions_map = {q['id']: q for q in questions_list}
+
         # Get answers with evaluations
         answers_result = client.table('coding_answers').select('*').eq(
             'submission_id', submission_id
         ).execute()
 
-        answers = answers_result.data or []
+        answers_data = answers_result.data or []
+        answers_dict = {a['question_id']: a for a in answers_data}
 
-        # Fetch questions to attach question_text to each answer
-        questions_result = client.table('coding_questions').select(
-            'id, question_text, difficulty, marks, topics'
-        ).eq('interview_id', submission['interview_id']).execute()
+        # Build ordered answers list based on question_number
+        ordered_answers = []
+        for q in questions_list:
+            answer = answers_dict.get(q['id'])
+            if answer:
+                answer['question_text'] = q.get('question_text', '')
+                answer['question_marks'] = q.get('marks', 0)
+                answer['question_difficulty'] = q.get('difficulty', 'medium')
+                answer['question_topics'] = q.get('topics', [])
+                answer['question_number'] = q.get('question_number')
+                ordered_answers.append(answer)
 
-        questions_map = {}
-        if questions_result.data:
-            for q in questions_result.data:
-                questions_map[q['id']] = q
-
-        # Attach question details to each answer
-        for answer in answers:
-            q_data = questions_map.get(answer.get('question_id'), {})
-            answer['question_text'] = q_data.get('question_text', '')
-            answer['question_marks'] = q_data.get('marks', 0)
-            answer['question_difficulty'] = q_data.get('difficulty', 'medium')
-            answer['question_topics'] = q_data.get('topics', [])
-
-        submission['answers'] = answers
+        submission['answers'] = ordered_answers
 
         # Get activity log
         activities_result = client.table('session_activities').select('*').eq(
@@ -1520,11 +1523,13 @@ async def export_submissions_zip(
         title = interview.get('title', 'Assessment')
         safe_title = _sanitize_name(title)
 
-        # Fetch questions for this interview
+        # Fetch questions for this interview - order by question_number
         questions_result = client.table('coding_questions').select(
-            'id, question_text, difficulty, marks'
-        ).eq('interview_id', interview_id).order('created_at').execute()
-        questions = {q['id']: q for q in (questions_result.data or [])}
+            'id, question_number, question_text, difficulty, marks'
+        ).eq('interview_id', interview_id).order('question_number').execute()
+        
+        questions_list = (questions_result.data or [])
+        questions = {q['id']: q for q in questions_list}
 
         # Fetch submitted submissions
         subs_result = client.table('coding_submissions').select(
@@ -1722,11 +1727,17 @@ async def export_submissions_zip(
                 folder = f"{safe_title}/{safe_candidate}"
 
                 # Fetch answers for this submission
-                answers_result = client.table('coding_answers').select(
-                    'question_id, submitted_code, programming_language, marks_awarded, '
-                    'feedback, key_points_covered, key_points_missed, code_quality_score'
-                ).eq('submission_id', sub_id).execute()
-                answers = answers_result.data or []
+                answers_result = client.table('coding_answers').select('*').eq(
+                    'submission_id', sub_id
+                ).execute()
+                
+                answers_data = answers_result.data or []
+                
+                # Sort answers by question_number using the questions map for consistency
+                answers = sorted(
+                    answers_data, 
+                    key=lambda a: questions.get(a['question_id'], {}).get('question_number', 999)
+                )
 
                 # Build styled Word document
                 docx_bytes = _build_docx(sub, answers)

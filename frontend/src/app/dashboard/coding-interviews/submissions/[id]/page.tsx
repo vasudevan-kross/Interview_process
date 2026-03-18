@@ -598,7 +598,7 @@ export default function SubmissionReviewPage() {
           <Card key={answer.id} className="border-l-4 border-l-indigo-500">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">Question {index + 1}</CardTitle>
+                <CardTitle className="text-lg">Question {answer.question_number || index + 1}</CardTitle>
                 <div className="flex items-center gap-2">
                   {answer.question_difficulty && (
                     <Badge variant="outline" className="capitalize">

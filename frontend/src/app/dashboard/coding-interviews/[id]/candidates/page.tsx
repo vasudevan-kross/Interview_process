@@ -557,7 +557,7 @@ export default function CandidatesPage() {
         </Button>
         <Button variant="outline" onClick={handleExport} disabled={exporting}>
           {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-          Export ZIP
+          Export Resume and Answers ZIP
         </Button>
       </div>
 
