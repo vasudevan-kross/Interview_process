@@ -26,6 +26,7 @@ from app.schemas.coding_interviews import (
     SaveCodeRequest,
     SubmitInterviewRequest,
     TrackActivityRequest,
+    BulkTrackActivityRequest,
     BulkImportResponse,
     InterviewCandidateResponse,
     CandidateDecisionUpdate,
@@ -153,13 +154,15 @@ async def generate_questions(
                 job_description=request.job_description,
                 difficulty=request.difficulty,
                 num_questions=coding_count,
-                programming_language=request.programming_language or 'python'
+                programming_language=request.programming_language or 'python',
+                existing_questions=request.existing_questions
             )
             testing_qs = await generator.generate_testing_questions(
                 job_description=request.job_description,
                 difficulty=request.difficulty,
                 num_questions=testing_count,
-                test_framework=request.test_framework or 'manual-test-cases'
+                test_framework=request.test_framework or 'manual-test-cases',
+                existing_questions=request.existing_questions
             )
             questions = coding_qs + testing_qs
         else:
@@ -172,6 +175,7 @@ async def generate_questions(
                 domain_tool=request.domain_tool,
                 programming_language=request.programming_language,
                 test_framework=request.test_framework,
+                existing_questions=request.existing_questions,
             )
 
         return {
@@ -681,7 +685,8 @@ async def start_submission(
             candidate_phone=request.candidate_phone,
             ip_address=ip_address,
             user_agent=user_agent,
-            preferred_language=request.preferred_language
+            preferred_language=request.preferred_language,
+            device_info=request.device_info
         )
 
         return result
@@ -749,7 +754,9 @@ async def submit_interview(
             auto_submit=False,
             signature_data=request.signature_data,
             terms_accepted=request.terms_accepted,
-            client_ip=client_ip
+            client_ip=client_ip,
+            submission_trigger=request.submission_trigger,
+            device_info=request.device_info
         )
 
         # Add background task to process resume (if uploaded)
@@ -804,6 +811,26 @@ async def track_activity(request: TrackActivityRequest):
     except Exception as e:
         logger.error(f"Error tracking activity: {e}")
         # Don't fail the request if activity tracking fails
+        return {'status': 'failed', 'error': str(e)}
+
+
+@router.post("/activity/bulk", summary="Bulk track activity (public)")
+async def track_activity_bulk(request: BulkTrackActivityRequest):
+    """
+    Public endpoint for tracking multiple anti-cheating events in one request.
+    """
+    try:
+        service = get_coding_interview_service()
+
+        await service.track_activity_bulk(
+            submission_id=request.submission_id,
+            activities=request.activities
+        )
+
+        return {'status': 'logged', 'count': len(request.activities)}
+
+    except Exception as e:
+        logger.error(f"Error bulk tracking activity: {e}")
         return {'status': 'failed', 'error': str(e)}
 
 
@@ -1925,3 +1952,27 @@ async def delete_submission(
     except Exception as e:
         logger.error(f"Error deleting submission {submission_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete submission: {str(e)}")
+
+
+class BulkDeleteSubmissionsRequest(BaseModel):
+    submission_ids: List[str]
+
+
+@router.post("/submissions/bulk-delete", summary="Bulk delete submissions")
+async def bulk_delete_submissions(
+    request: BulkDeleteSubmissionsRequest,
+    ctx: OrgContext = Depends(require_permission('interview:create'))
+):
+    """Delete multiple candidate submissions simultaneously."""
+    try:
+        service = get_coding_interview_service()
+        await service.delete_multiple_submissions(
+            submission_ids=request.submission_ids,
+            user_id=ctx.user_id
+        )
+        return {'message': f'Successfully deleted {len(request.submission_ids)} submissions'}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error bulk deleting submissions: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to bulk delete submissions: {str(e)}")

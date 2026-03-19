@@ -113,6 +113,7 @@ export interface Submission {
   signature_data?: string;  // Base64 encoded signature image
   signature_accepted_at?: string;  // When signature was provided
   terms_ip_address?: string;  // IP address for audit trail
+  metadata?: Record<string, any>; // JSONB metadata (trigger, device_info, etc.)
   answers?: Answer[];
   activities?: Activity[];
   interview?: Interview;
@@ -208,6 +209,7 @@ export async function generateQuestions(data: {
   test_framework?: string;
   domain_tool?: string;
   interview_type: string;
+  existing_questions?: string[];
 }): Promise<{ questions: Question[]; count: number; detected_type?: string }> {
   const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE_URL}${API_PREFIX}/coding-interviews/generate-questions`, {
@@ -448,7 +450,12 @@ export async function startSubmission(
     candidate_name: string;
     candidate_email: string;
     candidate_phone?: string;
-    preferred_language?: string;  // Language chosen by candidate
+    preferred_language?: string;
+    device_info?: {
+      device_type: string;
+      os_info?: string;
+      browser_info?: string;
+    };
   }
 ): Promise<{
   submission_id: string;
@@ -500,6 +507,12 @@ export async function submitInterview(
   options?: {
     signature_data?: string;
     terms_accepted?: boolean;
+    submission_trigger?: 'manual' | 'timer' | 'auto';
+    device_info?: {
+      device_type: string;
+      os_info?: string;
+      browser_info?: string;
+    };
   }
 ): Promise<{
   message: string;
@@ -513,6 +526,8 @@ export async function submitInterview(
       submission_id: submissionId,
       signature_data: options?.signature_data,
       terms_accepted: options?.terms_accepted || false,
+      submission_trigger: options?.submission_trigger,
+      device_info: options?.device_info,
     }),
   });
 
@@ -543,6 +558,31 @@ export async function trackActivity(data: {
   if (!response.ok) {
     console.warn('Failed to track activity:', data.activity_type);
     return { status: 'failed' };
+  }
+
+  return response.json();
+}
+
+/**
+ * Bulk track activity (public endpoint)
+ */
+export async function trackActivityBulk(data: {
+  submission_id: string;
+  activities: Array<{
+    activity_type: string;
+    question_id?: string;
+    metadata?: any;
+  }>;
+}): Promise<{ status: string; count: number }> {
+  const response = await fetch(`${API_PREFIX}/coding-interviews/activity/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    console.warn('Failed to track bulk activity');
+    return { status: 'failed', count: 0 };
   }
 
   return response.json();
@@ -721,6 +761,25 @@ export async function deleteSubmission(submissionId: string): Promise<void> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(extractErrorMessage(error.detail, 'Failed to delete submission'));
+  }
+}
+
+/**
+ * Delete multiple candidate submissions
+ */
+export async function deleteMultipleSubmissions(submissionIds: string[]): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/submissions/bulk-delete`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ submission_ids: submissionIds })
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to bulk delete submissions'));
   }
 }
 

@@ -44,6 +44,23 @@ import { initializeEnhancedAntiCheating, createCodeChangeTracker } from '@/lib/a
 import CodeEditor from '@/components/coding/CodeEditor'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import bowser from 'bowser'
+
+// Helper to get device information
+const getDeviceInfo = () => {
+  if (typeof window === 'undefined') return { device_type: 'unknown' };
+  
+  const browser = bowser.getParser(window.navigator.userAgent);
+  const platform = browser.getPlatform();
+  const os = browser.getOS();
+  const browserDetails = browser.getBrowser();
+
+  return {
+    device_type: platform.type || 'desktop', // desktop, mobile, tablet
+    os_info: `${os.name} ${os.version || ''}`.trim(),
+    browser_info: `${browserDetails.name} ${browserDetails.version || ''}`.trim(),
+  };
+};
 
 export default function CandidateInterviewPage() {
   const params = useParams()
@@ -208,6 +225,7 @@ export default function CandidateInterviewPage() {
         candidate_name: candidateName,
         candidate_email: candidateEmail,
         candidate_phone: candidatePhone,
+        device_info: getDeviceInfo(),
       })
 
       // Upload resume if provided
@@ -428,7 +446,12 @@ export default function CandidateInterviewPage() {
       if (interview?.require_signature) {
         if (interview.bond_timing === 'before_start') {
           // Bond already signed before start — submit directly with the stored signature
-          await submitInterview(submissionId, { signature_data: bondSignatureData || undefined, terms_accepted: true })
+          await submitInterview(submissionId, { 
+            signature_data: bondSignatureData || undefined, 
+            terms_accepted: true,
+            submission_trigger: 'manual',
+            device_info: getDeviceInfo()
+          })
           antiCheatingRef.current?.cleanup()
           clearSession()
           toast.success('Interview submitted successfully!')
@@ -442,7 +465,10 @@ export default function CandidateInterviewPage() {
         }
       } else {
         // No signature required — submit directly
-        await submitInterview(submissionId)
+        await submitInterview(submissionId, { 
+          submission_trigger: 'manual',
+          device_info: getDeviceInfo()
+        })
         antiCheatingRef.current?.cleanup()
         clearSession()
         toast.success('Interview submitted successfully!')
@@ -479,7 +505,12 @@ export default function CandidateInterviewPage() {
       if (interview?.require_signature) {
         if (interview.bond_timing === 'before_start') {
           // Bond already signed before start — submit directly with stored signature
-          await submitInterview(submissionIdRef.current, { signature_data: bondSignatureData || undefined, terms_accepted: true })
+          await submitInterview(submissionIdRef.current, { 
+            signature_data: bondSignatureData || undefined, 
+            terms_accepted: true,
+            submission_trigger: 'timer',
+            device_info: getDeviceInfo()
+          })
           clearSession()
           toast.info("Time's up! Your assessment has been auto-submitted.")
           router.push(`/interview/${accessToken}/thank-you`)
@@ -490,7 +521,10 @@ export default function CandidateInterviewPage() {
           router.push(`/interview/${accessToken}/signature?submission_id=${submissionIdRef.current}&auto=true`)
         }
       } else {
-        await submitInterview(submissionIdRef.current)
+        await submitInterview(submissionIdRef.current, { 
+          submission_trigger: 'timer',
+          device_info: getDeviceInfo()
+        })
         clearSession()
         toast.info("Time's up! Your assessment has been auto-submitted.")
         router.push(`/interview/${accessToken}/thank-you`)

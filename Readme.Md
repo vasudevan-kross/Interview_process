@@ -38,9 +38,10 @@ Comprehensive metrics and insights
 
 ## 📚 Documentation
 
-All documentation has been consolidated into a single comprehensive guide:
+All documentation has been consolidated into comprehensive guides:
 
 - **[Agent Context & Full Documentation](docs/AGENT_CONTEXT.md)** - Contains the complete project architecture, technical skills reference, detailed setup guides, feature integration details (Daily.co, Vapi.ai), and all troubleshooting/debugging steps.
+- **[Anti-Cheating & Risk Evaluation](docs/ANTI_CHEATING.md)** - Explains the frontend tracking logic and backend risk scoring algorithm for candidate evaluations.
 
 ---
 

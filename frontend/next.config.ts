@@ -17,6 +17,9 @@ const nextConfig: NextConfig = {
         optimizePackageImports: ['lucide-react'],
         proxyTimeout: 600000, // 10 min — LLM batch processing needs time
     },
+    
+    // @ts-ignore - explicitly requested by Next.js error message but not in types
+    allowedDevOrigins: ['misdictated-claudine-nontangentially.ngrok-free.dev', '*.ngrok-free.dev'],
 
     // Keep proxy connections alive for long-running requests
     httpAgentOptions: {

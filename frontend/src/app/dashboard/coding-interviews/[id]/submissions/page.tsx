@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Eye,
   Search,
@@ -26,6 +27,9 @@ import {
   Zap,
   Download,
   Trash2,
+  Laptop,
+  Smartphone,
+  Tablet,
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { PageHeader } from '@/components/ui/page-header'
@@ -37,6 +41,7 @@ import {
   exportSubmissions,
   exportSubmissionsCsv,
   deleteSubmission,
+  deleteMultipleSubmissions,
   type Interview,
   type Submission
 } from '@/lib/api/coding-interviews'
@@ -62,6 +67,10 @@ export default function SubmissionsPage() {
     submissionId: string
     candidateName: string
   }>({ open: false, submissionId: '', candidateName: '' })
+  
+  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -171,6 +180,11 @@ export default function SubmissionsPage() {
     try {
       await deleteSubmission(deleteDialog.submissionId)
       setSubmissions((prev) => prev.filter((s) => s.id !== deleteDialog.submissionId))
+      setSelectedSubmissionIds((prev) => {
+        const next = new Set(prev)
+        next.delete(deleteDialog.submissionId)
+        return next
+      })
       toast.success('Submission deleted')
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete submission')
@@ -179,7 +193,25 @@ export default function SubmissionsPage() {
     }
   }
 
-  const getStatusBadge = (status: string) => {
+  const confirmBulkDelete = async () => {
+    if (selectedSubmissionIds.size === 0) return
+
+    try {
+      setBulkDeleting(true)
+      const idsToDelete = Array.from(selectedSubmissionIds)
+      await deleteMultipleSubmissions(idsToDelete)
+      setSubmissions((prev) => prev.filter((s) => !selectedSubmissionIds.has(s.id)))
+      setSelectedSubmissionIds(new Set())
+      toast.success(`Successfully deleted ${idsToDelete.length} submissions`)
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to bulk delete submissions')
+    } finally {
+      setBulkDeleting(false)
+      setBulkDeleteDialogOpen(false)
+    }
+  }
+
+  const getStatusBadge = (status: string, submission?: Submission) => {
     const variants: Record<string, string> = {
       in_progress: 'bg-blue-50 text-blue-700 border border-blue-200 rounded-md',
       submitted: 'bg-amber-50 text-amber-700 border border-amber-200 rounded-md',
@@ -193,9 +225,14 @@ export default function SubmissionsPage() {
       auto_submitted: evaluating ? 'EVALUATING...' : 'AUTO-SUBMITTED',
     }
 
+    // Check metadata for trigger if status is just 'submitted'
+    const isAuto = status === 'auto_submitted' || (submission?.metadata as any)?.trigger === 'timer';
+    const displayLabel = isAuto ? (evaluating ? 'EVALUATING...' : 'AUTO-SUBMITTED') : (label[status] || status.replace('_', ' ').toUpperCase());
+    const badgeClass = isAuto ? 'bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-md' : (variants[status] || variants.submitted);
+
     return (
-      <Badge className={variants[status] || variants.submitted}>
-        {label[status] || status.replace('_', ' ').toUpperCase()}
+      <Badge className={badgeClass}>
+        {displayLabel}
       </Badge>
     )
   }
@@ -335,6 +372,26 @@ export default function SubmissionsPage() {
               <CardDescription>Review candidate submissions and evaluations</CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              {selectedSubmissionIds.size > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setBulkDeleteDialogOpen(true)}
+                  disabled={bulkDeleting || loading}
+                >
+                  {bulkDeleting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Selected ({selectedSubmissionIds.size})
+                    </>
+                  )}
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -418,6 +475,19 @@ export default function SubmissionsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[40px]">
+                      <Checkbox
+                        checked={filteredSubmissions.length > 0 && selectedSubmissionIds.size === filteredSubmissions.length}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedSubmissionIds(new Set(filteredSubmissions.map(s => s.id)))
+                          } else {
+                            setSelectedSubmissionIds(new Set())
+                          }
+                        }}
+                        aria-label="Select all submissions"
+                      />
+                    </TableHead>
                     <TableHead>Candidate</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Submitted At</TableHead>
@@ -429,8 +499,38 @@ export default function SubmissionsPage() {
                 </TableHeader>
                 <TableBody>
                   {filteredSubmissions.map((submission) => (
-                    <TableRow key={submission.id}>
-                      <TableCell className="font-medium">{submission.candidate_name}</TableCell>
+                    <TableRow key={submission.id} className={selectedSubmissionIds.has(submission.id) ? "bg-slate-50" : ""}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedSubmissionIds.has(submission.id)}
+                          onCheckedChange={(checked) => {
+                            const next = new Set(selectedSubmissionIds)
+                            if (checked) next.add(submission.id)
+                            else next.delete(submission.id)
+                            setSelectedSubmissionIds(next)
+                          }}
+                          aria-label={`Select ${submission.candidate_name}`}
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          {submission.candidate_name}
+                          {(submission.metadata as any)?.device_info?.device_type && (
+                            <span 
+                              className="text-slate-300"
+                              title={`Device: ${(submission.metadata as any).device_info.device_type}\nOS: ${(submission.metadata as any).device_info.os_info || 'Unknown'}`}
+                            >
+                              {(submission.metadata as any).device_info.device_type === 'mobile' ? (
+                                <Smartphone className="h-3 w-3" />
+                              ) : (submission.metadata as any).device_info.device_type === 'tablet' ? (
+                                <Tablet className="h-3 w-3" />
+                              ) : (
+                                <Laptop className="h-3 w-3" />
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>{submission.candidate_email}</TableCell>
                       <TableCell>
                         {submission.submitted_at ? (
@@ -439,7 +539,7 @@ export default function SubmissionsPage() {
                           <span className="text-gray-400">In Progress</span>
                         )}
                       </TableCell>
-                      <TableCell>{getStatusBadge(submission.status)}</TableCell>
+                      <TableCell>{getStatusBadge(submission.status, submission)}</TableCell>
                       <TableCell>
                         {submission.total_marks_obtained !== null && submission.total_marks_obtained !== undefined ? (
                           <div className="flex items-center gap-2">
@@ -509,6 +609,16 @@ export default function SubmissionsPage() {
         title="Delete Submission"
         description={`Delete ${deleteDialog.candidateName}'s submission and all their answers? This action cannot be undone.`}
         confirmText="Delete"
+        variant="destructive"
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={setBulkDeleteDialogOpen}
+        onConfirm={confirmBulkDelete}
+        title="Confirm Bulk Delete"
+        description={`Are you sure you want to delete ${selectedSubmissionIds.size} selected submissions? This action cannot be undone.`}
+        confirmText="Delete Selected"
         variant="destructive"
       />
     </div>

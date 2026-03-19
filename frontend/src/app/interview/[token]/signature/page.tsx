@@ -12,6 +12,23 @@ import { FileText, PenTool, CheckCircle, Loader2, AlertCircle, Trash2, ChevronRi
 import { joinInterview, submitInterview, type Interview } from '@/lib/api/coding-interviews'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import bowser from 'bowser'
+
+// Helper to get device information
+const getDeviceInfo = () => {
+  if (typeof window === 'undefined') return { device_type: 'unknown' };
+  
+  const browser = bowser.getParser(window.navigator.userAgent);
+  const platform = browser.getPlatform();
+  const os = browser.getOS();
+  const browserDetails = browser.getBrowser();
+
+  return {
+    device_type: platform.type || 'desktop', // desktop, mobile, tablet
+    os_info: `${os.name} ${os.version || ''}`.trim(),
+    browser_info: `${browserDetails.name} ${browserDetails.version || ''}`.trim(),
+  };
+};
 
 // Dynamically import SignatureCanvas to avoid SSR issues
 const SignatureCanvas = dynamic(() => import('react-signature-canvas'), { ssr: false }) as any
@@ -103,6 +120,8 @@ export default function SignaturePage() {
       await submitInterview(submissionId, {
         signature_data: signatureData,
         terms_accepted: true,
+        submission_trigger: searchParams.get('auto') === 'true' ? 'timer' : 'manual',
+        device_info: getDeviceInfo()
       })
       toast.success('Submitted successfully!')
       router.push(`/interview/${accessToken}/thank-you`)

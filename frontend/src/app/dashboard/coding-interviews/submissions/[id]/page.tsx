@@ -37,6 +37,9 @@ import {
   Bot,
   Mouse,
   Maximize2,
+  Laptop,
+  Smartphone,
+  Tablet,
   Save,
   Pencil,
 } from 'lucide-react'
@@ -183,9 +186,16 @@ export default function SubmissionReviewPage() {
     }
 
     return (
-      <Badge className={variants[status] || variants.submitted}>
-        {status.replace('_', ' ').toUpperCase()}
-      </Badge>
+      <div className="flex items-center gap-2">
+        <Badge className={variants[status] || variants.submitted}>
+          {status.replace('_', ' ').toUpperCase()}
+        </Badge>
+        {(submission?.metadata as any)?.trigger === 'timer' && (
+          <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">
+            AUTO-SUBMITTED
+          </Badge>
+        )}
+      </div>
     )
   }
 
@@ -327,7 +337,25 @@ export default function SubmissionReviewPage() {
             <h1 className="text-xl font-semibold text-slate-900">
               Submission Review
             </h1>
-            <p className="text-slate-500 mt-0.5 text-sm">{submission.candidate_name}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-slate-500 text-sm">{submission.candidate_name}</p>
+              
+              {/* Device Info (Native Tooltip) */}
+              {(submission.metadata as any)?.device_info && (
+                <div 
+                  className="flex items-center text-slate-400 hover:text-indigo-500 transition-colors cursor-help"
+                  title={`Device: ${(submission.metadata as any).device_info.device_type}\nOS: ${(submission.metadata as any).device_info.os_info || 'Unknown'}\nBrowser: ${(submission.metadata as any).device_info.browser_info || 'Unknown'}`}
+                >
+                  {((submission.metadata as any).device_info.device_type === 'mobile') ? (
+                    <Smartphone className="h-3.5 w-3.5" />
+                  ) : ((submission.metadata as any).device_info.device_type === 'tablet') ? (
+                    <Tablet className="h-3.5 w-3.5" />
+                  ) : (
+                    <Laptop className="h-3.5 w-3.5" />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <Button

@@ -110,14 +110,20 @@ class QuestionGenerator:
         from app.model_config import ModelConfig
         self.model = os.getenv('QUESTION_GENERATION_MODEL', ModelConfig.DEFAULT_MODEL)
 
-    async def _generate_with_llm(self, prompt: str, temperature: float = 0.4, max_tokens: int = 2048) -> str:
+    async def _generate_with_llm(self, prompt: str, temperature: float = 0.4, max_tokens: int = 2048, existing_questions: Optional[List[str]] = None) -> str:
         """
         Call the LLM orchestrator and return the text response.
         """
+        system_prompt = "You are an expert technical interviewer. Generate diverse, unique interview questions. CRITICAL: Return only valid JSON arrays with NO trailing commas. Ensure JSON is strictly RFC 8259 compliant."
+        
+        if existing_questions and len(existing_questions) > 0:
+            questions_text = "\n- ".join(existing_questions)
+            system_prompt += f"\n\nIMPORTANT: The assessment already contains the following questions. You MUST ensure your generated questions are entirely different and do not overlap with these:\n- {questions_text}"
+
         result = await self.llm.generate_completion(
             prompt=prompt,
             model=self.model,
-            system_prompt="You are an expert technical interviewer. Generate diverse, unique interview questions. CRITICAL: Return only valid JSON arrays with NO trailing commas. Ensure JSON is strictly RFC 8259 compliant.",
+            system_prompt=system_prompt,
             temperature=temperature,
             max_tokens=max_tokens
         )
@@ -128,7 +134,8 @@ class QuestionGenerator:
         job_description: str,
         difficulty: str,
         num_questions: int,
-        programming_language: str
+        programming_language: str,
+        existing_questions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate coding interview questions using LLM.
@@ -188,7 +195,7 @@ Generate exactly {num_questions} UNIQUE questions now. Each must test a DIFFEREN
                 max_tokens = max(3000, num_questions * 400 + 500)
                 logger.warning(f"Requesting {num_questions} questions - may be unreliable. Recommend <= 5 questions.")
 
-            response = await self._generate_with_llm(prompt, max_tokens=max_tokens)
+            response = await self._generate_with_llm(prompt, max_tokens=max_tokens, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
 
             if not isinstance(questions, list) or len(questions) == 0:
@@ -208,7 +215,8 @@ Generate exactly {num_questions} UNIQUE questions now. Each must test a DIFFEREN
         job_description: str,
         difficulty: str,
         num_questions: int,
-        test_framework: str
+        test_framework: str,
+        existing_questions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate testing/QA interview questions.
@@ -295,7 +303,7 @@ Return ONLY a valid JSON array:
 
 Generate exactly {num_questions} UNIQUE questions. Each must test a DIFFERENT scenario. Return ONLY the JSON array."""
 
-            response = await self._generate_with_llm(prompt)
+            response = await self._generate_with_llm(prompt, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
 
             if not isinstance(questions, list) or len(questions) == 0:
@@ -315,7 +323,8 @@ Generate exactly {num_questions} UNIQUE questions. Each must test a DIFFERENT sc
         job_description: str,
         difficulty: str,
         num_questions: int,
-        devops_tool: str = 'general'
+        devops_tool: str = 'general',
+        existing_questions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Generate DevOps interview questions."""
         try:
@@ -348,7 +357,7 @@ Return ONLY a valid JSON array:
 
 Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
 
-            response = await self._generate_with_llm(prompt)
+            response = await self._generate_with_llm(prompt, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
             if not isinstance(questions, list) or len(questions) == 0:
                 raise ValueError("Failed to generate valid questions")
@@ -362,7 +371,8 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
         job_description: str,
         difficulty: str,
         num_questions: int,
-        sql_dialect: str = 'general'
+        sql_dialect: str = 'general',
+        existing_questions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Generate SQL/Database interview questions."""
         try:
@@ -396,7 +406,7 @@ Return ONLY a valid JSON array:
 
 Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
 
-            response = await self._generate_with_llm(prompt)
+            response = await self._generate_with_llm(prompt, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
             if not isinstance(questions, list) or len(questions) == 0:
                 raise ValueError("Failed to generate valid questions")
@@ -410,6 +420,7 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
         job_description: str,
         difficulty: str,
         num_questions: int,
+        existing_questions: Optional[List[str]] = None,
         **kwargs
     ) -> List[Dict[str, Any]]:
         """Generate System Design interview questions (text/markdown answers)."""
@@ -442,7 +453,7 @@ Return ONLY a valid JSON array:
 
 Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
 
-            response = await self._generate_with_llm(prompt)
+            response = await self._generate_with_llm(prompt, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
             if not isinstance(questions, list) or len(questions) == 0:
                 raise ValueError("Failed to generate valid questions")
@@ -456,7 +467,8 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
         job_description: str,
         difficulty: str,
         num_questions: int,
-        programming_language: str = 'javascript'
+        programming_language: str = 'javascript',
+        existing_questions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Generate Fullstack development interview questions."""
         try:
@@ -487,7 +499,7 @@ Return ONLY a valid JSON array:
 
 Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
 
-            response = await self._generate_with_llm(prompt)
+            response = await self._generate_with_llm(prompt, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
             if not isinstance(questions, list) or len(questions) == 0:
                 raise ValueError("Failed to generate valid questions")
@@ -501,7 +513,8 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
         job_description: str,
         difficulty: str,
         num_questions: int,
-        programming_language: str = 'python'
+        programming_language: str = 'python',
+        existing_questions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Generate Data Science / ML interview questions."""
         try:
@@ -534,7 +547,7 @@ Return ONLY a valid JSON array:
 
 Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array."""
 
-            response = await self._generate_with_llm(prompt)
+            response = await self._generate_with_llm(prompt, existing_questions=existing_questions)
             questions = self._extract_json_from_response(response)
             if not isinstance(questions, list) or len(questions) == 0:
                 raise ValueError("Failed to generate valid questions")
@@ -552,6 +565,7 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
         domain_tool: Optional[str] = None,
         programming_language: Optional[str] = None,
         test_framework: Optional[str] = None,
+        existing_questions: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Dispatch question generation by domain using the registry."""
         config = DOMAIN_REGISTRY.get(domain)
@@ -581,6 +595,7 @@ Generate exactly {num_questions} UNIQUE questions. Return ONLY the JSON array.""
             'job_description': job_description,
             'difficulty': difficulty,
             'num_questions': num_questions,
+            'existing_questions': existing_questions,
         }
         if tool_param:
             kwargs[tool_param] = tool_value or 'general'

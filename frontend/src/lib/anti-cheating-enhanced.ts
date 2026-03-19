@@ -14,14 +14,17 @@
  * - Mobile: split-screen detection, network offline, text selection,
  *           orientation change, navigation intent (beforeunload)
  *
- * All activities are logged to session_activities table with NO database changes needed!
+ * Optimized with client-side batching and event consolidation.
  */
 
 import FingerprintJS from '@fingerprintjs/fingerprintjs'
 import Bowser from 'bowser'
 import { UAParser } from 'ua-parser-js'
-import { addListener as addDevToolsListener } from 'devtools-detector'
-import { trackActivity } from './api/coding-interviews'
+import devtoolsDetector, { 
+  addListener as addDevToolsListener, 
+  removeListener as removeDevToolsListener 
+} from 'devtools-detector'
+import { trackActivity, trackActivityBulk } from './api/coding-interviews'
 
 export interface EnhancedAntiCheatingTracker {
   updateQuestionId: (questionId: string) => void
@@ -45,7 +48,6 @@ class KeystrokeDynamics {
     if (this.lastKeyTime > 0) {
       const interval = now - this.lastKeyTime
       this.keyTimings.push(interval)
-      // Keep only last 100 keystrokes
       if (this.keyTimings.length > 100) {
         this.keyTimings.shift()
       }
@@ -66,10 +68,6 @@ class KeystrokeDynamics {
     return Math.sqrt(variance)
   }
 
-  /**
-   * Detect AI/bot typing (too consistent = suspicious)
-   * Human typing has variance 20-80ms, AI is too consistent (<10ms)
-   */
   isLikelyAI(): boolean {
     if (this.keyTimings.length < 50) return false
     const variance = this.getVariance()
@@ -79,13 +77,138 @@ class KeystrokeDynamics {
 }
 
 /**
+ * Global Batch Tracker to handle all anti-cheating events
+ */
+class BatchTracker {
+  private submissionId: string = ''
+  private currentQuestionId: string = ''
+  private pendingActivities: any[] = []
+  private flushTimeout: NodeJS.Timeout | null = null
+  private lastFocusEvent: { type: string; timestamp: number } | null = null
+  private mouseLeaveTimeout: NodeJS.Timeout | null = null
+  private FLUSH_INTERVAL = 10_000 // 10 seconds
+
+  init(submissionId: string, questionId: string) {
+    this.submissionId = submissionId
+    this.currentQuestionId = questionId
+  }
+
+  updateQuestionId(questionId: string) {
+    this.currentQuestionId = questionId
+  }
+
+  /**
+   * Main tracking method with consolidation logic
+   */
+  async track(activity: any) {
+    const now = Date.now();
+    const type = activity.activity_type;
+
+    // ── 1. Focus/Blur Consolidation ──
+    // VisibilityChange and Blur often fire together. If we just logged a tab_switch, 
+    // skip blur/focus for 500ms.
+    if (type === 'window_blur' || type === 'window_focus') {
+      if (this.lastFocusEvent && 
+          now - this.lastFocusEvent.timestamp < 500 && 
+          this.lastFocusEvent.type === 'tab_switch') {
+        return; 
+      }
+    }
+    
+    if (type === 'tab_switch') {
+      this.lastFocusEvent = { type: 'tab_switch', timestamp: now };
+    }
+
+    // ── 2. Mouse Leave Grace Period ──
+    if (type === 'mouse_leave') {
+      if (this.mouseLeaveTimeout) clearTimeout(this.mouseLeaveTimeout);
+      this.mouseLeaveTimeout = setTimeout(() => {
+        this.addEvent(activity);
+        this.mouseLeaveTimeout = null;
+      }, 2000); // 2 second grace period
+      return;
+    }
+
+    // Cancel mouse leave if user returns quickly
+    if (type === 'mouse_enter' || type === 'window_focus') {
+      if (this.mouseLeaveTimeout) {
+        clearTimeout(this.mouseLeaveTimeout);
+        this.mouseLeaveTimeout = null;
+        return; // Don't even log mouse_enter if mouse_leave was cancelled
+      }
+    }
+
+    this.addEvent(activity);
+  }
+
+  private addEvent(activity: any) {
+    // Ensure metadata has timestamp
+    if (!activity.metadata) activity.metadata = {};
+    if (!activity.metadata.timestamp) {
+      activity.metadata.timestamp = new Date().toISOString();
+    }
+    
+    // Add current context
+    activity.submission_id = this.submissionId;
+    activity.question_id = this.currentQuestionId;
+
+    this.pendingActivities.push(activity);
+    
+    // Flush immediately if critical or buffer full
+    const criticalTypes = ['multiple_tabs_detected', 'navigation_attempt', 'device_fingerprint'];
+    if (criticalTypes.includes(activity.activity_type) || this.pendingActivities.length >= 20) {
+      this.flush();
+      return;
+    }
+
+    if (!this.flushTimeout) {
+      this.flushTimeout = setTimeout(() => this.flush(), this.FLUSH_INTERVAL);
+    }
+  }
+
+  async flush() {
+    if (this.flushTimeout) clearTimeout(this.flushTimeout);
+    this.flushTimeout = null;
+
+    if (this.pendingActivities.length === 0) return;
+
+    const activitiesToFlush = [...this.pendingActivities];
+    this.pendingActivities.length = 0;
+
+    try {
+      // Use Bulk API if available, otherwise fallback to individual
+      await trackActivityBulk({
+        submission_id: this.submissionId,
+        activities: activitiesToFlush.map(a => ({
+          activity_type: a.activity_type,
+          question_id: a.question_id,
+          metadata: a.metadata
+        }))
+      });
+    } catch (error) {
+      console.error('Failed to flush activities:', error);
+      // Fallback to individual calls if bulk fails (backwards compatibility)
+      try {
+        await Promise.all(activitiesToFlush.map(act => trackActivity(act)));
+      } catch (e) {
+        console.error('Individual fallback failed:', e);
+      }
+    }
+  }
+}
+
+// Global instance
+const globalTracker = new BatchTracker();
+
+/**
  * Initialize enhanced anti-cheating tracking
  */
 export async function initializeEnhancedAntiCheating(
   submissionId: string,
   initialQuestionId: string
 ): Promise<EnhancedAntiCheatingTracker> {
-  let currentQuestionId = initialQuestionId
+  globalTracker.init(submissionId, initialQuestionId);
+  
   const listeners: Array<() => void> = []
   const keystrokeDynamics = new KeystrokeDynamics()
   let fingerprintCache: string | null = null
@@ -115,10 +238,8 @@ export async function initializeEnhancedAntiCheating(
       const result = await fp.get()
       fingerprintCache = result.visitorId
 
-      await trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'device_fingerprint',
-        question_id: currentQuestionId,
         metadata: {
           fingerprint: result.visitorId,
           browser: browserInfo.browser.name,
@@ -150,34 +271,34 @@ export async function initializeEnhancedAntiCheating(
       window.outerHeight === 0
 
     if (isVM) {
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'vm_detected',
-        question_id: currentQuestionId,
         metadata: {
           user_agent: navigator.userAgent,
           webdriver: (navigator as any).webdriver,
           dimensions: `${window.outerWidth}x${window.outerHeight}`,
           timestamp: new Date().toISOString(),
         },
-      }).catch(console.error)
+      })
     }
   }
 
   detectVM()
 
   // DevTools detection
-  const devToolsListener = addDevToolsListener((isOpen) => {
-    trackActivity({
-      submission_id: submissionId,
-      activity_type: 'devtools',
-      question_id: currentQuestionId,
-      metadata: {
-        is_open: isOpen,
-        timestamp: new Date().toISOString(),
-      },
-    }).catch(console.error)
-  })
+  const handleDevToolsChange = (isOpen: boolean) => {
+    if (isOpen) {
+      globalTracker.track({
+        activity_type: 'devtools',
+        metadata: {
+          is_open: isOpen,
+          timestamp: new Date().toISOString(),
+        },
+      })
+    }
+  }
+  addDevToolsListener(handleDevToolsChange)
+  devtoolsDetector.launch()
 
   // Fullscreen change detection
   const handleFullscreenChange = () => {
@@ -187,35 +308,29 @@ export async function initializeEnhancedAntiCheating(
       (document as any).mozFullScreenElement
     )
 
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'fullscreen_change',
-      question_id: currentQuestionId,
       metadata: {
         is_fullscreen: isFullscreen,
         timestamp: new Date().toISOString(),
       },
-    }).catch(console.error)
+    })
   }
 
-  // Screenshot detection (works in some browsers)
+  // Screenshot detection
   const handleKeyDown = (e: KeyboardEvent) => {
-    // Reset idle timer on any keypress
     lastActivityTime = Date.now()
     idleAlreadyFlagged = false
 
-    // Detect common screenshot shortcuts
     const isScreenshot =
       (e.key === 'PrintScreen') ||
-      (e.metaKey && e.shiftKey && (e.key === '3' || e.key === '4')) || // Mac
-      (e.metaKey && e.shiftKey && e.key === 's') || // Windows Snipping Tool
+      (e.metaKey && e.shiftKey && (e.key === '3' || e.key === '4')) ||
+      (e.metaKey && e.shiftKey && e.key === 's') ||
       (e.ctrlKey && e.key === 'PrintScreen')
 
     if (isScreenshot) {
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'screenshot_attempt',
-        question_id: currentQuestionId,
         metadata: {
           key: e.key,
           ctrl: e.ctrlKey,
@@ -223,18 +338,13 @@ export async function initializeEnhancedAntiCheating(
           shift: e.shiftKey,
           timestamp: new Date().toISOString(),
         },
-      }).catch(console.error)
+      })
     }
 
-    // Track keystroke dynamics
     keystrokeDynamics.recordKey()
   }
 
   const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
-
-  // ── 1. Split-screen detection (mobile only) ──────────────────────────────
-  // On Android, opening split-screen shrinks the viewport significantly.
-  // Only meaningful on touch devices — desktop window resize is normal behaviour.
   const initialViewportWidth = window.innerWidth
   let splitScreenFlagged = false
 
@@ -249,128 +359,107 @@ export async function initializeEnhancedAntiCheating(
 
         if (isSplitScreen && !splitScreenFlagged) {
           splitScreenFlagged = true
-          trackActivity({
-            submission_id: submissionId,
+          globalTracker.track({
             activity_type: 'split_screen',
-            question_id: currentQuestionId,
             metadata: {
               viewport_width: window.innerWidth,
               screen_width: screen.width,
               ratio: +ratio.toFixed(2),
               timestamp: new Date().toISOString(),
             },
-          }).catch(console.error)
+          })
         } else if (!isSplitScreen) {
-          splitScreenFlagged = false  // reset when they exit split-screen
+          splitScreenFlagged = false
         }
       }, 300)
     }
   })()
 
-  // ── 2. Network offline detection ─────────────────────────────────────────
-  // Airplane mode trick: go offline → open AI app (cached) → come back.
   let offlineAt: number | null = null
 
   const handleOffline = () => {
     offlineAt = Date.now()
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'network_offline',
-      question_id: currentQuestionId,
       metadata: { timestamp: new Date().toISOString() },
-    }).catch(console.error)
+    })
   }
 
   const handleOnline = () => {
     const offlineDuration = offlineAt ? Math.floor((Date.now() - offlineAt) / 1000) : null
     offlineAt = null
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'network_online',
-      question_id: currentQuestionId,
       metadata: {
         offline_duration_seconds: offlineDuration,
         timestamp: new Date().toISOString(),
       },
-    }).catch(console.error)
+    })
   }
 
-  // ── 3. Question text selection ────────────────────────────────────────────
-  // Long-press select on mobile to share question text to WhatsApp/ChatGPT.
-  // Debounced — only fires after selection settles. Ignores tiny selections.
   let selectionTimer: ReturnType<typeof setTimeout> | null = null
 
   const handleSelectionChange = () => {
     if (selectionTimer) clearTimeout(selectionTimer)
     selectionTimer = setTimeout(() => {
       const selected = window.getSelection()?.toString() ?? ''
-      if (selected.length > 30) {
-        trackActivity({
-          submission_id: submissionId,
+      if (selected.length > 50) { // Increased threshold to 50
+        globalTracker.track({
           activity_type: 'text_selection',
-          question_id: currentQuestionId,
           metadata: {
             selected_length: selected.length,
             timestamp: new Date().toISOString(),
           },
-        }).catch(console.error)
+        })
       }
-    }, 800)
+    }, 1500)
   }
 
-  // ── 4. Screen orientation change ─────────────────────────────────────────
-  // Switching to landscape mid-exam may indicate screensharing or showing
-  // the device to someone on a video call.
   const handleOrientationChange = () => {
-    const orientation =
-      screen.orientation?.type ??
-      (window.innerWidth > window.innerHeight ? 'landscape' : 'portrait')
-
-    trackActivity({
-      submission_id: submissionId,
+    const orientation = screen.orientation?.type ?? (window.innerWidth > window.innerHeight ? 'landscape' : 'portrait')
+    globalTracker.track({
       activity_type: 'orientation_change',
-      question_id: currentQuestionId,
       metadata: {
         orientation,
         angle: screen.orientation?.angle ?? null,
         timestamp: new Date().toISOString(),
       },
-    }).catch(console.error)
+    })
   }
 
-  // ── 5. Navigation intent (beforeunload) ───────────────────────────────────
-  // Candidate tries to close the tab or navigate away entirely.
-  // Uses sendBeacon so the request completes even as the page unloads.
-  const handleBeforeUnload = () => {
+  const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    // We flush all pending activities before unloading
+    globalTracker.flush();
+    
+    // We also use sendBeacon for a final critical event
     const payload = JSON.stringify({
       submission_id: submissionId,
       activity_type: 'navigation_attempt',
-      question_id: currentQuestionId,
+      question_id: globalTracker['currentQuestionId'],
       metadata: { timestamp: new Date().toISOString() },
     })
-    // sendBeacon is fire-and-forget, survives page unload
-    navigator.sendBeacon(
-      `/api/v1/coding-interviews/activity`,
-      new Blob([payload], { type: 'application/json' })
-    )
+    navigator.sendBeacon(`/api/v1/coding-interviews/activity`, new Blob([payload], { type: 'application/json' }))
   }
 
-  // Mouse leave — cursor exited the browser viewport (desktop only)
   const handleMouseLeave = (e: MouseEvent) => {
     if (e.relatedTarget === null) {
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'mouse_leave',
-        question_id: currentQuestionId,
         metadata: { timestamp: new Date().toISOString() },
-      }).catch(console.error)
+      })
     }
   }
 
-  // Reset idle on mouse movement (desktop) or any touch (mobile)
   const handleMouseMove = () => {
     lastActivityTime = Date.now()
     idleAlreadyFlagged = false
+  }
+
+  const handleMouseEnter = () => {
+    globalTracker.track({
+      activity_type: 'mouse_enter',
+      metadata: { timestamp: new Date().toISOString() },
+    })
   }
 
   const handleTouchActivity = () => {
@@ -378,138 +467,102 @@ export async function initializeEnhancedAntiCheating(
     idleAlreadyFlagged = false
   }
 
-  // Idle detection — flag once per idle period, reset on activity
   const idleCheckInterval = setInterval(() => {
     const idleSec = Math.floor((Date.now() - lastActivityTime) / 1000)
     if (idleSec >= IDLE_THRESHOLD_MS / 1000 && !idleAlreadyFlagged) {
       idleAlreadyFlagged = true
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'idle_detected',
-        question_id: currentQuestionId,
         metadata: { idle_seconds: idleSec, timestamp: new Date().toISOString() },
-      }).catch(console.error)
+      })
     }
-  }, 15_000) // check every 15s
+  }, 30_000) // check every 30s
 
-  // Periodic keystroke analysis
   const keystrokeAnalysisInterval = setInterval(() => {
     if (keystrokeDynamics.isLikelyAI()) {
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'ai_typing_detected',
-        question_id: currentQuestionId,
         metadata: {
           avg_interval: keystrokeDynamics.getAverageInterval(),
           variance: keystrokeDynamics.getVariance(),
           sample_size: 100,
           timestamp: new Date().toISOString(),
         },
-      }).catch(console.error)
+      })
     }
-  }, 30000) // Check every 30 seconds
+  }, 60000) // Check every 60 seconds
 
-  // Track visibility changes (tab switches)
   const handleVisibilityChange = () => {
-    if (document.hidden) {
-      trackActivity({
-        submission_id: submissionId,
-        activity_type: 'tab_switch',
-        question_id: currentQuestionId,
-        metadata: { action: 'blur', timestamp: new Date().toISOString() },
-      }).catch(console.error)
-    } else {
-      trackActivity({
-        submission_id: submissionId,
-        activity_type: 'tab_switch',
-        question_id: currentQuestionId,
-        metadata: { action: 'focus', timestamp: new Date().toISOString() },
-      }).catch(console.error)
-    }
+    const action = document.hidden ? 'blur' : 'focus';
+    globalTracker.track({
+      activity_type: 'tab_switch',
+      metadata: { action, timestamp: new Date().toISOString() },
+    })
   }
 
-  // Track window blur/focus
   const handleWindowBlur = () => {
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'window_blur',
-      question_id: currentQuestionId,
       metadata: { timestamp: new Date().toISOString() },
-    }).catch(console.error)
+    })
   }
 
   const handleWindowFocus = () => {
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'window_focus',
-      question_id: currentQuestionId,
       metadata: { timestamp: new Date().toISOString() },
-    }).catch(console.error)
+    })
   }
 
-  // Track copy events
   const handleCopy = (e: ClipboardEvent) => {
     const selection = window.getSelection()?.toString() || ''
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'copy',
-      question_id: currentQuestionId,
       metadata: {
         selection_length: selection.length,
         timestamp: new Date().toISOString(),
       },
-    }).catch(console.error)
+    })
   }
 
-  // Track paste events
   const handlePaste = (e: ClipboardEvent) => {
     const pastedText = e.clipboardData?.getData('text') || ''
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'paste',
-      question_id: currentQuestionId,
       metadata: {
         paste_length: pastedText.length,
         timestamp: new Date().toISOString(),
       },
-    }).catch(console.error)
+    })
   }
 
-  // Disable right-click (inspect element)
   const handleContextMenu = (e: MouseEvent) => {
     e.preventDefault()
-    trackActivity({
-      submission_id: submissionId,
+    globalTracker.track({
       activity_type: 'right_click_attempt',
-      question_id: currentQuestionId,
       metadata: {
         x: e.clientX,
         y: e.clientY,
         timestamp: new Date().toISOString(),
       },
-    }).catch(console.error)
+    })
   }
 
-  // Detect multiple tabs (local storage sync)
   const handleStorageChange = (e: StorageEvent) => {
     if (e.key === `interview_${submissionId}` && e.newValue !== e.oldValue) {
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'multiple_tabs_detected',
-        question_id: currentQuestionId,
         metadata: {
           old_value: e.oldValue,
           new_value: e.newValue,
           timestamp: new Date().toISOString(),
         },
-      }).catch(console.error)
+      })
     }
   }
 
-  // Set tab marker
   localStorage.setItem(`interview_${submissionId}`, Date.now().toString())
 
-  // Register all event listeners
   document.addEventListener('visibilitychange', handleVisibilityChange)
   document.addEventListener('fullscreenchange', handleFullscreenChange)
   document.addEventListener('selectionchange', handleSelectionChange)
@@ -525,7 +578,6 @@ export async function initializeEnhancedAntiCheating(
   document.addEventListener('keydown',     handleKeyDown)
   window.addEventListener('storage',       handleStorageChange)
 
-  // Orientation: prefer screen.orientation API, fall back to window event
   if (screen.orientation) {
     screen.orientation.addEventListener('change', handleOrientationChange)
   } else {
@@ -535,12 +587,21 @@ export async function initializeEnhancedAntiCheating(
   if (isTouchDevice) {
     document.addEventListener('touchstart', handleTouchActivity, { passive: true })
     document.addEventListener('touchend',   handleTouchActivity, { passive: true })
+    listeners.push(
+      () => document.removeEventListener('touchstart', handleTouchActivity),
+      () => document.removeEventListener('touchend',   handleTouchActivity)
+    )
   } else {
     document.addEventListener('mouseleave', handleMouseLeave)
+    document.addEventListener('mouseenter', handleMouseEnter)
     document.addEventListener('mousemove',  handleMouseMove, { passive: true })
+    listeners.push(
+      () => document.removeEventListener('mouseleave', handleMouseLeave),
+      () => document.removeEventListener('mouseenter', handleMouseEnter),
+      () => document.removeEventListener('mousemove',  handleMouseMove)
+    )
   }
 
-  // Store cleanup functions
   listeners.push(
     () => document.removeEventListener('visibilitychange', handleVisibilityChange),
     () => document.removeEventListener('fullscreenchange', handleFullscreenChange),
@@ -558,46 +619,21 @@ export async function initializeEnhancedAntiCheating(
     () => window.removeEventListener('storage',       handleStorageChange),
     () => clearInterval(keystrokeAnalysisInterval),
     () => clearInterval(idleCheckInterval),
+    () => removeDevToolsListener(handleDevToolsChange),
+    () => devtoolsDetector.stop(),
     () => localStorage.removeItem(`interview_${submissionId}`)
   )
 
-  if (screen.orientation) {
-    listeners.push(() => screen.orientation.removeEventListener('change', handleOrientationChange))
-  } else {
-    listeners.push(() => window.removeEventListener('orientationchange', handleOrientationChange))
-  }
-
-  if (isTouchDevice) {
-    listeners.push(
-      () => document.removeEventListener('touchstart', handleTouchActivity),
-      () => document.removeEventListener('touchend',   handleTouchActivity),
-    )
-  } else {
-    listeners.push(
-      () => document.removeEventListener('mouseleave', handleMouseLeave),
-      () => document.removeEventListener('mousemove',  handleMouseMove),
-    )
-  }
-
-  // Fullscreen helpers
   const checkFullscreen = (): boolean => {
-    return Boolean(
-      document.fullscreenElement ||
-      (document as any).webkitFullscreenElement ||
-      (document as any).mozFullScreenElement
-    )
+    return Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement || (document as any).mozFullScreenElement)
   }
 
   const requestFullscreen = async (): Promise<void> => {
     const elem = document.documentElement
     try {
-      if (elem.requestFullscreen) {
-        await elem.requestFullscreen()
-      } else if ((elem as any).webkitRequestFullscreen) {
-        await (elem as any).webkitRequestFullscreen()
-      } else if ((elem as any).mozRequestFullScreen) {
-        await (elem as any).mozRequestFullScreen()
-      }
+      if (elem.requestFullscreen) await elem.requestFullscreen()
+      else if ((elem as any).webkitRequestFullscreen) await (elem as any).webkitRequestFullscreen()
+      else if ((elem as any).mozRequestFullScreen) await (elem as any).mozRequestFullScreen()
     } catch (error) {
       console.error('Fullscreen request failed:', error)
     }
@@ -606,26 +642,19 @@ export async function initializeEnhancedAntiCheating(
   const exitFullscreen = async (): Promise<void> => {
     if (checkFullscreen()) {
       try {
-        if (document.exitFullscreen) {
-          await document.exitFullscreen()
-        } else if ((document as any).webkitExitFullscreen) {
-          await (document as any).webkitExitFullscreen()
-        } else if ((document as any).mozCancelFullScreen) {
-          await (document as any).mozCancelFullScreen()
-        }
+        if (document.exitFullscreen) await document.exitFullscreen()
+        else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen()
+        else if ((document as any).mozCancelFullScreen) await (document as any).mozCancelFullScreen()
       } catch (error) {
         console.error('Fullscreen exit failed:', error)
       }
     }
   }
 
-  // Return enhanced tracker interface
   return {
     updateQuestionId: (questionId: string) => {
-      // Log time spent on the previous question before switching
       const timeSpentSec = Math.floor((Date.now() - questionStartTime) / 1000)
-      trackActivity({
-        submission_id: submissionId,
+      globalTracker.track({
         activity_type: 'question_time',
         question_id: prevQuestionId,
         metadata: {
@@ -633,15 +662,14 @@ export async function initializeEnhancedAntiCheating(
           next_question_id: questionId,
           timestamp: new Date().toISOString(),
         },
-      }).catch(console.error)
-
+      })
       questionStartTime = Date.now()
       prevQuestionId = questionId
-      currentQuestionId = questionId
+      globalTracker.updateQuestionId(questionId)
     },
     cleanup: () => {
       listeners.forEach((cleanup) => cleanup())
-      exitFullscreen()
+      globalTracker.flush();
     },
     getFingerprint: async () => {
       if (fingerprintCache) return fingerprintCache
@@ -672,29 +700,37 @@ export function debounce<T extends (...args: any[]) => any>(
 }
 
 /**
- * Track code change event (use with debounce)
+ * Track code change event (Uses central batch tracker)
  */
 export function trackCodeChange(
   submissionId: string,
   questionId: string,
   codeLength: number
 ): void {
-  trackActivity({
-    submission_id: submissionId,
+  // Always update global tracker context just in case
+  globalTracker.init(submissionId, questionId);
+  
+  globalTracker.track({
     activity_type: 'code_change',
-    question_id: questionId,
     metadata: {
       code_length: codeLength,
       timestamp: new Date().toISOString(),
     },
-  }).catch(console.error)
+  })
 }
 
 /**
- * Create debounced code change tracker (call every 5 seconds max)
+ * Create debounced code change tracker (Increased wait to 15s)
  */
 export function createCodeChangeTracker(submissionId: string, questionId: string) {
+  let lastCodeLength = -1;
+  const DEBOUNCE_TIME = 15000;
+  
   return debounce((codeLength: number) => {
-    trackCodeChange(submissionId, questionId, codeLength)
-  }, 5000)
+    // Only log if length changed significantly (> 5 chars)
+    if (Math.abs(codeLength - lastCodeLength) > 5) {
+      trackCodeChange(submissionId, questionId, codeLength)
+      lastCodeLength = codeLength;
+    }
+  }, DEBOUNCE_TIME)
 }

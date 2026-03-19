@@ -46,6 +46,7 @@ class GenerateQuestionsRequest(BaseModel):
     test_framework: Optional[str] = None
     interview_type: str = 'coding'
     domain_tool: Optional[str] = None  # Generic tool/dialect field (devops_tool, sql_dialect, etc.)
+    existing_questions: Optional[List[str]] = None  # To prevent AI from generating duplicate questions
 
 
 class StartSubmissionRequest(BaseModel):
@@ -53,7 +54,8 @@ class StartSubmissionRequest(BaseModel):
     candidate_name: str
     candidate_email: EmailStr
     candidate_phone: Optional[str] = None
-    preferred_language: Optional[str] = None  # Candidate's chosen language from allowed_languages
+    preferred_language: Optional[str] = None
+    device_info: Optional[Dict[str, Any]] = None
 
 
 class SaveCodeRequest(BaseModel):
@@ -67,8 +69,10 @@ class SaveCodeRequest(BaseModel):
 class SubmitInterviewRequest(BaseModel):
     """Schema for submitting interview."""
     submission_id: str
-    signature_data: Optional[str] = None  # Base64 encoded signature
-    terms_accepted: bool = False  # Whether terms were accepted
+    signature_data: Optional[str] = None
+    terms_accepted: bool = False
+    submission_trigger: Optional[str] = None  # 'manual', 'timer', 'auto'
+    device_info: Optional[Dict[str, Any]] = None
 
 
 class TrackActivityRequest(BaseModel):
@@ -77,6 +81,12 @@ class TrackActivityRequest(BaseModel):
     activity_type: str
     question_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+class BulkTrackActivityRequest(BaseModel):
+    """Schema for bulk tracking of multiple activities."""
+    submission_id: str
+    activities: List[Dict[str, Any]]  # List of {activity_type, question_id, metadata}
 
 
 class BulkImportResponse(BaseModel):

@@ -23,9 +23,18 @@ import {
   Trash2,
   Calendar,
   Clock,
+  Wand2,
 } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
-import { getInterview, updateInterview, type Interview, type Question } from '@/lib/api/coding-interviews'
+import { getInterview, updateInterview, generateQuestions, type Interview, type Question } from '@/lib/api/coding-interviews'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonPageHeader } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
@@ -96,6 +105,13 @@ export default function EditInterviewPage() {
   // Questions
   const [questions, setQuestions] = useState<Question[]>([])
 
+  // AI Generation State
+  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [aiJobDescription, setAiJobDescription] = useState('')
+  const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium')
+  const [aiNumQuestions, setAiNumQuestions] = useState('2')
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -122,20 +138,23 @@ export default function EditInterviewPage() {
     load()
   }, [interviewId])
 
-  // Sync question times when duration changes
+  // Sync question times when duration or number of questions changes
+  const questionsLength = questions.length
   useEffect(() => {
-    if (loading || questions.length === 0) return
+    if (loading || questionsLength === 0) return
     const availableMinutes = getAvailableMinutes()
     if (availableMinutes <= 0) return
 
-    const timePerQ = Math.floor(availableMinutes / questions.length)
+    const timePerQ = Math.floor(availableMinutes / questionsLength)
     if (timePerQ <= 0) return
 
-    setQuestions(prev => prev.map(q => ({
-      ...q,
-      time_estimate_minutes: timePerQ
-    })))
-  }, [startTime, endTime])
+    setQuestions(prev => {
+      const isAlreadySynced = prev.every(q => q.time_estimate_minutes === timePerQ)
+      if (isAlreadySynced) return prev
+
+      return prev.map(q => ({ ...q, time_estimate_minutes: timePerQ }))
+    })
+  }, [startTime, endTime, questionsLength])
 
   const getAvailableMinutes = () => {
     if (!startTime || !endTime) return 0
@@ -167,6 +186,47 @@ export default function EditInterviewPage() {
         topics: [],
       },
     ])
+  }
+
+  const handleGenerateQuestions = async () => {
+    if (!aiJobDescription.trim()) {
+      toast.error('Please provide a job description or requirement list')
+      return
+    }
+    if (!interview) {
+      toast.error('Interview data is missing')
+      return
+    }
+
+    try {
+      setIsGenerating(true)
+      const count = parseInt(aiNumQuestions) || 2
+      const existing_questions = questions.map(q => q.question_text).filter(Boolean)
+
+      const response = await generateQuestions({
+        job_description: aiJobDescription.trim(),
+        difficulty: aiDifficulty,
+        num_questions: count,
+        interview_type: interview.interview_type,
+        programming_language: interview.programming_language,
+        domain_tool: (interview as any).domain_tool,
+        test_framework: (interview as any).test_framework,
+        existing_questions: existing_questions.length > 0 ? existing_questions : undefined
+      })
+
+      if (response.questions?.length) {
+        setQuestions(prev => [...prev, ...response.questions])
+        setIsGenerateDialogOpen(false)
+        setAiJobDescription('')
+        toast.success(`Generated ${response.questions.length} new unique questions`)
+      } else {
+        toast.error('No questions were generated. Try adjusting your prompt.')
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to generate questions')
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
   const handleSave = async () => {
@@ -425,10 +485,20 @@ export default function EditInterviewPage() {
                 )}
               </CardDescription>
             </div>
-            <Button variant="outline" onClick={handleAddQuestion}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Question
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => setIsGenerateDialogOpen(true)}
+                className="bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100"
+              >
+                <Wand2 className="h-4 w-4 mr-2" />
+                Generate Additional Questions
+              </Button>
+              <Button variant="outline" onClick={handleAddQuestion}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Question
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -536,6 +606,67 @@ export default function EditInterviewPage() {
           )}
         </Button>
       </div>
+
+      {/* AI Generate Dialog */}
+      <Dialog open={isGenerateDialogOpen} onOpenChange={setIsGenerateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Generate Additional Questions</DialogTitle>
+            <DialogDescription>
+              AI will generate <b>new</b> questions that are <b>distinct</b> from the ones you already have.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="aiPrompt">Job Description / Requirements *</Label>
+              <Textarea
+                id="aiPrompt"
+                value={aiJobDescription}
+                onChange={(e) => setAiJobDescription(e.target.value)}
+                placeholder="e.g. Needs to know React hooks, state management, and performance optimization..."
+                rows={4}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Difficulty</Label>
+                <Select value={aiDifficulty} onValueChange={(v: any) => setAiDifficulty(v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="easy">Easy</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="hard">Hard</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Number of Questions To Add</Label>
+                <Select value={aiNumQuestions} onValueChange={setAiNumQuestions}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <SelectItem key={n} value={n.toString()}>{n}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsGenerateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleGenerateQuestions} disabled={isGenerating} className="bg-indigo-600 hover:bg-indigo-700">
+              {isGenerating ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating...</>
+              ) : (
+                <><Wand2 className="h-4 w-4 mr-2" /> Generate</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

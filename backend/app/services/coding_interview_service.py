@@ -320,8 +320,9 @@ class CodingInterviewService:
         candidate_email: str,
         candidate_phone: Optional[str],
         ip_address: str,
-        user_agent: str,
-        preferred_language: Optional[str] = None
+        user_agent: str = '',
+        preferred_language: Optional[str] = None,
+        device_info: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Initialize candidate session.
@@ -405,7 +406,8 @@ class CodingInterviewService:
                 'status': 'in_progress',
                 'ip_address': ip_address,
                 'user_agent': user_agent,
-                'preferred_language': preferred_language
+                'preferred_language': preferred_language,
+                'metadata': {'device_info': device_info} if device_info else {}
             }
 
             submission_result = self.client.table('coding_submissions').insert(submission_data).execute()
@@ -499,7 +501,9 @@ class CodingInterviewService:
         auto_submit: bool = False,
         signature_data: Optional[str] = None,
         terms_accepted: bool = False,
-        client_ip: Optional[str] = None
+        client_ip: Optional[str] = None,
+        submission_trigger: Optional[str] = None,
+        device_info: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Finalize submission and trigger evaluation.
@@ -553,6 +557,19 @@ class CodingInterviewService:
                 'session_duration_seconds': duration_seconds,
                 'late_submission': late_submission
             }
+
+            # Update metadata
+            metadata = submission.get('metadata') or {}
+            if submission_trigger:
+                metadata['trigger'] = submission_trigger
+            elif auto_submit:
+                metadata['trigger'] = 'timer'
+            
+            if device_info:
+                metadata['device_info'] = device_info
+            
+            if metadata:
+                update_data['metadata'] = metadata
 
             # Add signature data if provided
             if signature_data:
@@ -864,6 +881,42 @@ class CodingInterviewService:
 
         except Exception as e:
             logger.error(f"Error tracking activity: {e}")
+
+    async def track_activity_bulk(
+        self,
+        submission_id: str,
+        activities: List[Dict[str, Any]]
+    ):
+        """
+        Log multiple anti-cheating events at once.
+        """
+        try:
+            timestamp = datetime.now().isoformat()
+            
+            for act in activities:
+                # Validate question_id
+                q_id = act.get('question_id')
+                valid_q_id = q_id
+                if q_id:
+                    try:
+                        uuid.UUID(q_id)
+                    except ValueError:
+                        valid_q_id = None
+
+                self.activity_buffer.append({
+                    'submission_id': submission_id,
+                    'activity_type': act.get('activity_type'),
+                    'question_id': valid_q_id,
+                    'metadata': act.get('metadata', {}),
+                    'timestamp': timestamp
+                })
+
+            # Flush if buffer is getting large
+            if len(self.activity_buffer) >= 10:
+                await self._flush_activity_buffer()
+
+        except Exception as e:
+            logger.error(f"Error bulk tracking activity: {e}")
 
     async def _flush_activity_buffer(self):
         """Flush activity buffer to database."""
@@ -1384,6 +1437,58 @@ Language:"""
 
         # Delete submission (CASCADE removes coding_answers + session_activities)
         client.table('coding_submissions').delete().eq('id', submission_id).execute()
+
+    async def delete_multiple_submissions(
+        self,
+        submission_ids: List[str],
+        user_id: str,
+        org_id: str = None
+    ) -> None:
+        """Delete multiple candidate submissions (any status)."""
+        if not submission_ids:
+            return
+            
+        # Resolve raw user ID to internal UUID
+        user_id = self.user_service.resolve_user_id(user_id)
+        client = get_supabase()
+
+        # Fetch submissions to get interview_ids to verify ownership
+        subs_result = client.table('coding_submissions').select('interview_id').in_(
+            'id', submission_ids
+        ).execute()
+        
+        if not subs_result.data:
+            return
+            
+        interview_ids = list(set([sub['interview_id'] for sub in subs_result.data]))
+
+        # Verify interview ownership for all involved interviews
+        query = client.table('coding_interviews').select('id').in_('id', interview_ids)
+        if org_id:
+            query = query.eq('org_id', org_id)
+        else:
+            query = query.eq('created_by', user_id)
+            
+        interviews_result = query.execute()
+        valid_interview_ids = {i['id'] for i in (interviews_result.data or [])}
+
+        # Filter submissions to only those belonging to valid interviews
+        valid_submission_ids = []
+        for sub_id in submission_ids:
+            # We need to map back which sub_id belongs to which interview_id
+            # Reusing the existing fetched data is safer
+            pass
+            
+        # Alternatively, since the user must have ownership of the interview,
+        # we can just query the submissions that belong to the valid interviews.
+        if not valid_interview_ids:
+            raise ValueError("No valid interviews found or access denied")
+            
+        valid_subs_query = client.table('coding_submissions').select('id').in_('id', submission_ids).in_('interview_id', list(valid_interview_ids)).execute()
+        ids_to_delete = [s['id'] for s in (valid_subs_query.data or [])]
+        
+        if ids_to_delete:
+            client.table('coding_submissions').delete().in_('id', ids_to_delete).execute()
 
     async def set_submission_decision(
         self,
@@ -1920,16 +2025,29 @@ Language:"""
             existing_ids = {r['id'] for r in (existing_q.data or [])}
             incoming_ids = {q.get('id') for q in questions if q.get('id')}
 
-            # Delete questions removed by the editor (only if no answers reference them)
+            # Handle questions removed by the editor
             ids_to_delete = existing_ids - incoming_ids
+            import random
             for qid in ids_to_delete:
                 has_answers = client.table('coding_answers').select('id').eq(
                     'question_id', qid
                 ).limit(1).execute()
                 if not (has_answers.data):
                     client.table('coding_questions').delete().eq('id', qid).execute()
+                else:
+                    # Cannot delete question with answers. Move its question_number to a safe negative range
+                    # so it doesn't collide with active questions.
+                    zombie_num = -1000000 - random.randint(1, 100000)
+                    client.table('coding_questions').update({'question_number': zombie_num}).eq('id', qid).execute()
 
-            # Upsert questions
+            # Temporarily shift active existing questions to negative indexes 
+            # to prevent unique constraint (interview_id, question_number) violations during sequential updates
+            temp_number = -1000
+            for qid in (existing_ids & incoming_ids):
+                client.table('coding_questions').update({'question_number': temp_number}).eq('id', qid).execute()
+                temp_number -= 1
+
+            # Upsert questions sequentially into positive space
             total_marks = 0
             for idx, q in enumerate(questions):
                 q_marks = q.get('marks', 0) if isinstance(q, dict) else getattr(q, 'marks', 0)
@@ -1937,8 +2055,8 @@ Language:"""
                 q_data = {
                     'interview_id': interview_id,
                     'question_number': idx + 1,
-                    'question_text': q.get('question_text', '') if isinstance(q, dict) else q.question_text,
-                    'difficulty': q.get('difficulty', 'medium') if isinstance(q, dict) else q.difficulty,
+                    'question_text': q.get('question_text', '') if isinstance(q, dict) else getattr(q, 'question_text', ''),
+                    'difficulty': q.get('difficulty', 'medium') if isinstance(q, dict) else getattr(q, 'difficulty', 'medium'),
                     'marks': q_marks,
                     'time_estimate_minutes': q.get('time_estimate_minutes') if isinstance(q, dict) else getattr(q, 'time_estimate_minutes', None),
                     'starter_code': q.get('starter_code') if isinstance(q, dict) else getattr(q, 'starter_code', None),

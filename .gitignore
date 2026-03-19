@@ -66,3 +66,6 @@ htmlcov/
 tmpclaude-*-cwd
 NUL
 *.cmd.tmp
+
+# Build artifacts
+*.tsbuildinfo
