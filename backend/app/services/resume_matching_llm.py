@@ -261,6 +261,7 @@ Return ONLY the JSON object."""
             candidate_name: Candidate name (optional)
             candidate_email: Candidate email (optional)
             model: LLM model (optional)
+            org_id: Organization ID (optional)
 
         Returns:
             dict with resume_id, match_score, parsed_data, match_analysis

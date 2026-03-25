@@ -1,10 +1,12 @@
 -- ============================================================================
 -- CONSOLIDATED MIGRATION SCHEMA
 -- ============================================================================
--- Description: Complete schema consolidation from migrations 001-036
--- Date: 2026-03-16
+-- Description: Complete schema consolidation from migrations 001-041
+-- Date: 2026-03-25
 -- Note: This file represents the final state after all migrations.
 --       Video interview tables (009) excluded per migration 036.
+--       Migrations 038 (batch system) and 039 (remove batch) cancel out - excluded.
+--       Migrations 037 (coding FK fix), 040 (pipeline org_id), 041 (campaigns) included.
 -- ============================================================================
 
 -- ============================================================================
@@ -654,12 +656,48 @@ CREATE TABLE pipeline_candidates (
     decided_by UUID REFERENCES users(id),
     decided_at TIMESTAMPTZ,
 
+    -- Campaign and slot (Migration 041)
+    campaign_id UUID REFERENCES hiring_campaigns(id) ON DELETE SET NULL,
+    interview_slot JSONB DEFAULT NULL,
+
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    deleted_at TIMESTAMPTZ DEFAULT NULL,
+    deleted_at TIMESTAMPTZ DEFAULT NULL
+);
 
-    UNIQUE(job_id, candidate_email)
+-- Partial unique index: only applies to non-deleted rows (allows re-adding deleted candidates)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_candidates_job_email_active
+    ON pipeline_candidates(job_id, candidate_email)
+    WHERE deleted_at IS NULL;
+
+-- ============================================================================
+-- SECTION 8B: HIRING CAMPAIGNS (Migration 041)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS hiring_campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+
+    -- Campaign status
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'completed', 'archived')),
+
+    -- Metadata: slots, target roles, custom fields
+    metadata JSONB DEFAULT '{
+        "slots": [],
+        "target_roles": [],
+        "settings": {}
+    }'::jsonb,
+
+    -- Audit fields
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+    UNIQUE(org_id, name)
 );
 
 -- ============================================================================
@@ -793,6 +831,19 @@ CREATE INDEX idx_pipeline_email ON pipeline_candidates(candidate_email);
 CREATE INDEX idx_pipeline_created_by ON pipeline_candidates(created_by);
 CREATE INDEX idx_pipeline_candidates_org ON pipeline_candidates(org_id);
 CREATE INDEX idx_pipeline_candidates_active ON pipeline_candidates(org_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_pipeline_candidates_org_job ON pipeline_candidates(org_id, job_id);
+CREATE INDEX idx_pipeline_candidates_org_stage ON pipeline_candidates(org_id, current_stage);
+CREATE INDEX idx_pipeline_candidates_campaign ON pipeline_candidates(campaign_id);
+CREATE INDEX idx_pipeline_candidates_campaign_job ON pipeline_candidates(campaign_id, job_id);
+CREATE INDEX idx_pipeline_candidates_campaign_stage ON pipeline_candidates(campaign_id, current_stage);
+CREATE INDEX idx_pipeline_candidates_slot ON pipeline_candidates USING GIN (interview_slot);
+
+-- Hiring Campaigns indexes
+CREATE INDEX idx_campaigns_org ON hiring_campaigns(org_id);
+CREATE INDEX idx_campaigns_status ON hiring_campaigns(status);
+CREATE INDEX idx_campaigns_created_by ON hiring_campaigns(created_by);
+CREATE INDEX idx_campaigns_org_status ON hiring_campaigns(org_id, status);
+CREATE INDEX idx_campaigns_metadata ON hiring_campaigns USING GIN (metadata);
 
 -- Organization indexes
 CREATE INDEX idx_org_members_user ON organization_members(user_id);
@@ -986,6 +1037,106 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION validate_pipeline_candidate_org_match()
+RETURNS TRIGGER AS $$
+DECLARE
+    job_org_id UUID;
+BEGIN
+    IF NEW.job_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT org_id INTO job_org_id
+    FROM job_descriptions
+    WHERE id = NEW.job_id;
+
+    IF job_org_id IS NULL THEN
+        RAISE EXCEPTION 'Job description % does not exist', NEW.job_id;
+    END IF;
+
+    IF NEW.org_id != job_org_id THEN
+        RAISE EXCEPTION 'Pipeline candidate org_id (%) does not match job description org_id (%)',
+            NEW.org_id, job_org_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Campaign helper functions (Migration 041)
+CREATE OR REPLACE FUNCTION get_campaign_statistics(p_campaign_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+    result JSONB;
+BEGIN
+    SELECT jsonb_build_object(
+        'total_candidates', COUNT(*),
+        'by_stage', jsonb_build_object(
+            'resume_screening', COUNT(*) FILTER (WHERE current_stage = 'resume_screening'),
+            'technical_assessment', COUNT(*) FILTER (WHERE current_stage = 'technical_assessment'),
+            'voice_screening', COUNT(*) FILTER (WHERE current_stage = 'voice_screening'),
+            'completed', COUNT(*) FILTER (WHERE current_stage = 'completed')
+        ),
+        'by_decision', jsonb_build_object(
+            'pending', COUNT(*) FILTER (WHERE final_decision = 'pending'),
+            'selected', COUNT(*) FILTER (WHERE final_decision = 'selected'),
+            'rejected', COUNT(*) FILTER (WHERE final_decision = 'rejected'),
+            'hold', COUNT(*) FILTER (WHERE final_decision = 'hold')
+        ),
+        'by_recommendation', jsonb_build_object(
+            'highly_recommended', COUNT(*) FILTER (WHERE recommendation = 'highly_recommended'),
+            'recommended', COUNT(*) FILTER (WHERE recommendation = 'recommended'),
+            'not_recommended', COUNT(*) FILTER (WHERE recommendation = 'not_recommended'),
+            'pending', COUNT(*) FILTER (WHERE recommendation = 'pending')
+        ),
+        'unique_jobs', COUNT(DISTINCT job_id),
+        'avg_resume_score', ROUND(AVG(resume_match_score)::numeric, 2),
+        'avg_coding_score', ROUND(AVG(coding_score)::numeric, 2)
+    )
+    INTO result
+    FROM pipeline_candidates
+    WHERE campaign_id = p_campaign_id
+      AND deleted_at IS NULL;  -- Exclude soft-deleted candidates
+
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_campaign_candidates_summary(p_campaign_id UUID)
+RETURNS TABLE(
+    job_title TEXT,
+    total_count BIGINT,
+    resume_screening_count BIGINT,
+    technical_assessment_count BIGINT,
+    voice_screening_count BIGINT,
+    completed_count BIGINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        COALESCE(jd.title, 'No Job Assigned') AS job_title,
+        COUNT(*) AS total_count,
+        COUNT(*) FILTER (WHERE pc.current_stage = 'resume_screening') AS resume_screening_count,
+        COUNT(*) FILTER (WHERE pc.current_stage = 'technical_assessment') AS technical_assessment_count,
+        COUNT(*) FILTER (WHERE pc.current_stage = 'voice_screening') AS voice_screening_count,
+        COUNT(*) FILTER (WHERE pc.current_stage = 'completed') AS completed_count
+    FROM pipeline_candidates pc
+    LEFT JOIN job_descriptions jd ON pc.job_id = jd.id
+    WHERE pc.campaign_id = p_campaign_id
+      AND pc.deleted_at IS NULL  -- Exclude soft-deleted candidates
+    GROUP BY jd.title
+    ORDER BY total_count DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION update_hiring_campaigns_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ============================================================================
 -- SECTION 12: TRIGGERS
 -- ============================================================================
@@ -1023,6 +1174,16 @@ CREATE TRIGGER pipeline_candidates_updated_at
     BEFORE UPDATE ON pipeline_candidates
     FOR EACH ROW
     EXECUTE FUNCTION update_pipeline_updated_at();
+
+CREATE TRIGGER trigger_validate_pipeline_org_match
+    BEFORE INSERT OR UPDATE OF job_id, org_id ON pipeline_candidates
+    FOR EACH ROW
+    EXECUTE FUNCTION validate_pipeline_candidate_org_match();
+
+CREATE TRIGGER trigger_hiring_campaigns_updated_at
+    BEFORE UPDATE ON hiring_campaigns
+    FOR EACH ROW
+    EXECUTE FUNCTION update_hiring_campaigns_timestamp();
 
 -- ============================================================================
 -- SECTION 13: ROW LEVEL SECURITY
@@ -1200,8 +1361,24 @@ CREATE POLICY call_history_public_by_call_id ON voice_call_history
     FOR SELECT USING (true);
 
 -- Pipeline Candidates policies
-CREATE POLICY "Users manage own pipeline candidates" ON pipeline_candidates
-    FOR ALL USING (created_by = auth.uid());
+CREATE POLICY "Pipeline org isolation" ON pipeline_candidates
+    FOR ALL USING (
+        org_id IN (
+            SELECT org_id FROM organization_members
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- Hiring Campaigns RLS (Migration 041)
+ALTER TABLE hiring_campaigns ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Campaigns org isolation" ON hiring_campaigns
+    FOR ALL USING (
+        org_id IN (
+            SELECT org_id FROM organization_members
+            WHERE user_id = auth.uid()
+        )
+    );
 
 -- ============================================================================
 -- SECTION 14: SEED DATA
@@ -1251,6 +1428,7 @@ COMMENT ON TABLE voice_screening_campaigns IS 'Voice interview campaigns with AI
 COMMENT ON TABLE voice_candidates IS 'Minimal candidate info - all extracted data lives in call_history.structured_data';
 COMMENT ON TABLE voice_call_history IS 'Complete history of all calls with dynamic structured_data, AI summaries, and assessments';
 COMMENT ON TABLE pipeline_candidates IS 'Unified candidate lifecycle across Resume → Coding → Voice';
+COMMENT ON TABLE hiring_campaigns IS 'Hiring campaigns (Pipeline 1, 2, 3...) to organize candidates by hiring drive';
 
 -- Column comments
 COMMENT ON COLUMN tests.metadata IS 'Stores file metadata, extraction info, and model information';
@@ -1292,6 +1470,12 @@ COMMENT ON COLUMN organizations.auto_join_role IS 'Default role assigned when us
 COMMENT ON COLUMN organizations.join_link_token IS 'Unique token for shareable join link. Anyone with this link can join the organization.';
 COMMENT ON COLUMN organizations.join_link_enabled IS 'Whether the join link is currently active. Owners can disable without changing the token.';
 COMMENT ON COLUMN organizations.join_link_role IS 'Default role assigned to members who join via the link (default: interviewer)';
+COMMENT ON COLUMN hiring_campaigns.metadata IS 'Stores slots configuration, target roles, and custom settings';
+COMMENT ON COLUMN pipeline_candidates.campaign_id IS 'Links candidate to a hiring campaign (Migration 041)';
+COMMENT ON COLUMN pipeline_candidates.interview_slot IS 'Stores slot info: {slot: "morning/evening", scheduled_date: "...", time_window: "..."} (Migration 041)';
+
+COMMENT ON FUNCTION get_campaign_statistics(UUID) IS 'Returns comprehensive statistics for a campaign';
+COMMENT ON FUNCTION get_campaign_candidates_summary(UUID) IS 'Returns candidate counts by job and stage';
 
 -- ============================================================================
 -- END OF CONSOLIDATED SCHEMA

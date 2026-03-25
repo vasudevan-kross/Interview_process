@@ -7,6 +7,7 @@ from app.api.v1.coding_interviews import router as coding_interviews_router
 from app.api.v1.voice_screening import router as voice_screening_router
 from app.api.v1.pipeline import router as pipeline_router
 from app.api.v1.organizations import router as organizations_router
+from app.api.v1.campaigns import router as campaigns_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -18,6 +19,7 @@ api_router.include_router(coding_interviews_router)
 api_router.include_router(voice_screening_router)
 api_router.include_router(pipeline_router)
 api_router.include_router(organizations_router)
+api_router.include_router(campaigns_router)
 
 # Optional: Resume Matching (requires PyTorch/sentence-transformers)
 try:

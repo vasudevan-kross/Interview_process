@@ -42,6 +42,7 @@ class DecisionUpdate(BaseModel):
 
 # Available targets for promotion
 @router.get("/targets/interviews")
+@router.get("/available-interviews")  # Alias for consistency
 async def get_available_interviews(
     job_id: Optional[str] = None,
     ctx: OrgContext = Depends(require_permission("pipeline:view")),
@@ -52,6 +53,7 @@ async def get_available_interviews(
 
 
 @router.get("/targets/campaigns")
+@router.get("/available-campaigns")  # Alias for consistency
 async def get_available_campaigns(
     job_id: Optional[str] = None,
     ctx: OrgContext = Depends(require_permission("pipeline:view")),
@@ -272,12 +274,13 @@ async def advance_candidates(
 @router.get("/{job_id}")
 async def get_pipeline_board(
     job_id: str,
+    campaign_id: Optional[str] = None,
     ctx: OrgContext = Depends(require_permission("pipeline:view")),
     service=Depends(get_pipeline_service),
 ):
     """Get pipeline board grouped by stage (Kanban data)."""
     try:
-        return service.get_pipeline_board(job_id, ctx.user_id, org_id=ctx.org_id)
+        return service.get_pipeline_board(job_id, ctx.user_id, org_id=ctx.org_id, campaign_id=campaign_id)
     except Exception as e:
         logger.error(f"Failed to get pipeline board: {e}")
         raise HTTPException(status_code=500, detail=str(e))

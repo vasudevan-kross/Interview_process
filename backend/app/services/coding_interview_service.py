@@ -826,6 +826,49 @@ class CodingInterviewService:
             except Exception as pe:
                 logger.debug(f"Pipeline sync skipped: {pe}")
 
+            # ── Batch Integration: Sync coding results to batch_candidates ──
+            try:
+                candidate_email = submission.get('candidate_email', '')
+                if candidate_email:
+                    # Find batch_candidate by email
+                    batch_result = self.client.table('batch_candidates').select(
+                        'id, batch_id, candidates!inner(email)'
+                    ).eq('candidates.email', candidate_email.lower()).execute()
+
+                    if batch_result.data:
+                        for batch_candidate in batch_result.data:
+                            batch_candidate_id = batch_candidate['id']
+
+                            # Get current module_results
+                            current_result = self.client.table('batch_candidates').select(
+                                'module_results'
+                            ).eq('id', batch_candidate_id).single().execute()
+
+                            if current_result.data:
+                                module_results = current_result.data.get('module_results', {})
+
+                                # Update technical_assessment module
+                                module_results['technical_assessment'] = {
+                                    'status': 'completed',
+                                    'score': round(percentage, 2),
+                                    'marks_obtained': total_marks_obtained,
+                                    'total_marks': total_marks,
+                                    'submission_id': submission_id,
+                                    'completed_at': datetime.now().isoformat()
+                                }
+
+                                # Update batch_candidate
+                                self.client.table('batch_candidates').update({
+                                    'module_results': module_results,
+                                    'current_stage': 'voice_screening'  # Auto-advance to next stage
+                                }).eq('id', batch_candidate_id).execute()
+
+                                logger.info(
+                                    f"Synced coding results to batch_candidate {batch_candidate_id}: {percentage:.2f}%"
+                                )
+            except Exception as be:
+                logger.debug(f"Batch sync skipped: {be}")
+
             return {
                 'submission_id': submission_id,
                 'total_marks_obtained': total_marks_obtained,

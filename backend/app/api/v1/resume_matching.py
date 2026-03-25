@@ -243,6 +243,37 @@ async def get_ranked_candidates(
 
 
 @router.get(
+    "/jobs",
+    summary="List all job descriptions"
+)
+async def list_job_descriptions(
+    ctx: OrgContext = Depends(require_permission('resume:view'))
+):
+    """
+    List all job descriptions for the organization.
+    """
+    try:
+        from app.db.supabase_client import get_supabase
+
+        client = get_supabase()
+        result = (
+            client.table("job_descriptions")
+            .select("id, title, department, created_at")
+            .eq("org_id", ctx.org_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        return {"jobs": result.data or []}
+
+    except Exception as e:
+        logger.error(f"Error listing job descriptions: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to list job descriptions: {str(e)}")
+
+
+@router.get(
     "/job/{job_id}",
     summary="Get job description details"
 )

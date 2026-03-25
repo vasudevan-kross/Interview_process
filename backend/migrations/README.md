@@ -27,13 +27,12 @@ This single file contains the complete, production-ready database schema includi
 
 ## Migration History (Reference)
 
-The numbered migration files (001–036) represent the schema evolution history:
+The numbered migration files (001–041) represent the schema evolution history:
 
 | Range | Purpose |
 |-------|---------|
 | 001–003 | Core schema, roles, vector functions |
 | 004–008 | Metadata expansion, type fixes |
-| 009 | Video interviews (later removed) |
 | 010–015 | Coding interviews, multi-language support |
 | 016–020 | Voice screening system |
 | 021–023 | Employment bond/signature features |
@@ -41,6 +40,10 @@ The numbered migration files (001–036) represent the schema evolution history:
 | 028–032 | Multi-tenant organizations |
 | 034–035 | Voice disconnect tracking, org join links |
 | 036 | Removal of video interview tables |
+| 037 | Coding answers evaluator FK fix |
+| 038–039 | Batch system (created then removed) |
+| 040 | Pipeline org_id for multi-tenancy |
+| 041 | Hiring campaigns system |
 
 These files are kept for:
 - Understanding schema evolution
@@ -53,17 +56,17 @@ These files are kept for:
 
 If you're updating an existing database, determine which migration you last applied and run subsequent migrations **in order**.
 
-**Example:** If you're on migration 027, run:
+**Example:** If you're on migration 032, run:
 ```
-028_multi_tenant_orgs.sql
-029_multi_tenant_add_org_id.sql
-030_multi_tenant_backfill.sql
-031_multi_tenant_soft_deletes.sql
-032_org_discovery_settings.sql
 034_voice_disconnect_tracking.sql
 035_org_join_link.sql
 036_remove_video_interviews.sql
+037_fix_coding_answers_evaluator_fkey.sql
+040_pipeline_add_org_id.sql
+041_create_hiring_campaigns.sql
 ```
+
+Note: Migrations 038 and 039 (batch system) were created then removed, so they are excluded from the list.
 
 ---
 
@@ -95,13 +98,15 @@ If you're updating an existing database, determine which migration you last appl
 
 **Unified Pipeline:**
 - pipeline_candidates (resume → coding → voice lifecycle)
+- hiring_campaigns (organize candidates by hiring drive)
 
 ---
 
 ## Notes
 
 - **No migration runner:** All migrations are plain SQL executed manually
-- **Video interviews removed:** Migration 036 drops all video interview tables (009)
-- **org_id everywhere:** Multi-tenancy added in migrations 028–030
+- **Video interviews removed:** Migration 036 drops all video interview tables
+- **org_id everywhere:** Multi-tenancy added in migrations 028–030, 040
 - **Soft deletes:** deleted_at columns added in migration 031
 - **Vector search:** pgvector extension required for resume matching
+- **Hiring campaigns:** Added in migration 041 for organizing candidates
