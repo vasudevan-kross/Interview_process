@@ -65,7 +65,13 @@
       "Bash(find:*)",
       "Bash(npm run dev:*)",
       "Bash(test:*)",
-      "WebFetch(domain:ollama.com)"
+      "WebFetch(domain:ollama.com)",
+      "Bash(PYTHONIOENCODING=utf-8 python -m scripts.package_skill \"C:/Users/PC/.claude/skills/interview-platform-feature\")",
+      "Bash(mkdir -p \"D:/Projects/AI driven/Interview/.claude/skills/interview-platform-feature\")",
+      "Bash(mkdir -p \"D:/Projects/AI driven/Interview/.claude/commands\")",
+      "Bash(rm -rf \"C:/Users/PC/.claude/skills/interview-platform-feature\")",
+      "Bash(rm -f \"C:/Users/PC/.claude/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/interview-platform-feature.skill\")",
+      "Bash(claude mcp:*)"
     ]
   }
 }
