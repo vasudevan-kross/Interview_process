@@ -120,13 +120,13 @@ export default function CandidateDetailPage() {
   const getRecommendationDisplay = (rec: string) => {
     const r = (rec || '').toLowerCase()
     if (r.includes('strong recommend'))
-      return { label: 'Strong Fit — Advance to Next Round', icon: ThumbsUp, className: 'bg-green-50 text-green-700 border-green-200' }
+      return { label: 'Strong Fit — Move to Next Round', icon: ThumbsUp, className: 'bg-green-50 text-green-700 border-green-200' }
     if (r.includes('recommend'))
       return { label: 'Good Fit — Recommend for Next Round', icon: ThumbsUp, className: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
     if (r.includes('consider'))
       return { label: 'Consider — Review Before Proceeding', icon: Minus, className: 'bg-amber-50 text-amber-700 border-amber-200' }
     if (r.includes('not recommended') || r.includes('not a fit'))
-      return { label: 'Not a Fit — Do Not Advance', icon: ThumbsDown, className: 'bg-red-50 text-red-700 border-red-200' }
+      return { label: 'Not a Fit — Do Not Proceed', icon: ThumbsDown, className: 'bg-red-50 text-red-700 border-red-200' }
     return { label: 'Pending Review', icon: Minus, className: 'bg-slate-50 text-slate-500 border-slate-200' }
   }
 

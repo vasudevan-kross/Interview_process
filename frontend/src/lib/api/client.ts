@@ -82,6 +82,11 @@ class APIClient {
     return response.data
   }
 
+  async listJobDescriptions() {
+    const response = await this.client.get('/api/v1/resume-matching/jobs')
+    return response.data
+  }
+
   async getJobDescription(jobId: string) {
     const response = await this.client.get(`/api/v1/resume-matching/job/${jobId}`)
     return response.data
@@ -224,6 +229,150 @@ class APIClient {
     const response = await this.client.get('/api/v1/voice-screening/export', {
       responseType: 'blob',
     })
+    return response.data
+  }
+
+  // Campaign Management APIs
+  async listCampaigns(params?: { status?: string; limit?: number; offset?: number }) {
+    const response = await this.client.get('/api/v1/campaigns', { params })
+    return response.data
+  }
+
+  async getCampaign(campaignId: string) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}`)
+    return response.data
+  }
+
+  async createCampaign(data: {
+    name: string
+    description?: string
+    metadata?: {
+      slots?: Array<{ name: string; time_start: string; time_end: string; description?: string }>
+      target_roles?: string[]
+      settings?: Record<string, any>
+    }
+  }) {
+    const response = await this.client.post('/api/v1/campaigns', data)
+    return response.data
+  }
+
+  async updateCampaign(campaignId: string, data: {
+    name?: string
+    description?: string
+    status?: string
+    metadata?: any
+  }) {
+    const response = await this.client.patch(`/api/v1/campaigns/${campaignId}`, data)
+    return response.data
+  }
+
+  async deleteCampaign(campaignId: string) {
+    const response = await this.client.delete(`/api/v1/campaigns/${campaignId}`)
+    return response.data
+  }
+
+  async getCampaignAnalytics(campaignId: string) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}/analytics`)
+    return response.data
+  }
+
+  async getCampaignCandidates(campaignId: string, params?: {
+    job_id?: string
+    stage?: string
+    limit?: number
+    offset?: number
+  }) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}/candidates`, { params })
+    return response.data
+  }
+
+  async addCandidateToCampaign(campaignId: string, data: {
+    job_id: string
+    candidate_name: string
+    candidate_email: string
+    candidate_phone?: string
+    interview_slot?: {
+      slot_name: string
+      scheduled_date?: string
+      time_window?: string
+    }
+  }) {
+    const response = await this.client.post(`/api/v1/campaigns/${campaignId}/candidates`, data)
+    return response.data
+  }
+
+  async previewCandidateImport(campaignId: string, file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await this.client.post(
+      `/api/v1/campaigns/${campaignId}/import/preview`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    )
+    return response.data
+  }
+
+  async importCandidates(campaignId: string, data: {
+    candidates: Array<{
+      email: string
+      name: string
+      phone?: string
+      job_role?: string
+      slot?: string
+      notes?: string
+    }>
+    job_mappings: Record<string, string>
+    slot_mappings?: Record<string, string>
+  }) {
+    const response = await this.client.post(`/api/v1/campaigns/${campaignId}/import`, data)
+    return response.data
+  }
+
+  // Campaign Pipeline APIs
+  async getCampaignPipelineBoard(campaignId: string, jobId: string) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}/pipeline/board`, {
+      params: { job_id: jobId }
+    })
+    return response.data
+  }
+
+  async getAvailableInterviews(jobId?: string) {
+    const response = await this.client.get('/api/v1/pipeline/available-interviews', {
+      params: jobId ? { job_id: jobId } : {}
+    })
+    return response.data
+  }
+
+  async getAvailableVoiceCampaigns(jobId?: string) {
+    const response = await this.client.get('/api/v1/pipeline/available-campaigns', {
+      params: jobId ? { job_id: jobId } : {}
+    })
+    return response.data
+  }
+
+  async advanceCampaignCandidates(campaignId: string, data: {
+    candidate_ids: string[]
+    target_stage: string
+    interview_id?: string
+    voice_campaign_id?: string
+  }) {
+    const response = await this.client.post(`/api/v1/campaigns/${campaignId}/pipeline/advance`, data)
+    return response.data
+  }
+
+  async setCandidateDecision(campaignId: string, candidateId: string, data: {
+    decision: string
+    notes?: string
+  }) {
+    const response = await this.client.post(
+      `/api/v1/campaigns/${campaignId}/candidates/${candidateId}/decision`,
+      data
+    )
+    return response.data
+  }
+
+  async deleteCampaignCandidate(campaignId: string, candidateId: string) {
+    const response = await this.client.delete(`/api/v1/campaigns/${campaignId}/candidates/${candidateId}`)
     return response.data
   }
 

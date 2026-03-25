@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, GitBranch } from 'lucide-react'
+import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, Briefcase } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useOrg } from '@/contexts/OrganizationContext'
 
@@ -16,23 +16,30 @@ const navItems = [
     permission: 'pipeline:view',
   },
   {
-    title: 'Interview Pipeline',
-    href: '/dashboard/pipeline',
-    icon: GitBranch,
-    permission: 'pipeline:view',
+    title: 'Hiring Campaigns',
+    href: '/dashboard/campaigns',
+    icon: Briefcase,
+    permission: 'interview:view',
   },
+  // Interview Pipeline - now embedded within each campaign
+  // {
+  //   title: 'Interview Pipeline',
+  //   href: '/dashboard/pipeline',
+  //   icon: GitBranch,
+  //   permission: 'pipeline:view',
+  // },
   {
     title: 'Resume Matching',
     href: '/dashboard/resume-matching',
     icon: Users,
     permission: 'resume:view',
   },
-  {
-    title: 'Test Evaluation',
-    href: '/dashboard/test-evaluation',
-    icon: FileText,
-    permission: 'test:view',
-  },
+  // {
+  //   title: 'Test Evaluation',
+  //   href: '/dashboard/test-evaluation',
+  //   icon: FileText,
+  //   permission: 'test:view',
+  // },
   {
     title: 'Technical Assessments',
     href: '/dashboard/coding-interviews',

@@ -109,9 +109,12 @@ export interface AvailableCampaign {
 
 // ── API Functions ──────────────────────────────────────────────────────────
 
-export async function getPipelineBoard(jobId: string): Promise<PipelineBoard> {
+export async function getPipelineBoard(jobId: string, campaignId?: string): Promise<PipelineBoard> {
   const headers = await getAuthHeaders()
-  const res = await fetch(`${API_BASE_URL}${API_PREFIX}/pipeline/${jobId}`, { headers })
+  const searchParams = new URLSearchParams()
+  if (campaignId) searchParams.set('campaign_id', campaignId)
+  const url = `${API_BASE_URL}${API_PREFIX}/pipeline/${jobId}${searchParams.toString() ? '?' + searchParams : ''}`
+  const res = await fetch(url, { headers })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(extractErrorMessage(err.detail, 'Failed to load pipeline board'))

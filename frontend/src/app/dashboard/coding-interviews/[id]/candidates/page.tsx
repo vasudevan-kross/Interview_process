@@ -458,7 +458,7 @@ export default function CandidatesPage() {
   // ── Helpers ───────────────────────────────────────────────
   const getDecisionBadge = (decision: Decision) => {
     switch (decision) {
-      case 'advanced': return <Badge className="bg-green-50 text-green-700 border border-green-200 rounded-md">Advanced</Badge>
+      case 'advanced': return <Badge className="bg-green-50 text-green-700 border border-green-200 rounded-md">Proceed</Badge>
       case 'rejected': return <Badge className="bg-red-50 text-red-700 border border-red-200 rounded-md">Rejected</Badge>
       case 'hold': return <Badge className="bg-yellow-50 text-yellow-700 border border-yellow-200 rounded-md">Hold</Badge>
       default: return <Badge className="bg-slate-100 text-slate-600 border border-slate-200 rounded-md">Pending</Badge>
@@ -514,7 +514,7 @@ export default function CandidatesPage() {
         {[
           { label: 'Total', value: data?.total ?? 0 },
           { label: 'Submitted', value: data?.submitted ?? 0 },
-          { label: 'Advanced', value: data?.advanced ?? 0 },
+          { label: 'Proceed', value: data?.advanced ?? 0 },
           { label: 'Rejected', value: data?.rejected ?? 0 },
           { label: 'Hold', value: data?.hold ?? 0 },
           { label: 'Not Started', value: notStarted },
@@ -585,7 +585,7 @@ export default function CandidatesPage() {
                 <option value="all">All</option>
                 <option value="submitted">Submitted</option>
                 <option value="not_started">Not Started</option>
-                <option value="advanced">Advanced</option>
+                <option value="advanced">Proceed</option>
                 <option value="rejected">Rejected</option>
                 <option value="hold">Hold</option>
                 <option value="pending">Pending Review</option>
@@ -761,7 +761,7 @@ export default function CandidatesPage() {
                                     onClick={() => openDecisionDialog(candidate, 'advanced')}
                                     disabled={candidate.decision === 'advanced'}
                                   >
-                                    <CheckCircle2 className="h-3 w-3 mr-1" />Advance
+                                    <CheckCircle2 className="h-3 w-3 mr-1" />Proceed
                                   </Button>
                                   <Button
                                     size="sm" variant="ghost"
@@ -840,7 +840,7 @@ export default function CandidatesPage() {
                   onClick={() => handleBulkDecision('advanced')} disabled={bulkActioning}
                 >
                   <CheckCircle2 className="h-3 w-3 mr-1" />
-                  Advance ({selectedSubmitted.length})
+                  Proceed ({selectedSubmitted.length})
                 </Button>
                 <Button
                   size="sm" variant="ghost"

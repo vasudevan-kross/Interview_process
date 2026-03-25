@@ -54,6 +54,10 @@ export default function PipelinePage() {
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [loadingJobs, setLoadingJobs] = useState(true)
 
+  // Campaign filter
+  const [hiringCampaigns, setHiringCampaigns] = useState<any[]>([])
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>('all')
+
   // Pipeline data
   const [board, setBoard] = useState<PipelineBoard | null>(null)
   const [stats, setStats] = useState<PipelineStats | null>(null)
@@ -69,7 +73,7 @@ export default function PipelinePage() {
   const [recThreshold, setRecThreshold] = useState(65)
   const [savingThresholds, setSavingThresholds] = useState(false)
 
-  // Advance dialog
+  // Move dialog
   const [advanceDialog, setAdvanceDialog] = useState<{
     open: boolean
     targetStage: Stage
@@ -149,10 +153,24 @@ export default function PipelinePage() {
       if (jobList.length > 0 && !selectedJobId) {
         setSelectedJobId(jobList[0].id)
       }
+
+      // Load hiring campaigns
+      await loadHiringCampaigns()
     } catch {
       toast.error('Failed to load jobs')
     } finally {
       setLoadingJobs(false)
+    }
+  }
+
+  // Load hiring campaigns for filter
+  const loadHiringCampaigns = async () => {
+    try {
+      const { apiClient } = await import('@/lib/api/client')
+      const response = await apiClient.listCampaigns({ status: 'active' })
+      setHiringCampaigns(response.campaigns || [])
+    } catch (error) {
+      console.error('Failed to load campaigns:', error)
     }
   }
 
@@ -162,7 +180,7 @@ export default function PipelinePage() {
     setLoading(true)
     try {
       const [boardData, statsData, settingsData] = await Promise.all([
-        getPipelineBoard(selectedJobId),
+        getPipelineBoard(selectedJobId, selectedCampaignId !== 'all' ? selectedCampaignId : undefined),
         getPipelineStats(selectedJobId),
         getPipelineSettings(selectedJobId),
       ])
@@ -176,14 +194,14 @@ export default function PipelinePage() {
     } finally {
       setLoading(false)
     }
-  }, [selectedJobId])
+  }, [selectedJobId, selectedCampaignId])
 
   useEffect(() => {
     if (selectedJobId) {
       loadPipeline()
       setSelected(new Set())
     }
-  }, [selectedJobId, loadPipeline])
+  }, [selectedJobId, selectedCampaignId, loadPipeline])
 
   // ── Threshold save ─────────────────────────────────────────────────────
 
@@ -227,7 +245,7 @@ export default function PipelinePage() {
     setSelected(next)
   }
 
-  // ── Advance ────────────────────────────────────────────────────────────
+  // ── Move ────────────────────────────────────────────────────────────
 
   const openAdvanceDialog = async (targetStage: Stage, candidateIds: string[]) => {
     if (candidateIds.length === 0) {
@@ -236,7 +254,7 @@ export default function PipelinePage() {
     }
 
     if (targetStage === 'completed') {
-      // No target needed, just advance
+      // No target needed, just move
       setAdvancing(true)
       try {
         const result = await advanceCandidates(selectedJobId, candidateIds, 'completed')
@@ -287,7 +305,7 @@ export default function PipelinePage() {
         advanceDialog.targetStage === 'technical_assessment' ? selectedTargetId : undefined,
         advanceDialog.targetStage === 'voice_screening' ? selectedTargetId : undefined,
       )
-      toast.success(`${result.advanced} candidate(s) advanced`)
+      toast.success(`${result.advanced} candidate(s) moved`)
       setAdvanceDialog({ open: false, targetStage: 'technical_assessment', candidateIds: [] })
       setSelected(new Set())
       loadPipeline()
@@ -439,6 +457,27 @@ export default function PipelinePage() {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Campaign Filter */}
+            {hiringCampaigns.length > 0 && (
+              <>
+                <label className="text-sm font-medium text-slate-700 whitespace-nowrap">Campaign:</label>
+                <Select value={selectedCampaignId} onValueChange={setSelectedCampaignId}>
+                  <SelectTrigger className="max-w-md">
+                    <SelectValue placeholder="All campaigns" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All campaigns</SelectItem>
+                    {hiringCampaigns.map((campaign) => (
+                      <SelectItem key={campaign.id} value={campaign.id}>
+                        {campaign.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+
             {jobs.length === 0 && (
               <p className="text-sm text-slate-400">No jobs found. Create one above or upload a job description in Resume Matching first.</p>
             )}
@@ -740,7 +779,7 @@ export default function PipelinePage() {
         </Card>
       )}
 
-      {/* ── Advance Dialog ────────────────────────────────────────────── */}
+      {/* ── Move Dialog ────────────────────────────────────────────── */}
       <Dialog open={advanceDialog.open} onOpenChange={(o) => !o && setAdvanceDialog({ ...advanceDialog, open: false })}>
         <DialogContent>
           <DialogHeader>
