@@ -46,9 +46,23 @@ class InterviewSummaryService:
         """
         logger.info(f"Generating interview summary for role: {job_role}")
 
+        # Quality gate: check if transcript has enough candidate responses
+        candidate_word_count = self._count_candidate_words(transcript)
+        logger.info(f"Candidate word count: {candidate_word_count}")
+
+        if candidate_word_count < 30:
+            logger.warning(
+                f"⚠️ Insufficient transcript ({candidate_word_count} candidate words). "
+                "Returning insufficient data result to prevent hallucination."
+            )
+            return self._get_insufficient_data_result(candidate_word_count)
+
+        # Clean structured data: strip null/empty values to avoid LLM rationalizing them
+        clean_data = self._clean_structured_data(structured_data)
+
         # Build prompt for LLM
         prompt = self._build_summary_prompt(
-            transcript, structured_data, job_role, technical_requirements
+            transcript, clean_data, job_role, technical_requirements
         )
 
         try:
@@ -90,6 +104,56 @@ class InterviewSummaryService:
             # Return fallback summary
             return self._get_fallback_summary(structured_data)
 
+    def _count_candidate_words(self, transcript: str) -> int:
+        """Count words spoken by the candidate (non-AI lines)."""
+        if not transcript:
+            return 0
+
+        candidate_words = 0
+        for line in transcript.strip().split("\n"):
+            line = line.strip()
+            # Skip AI/assistant lines
+            if line.lower().startswith(("ai:", "assistant:", "bot:", "interviewer:")):
+                continue
+            # Count words from candidate lines (with or without "User:" prefix)
+            if line.lower().startswith(("user:", "candidate:", "human:")):
+                line = line.split(":", 1)[1].strip() if ":" in line else line
+            candidate_words += len(line.split())
+        return candidate_words
+
+    def _clean_structured_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip null/empty values from structured data to prevent LLM rationalization."""
+        if not data:
+            return {}
+        return {
+            k: v for k, v in data.items()
+            if v is not None and v != "" and v != [] and v != {}
+        }
+
+    def _get_insufficient_data_result(self, word_count: int) -> Dict[str, Any]:
+        """Return result for interviews with insufficient candidate responses."""
+        return {
+            "interview_summary": (
+                f"Interview incomplete — candidate provided only {word_count} words. "
+                "Insufficient data to evaluate. Re-interview recommended."
+            ),
+            "key_points": [
+                "⚠️ Interview was too short to assess the candidate",
+                "⚠️ Candidate did not provide substantive responses",
+                "🎯 Re-interview or alternative assessment recommended",
+            ],
+            "technical_assessment": {
+                "skills_mentioned": [],
+                "experience_level": "Unknown",
+                "years_experience": "Unknown",
+                "tech_stack_match_percentage": 0,
+                "strengths": [],
+                "gaps": ["Insufficient data to evaluate"],
+                "recommendation": "No",
+                "hiring_decision_confidence": "Low"
+            }
+        }
+
     def _build_summary_prompt(
         self,
         transcript: str,
@@ -108,13 +172,16 @@ class InterviewSummaryService:
         # Truncate transcript if too long (keep first 3000 chars)
         truncated_transcript = transcript[:3000] + "..." if len(transcript) > 3000 else transcript
 
+        # Build structured data section (only if non-empty)
+        structured_data_section = ""
+        if structured_data:
+            structured_data_section = f"\nEXTRACTED DATA:\n{json.dumps(structured_data, indent=2)}"
+
         return f"""Analyze this technical interview and provide a comprehensive assessment.
 
 INTERVIEW TRANSCRIPT:
 {truncated_transcript}
-
-EXTRACTED DATA:
-{json.dumps(structured_data, indent=2)}
+{structured_data_section}
 {job_context}
 
 Provide your analysis in the following JSON format:
@@ -142,17 +209,19 @@ Provide your analysis in the following JSON format:
   }}
 }}
 
-GUIDELINES:
-1. Be objective and data-driven in your assessment
-2. Use emojis (✅ ⚠️ 🎯 💰 📍) to categorize key points
-3. tech_stack_match_percentage: 0-100 based on job requirements (if provided)
-4. Include 5-7 key_points covering technical skills, soft skills, concerns, and logistics
-5. Be specific about strengths and gaps
-6. Provide clear hiring recommendation with confidence level
+CRITICAL RULES — READ CAREFULLY:
+1. ONLY include information the candidate EXPLICITLY stated in the transcript. Do NOT invent, guess, or infer.
+2. If the candidate did not mention a skill, do NOT put it in skills_mentioned.
+3. If the candidate did not discuss experience, set experience_level to "Unknown" and years_experience to "Unknown".
+4. If the interview was cut short or the candidate gave very few responses, recommendation MUST be "No" or "Pending Review" and hiring_decision_confidence MUST be "Low".
+5. tech_stack_match_percentage must be 0 if no technical skills were discussed.
+6. Be objective and data-driven — every claim must have evidence from the transcript.
+7. Use emojis (✅ ⚠️ 🎯 💰 📍) to categorize key points.
+8. Include 5-7 key_points covering technical skills, soft skills, concerns, and logistics.
 
 IMPORTANT - Field Values:
-- experience_level: Choose ONE value from: "Junior", "Mid", "Senior"
-- recommendation: Choose ONE value from: "Strong Yes", "Yes", "Maybe", "No"
+- experience_level: Choose ONE value from: "Junior", "Mid", "Senior", "Unknown"
+- recommendation: Choose ONE value from: "Strong Yes", "Yes", "Maybe", "No", "Pending Review"
 - hiring_decision_confidence: Choose ONE value from: "High", "Medium", "Low"
 
 Return ONLY the JSON object, no other text."""

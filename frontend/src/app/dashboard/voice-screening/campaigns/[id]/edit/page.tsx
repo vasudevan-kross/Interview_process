@@ -15,9 +15,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { getCampaign, updateCampaign, uploadVapiFile, deleteVapiFile, type Campaign } from '@/lib/api/voice-screening'
-import { ArrowLeft, Loader2, Save, X, Upload, Trash2, FileText, Plus } from 'lucide-react'
+import { Loader2, Save, X, Upload, Trash2, FileText, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
-import Link from 'next/link'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { toast } from 'sonner'
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
@@ -47,6 +47,10 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   const [questionInput, setQuestionInput] = useState('')
   const [fieldInput, setFieldInput] = useState('')
   const [generatedSystemPrompt, setGeneratedSystemPrompt] = useState('')
+  // Scheduling state
+  const [scheduledStartTime, setScheduledStartTime] = useState('')
+  const [scheduledEndTime, setScheduledEndTime] = useState('')
+  const [gracePeriodMinutes, setGracePeriodMinutes] = useState(15)
 
   useEffect(() => {
     loadCampaign()
@@ -71,6 +75,10 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
       setRequiredFields(data.required_fields || [])
       setKnowledgeBaseFileIds(data.knowledge_base_file_ids || [])
       setGeneratedSystemPrompt(data.generated_system_prompt || '')
+      // Scheduling - DateTimePicker expects datetime-local format
+      setScheduledStartTime(data.scheduled_start_time ? new Date(data.scheduled_start_time).toISOString().slice(0, 16) : '')
+      setScheduledEndTime(data.scheduled_end_time ? new Date(data.scheduled_end_time).toISOString().slice(0, 16) : '')
+      setGracePeriodMinutes(data.grace_period_minutes || 15)
     } catch (err: any) {
       console.error('Failed to load campaign:', err)
       toast.error('Failed to load campaign')
@@ -98,6 +106,10 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         candidate_type: candidateType,
         interview_style: interviewStyle,
         custom_questions: customQuestions,
+        // Scheduling
+        scheduled_start_time: scheduledStartTime ? new Date(scheduledStartTime).toISOString() : null,
+        scheduled_end_time: scheduledEndTime ? new Date(scheduledEndTime).toISOString() : null,
+        grace_period_minutes: gracePeriodMinutes,
         required_fields: requiredFields,
         knowledge_base_file_ids: knowledgeBaseFileIds,
         generated_system_prompt: generatedSystemPrompt,
@@ -228,24 +240,19 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   return (
     <div className="container mx-auto py-8 max-w-4xl">
       {/* Header */}
-      <PageHeader
-        title="Edit Campaign"
-        description="Update campaign settings, questions, and knowledge base."
-        action={
-          <div className="flex items-center gap-2">
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-              Save Changes
-            </Button>
-            <Link href={`/dashboard/voice-screening/campaigns/${resolvedParams.id}`}>
-              <Button variant="ghost" size="sm">
-                <ArrowLeft className="h-4 w-4 mr-1" />
-                Back
-              </Button>
-            </Link>
-          </div>
-        }
-      />
+      <div className="mb-6">
+        <PageHeader
+          title="Edit Campaign"
+          description="Update campaign settings, questions, and knowledge base."
+          backHref={`/dashboard/voice-screening/campaigns/${resolvedParams.id}`}
+        />
+        <div className="mt-4 flex justify-end">
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+            Save Changes
+          </Button>
+        </div>
+      </div>
 
       <div className="space-y-6">
         {/* Basic Information */}
@@ -334,6 +341,61 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Scheduling */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Interview Scheduling</CardTitle>
+            <CardDescription>
+              Set time window and grace period for voice interviews (optional)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="scheduled_start_time">Start Time (Optional)</Label>
+                <DateTimePicker
+                  value={scheduledStartTime}
+                  onChange={setScheduledStartTime}
+                  placeholder="Select start date & time"
+                  minDate={new Date()}
+                />
+                <p className="text-xs text-slate-500">
+                  When interviews can begin
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="scheduled_end_time">End Time (Optional)</Label>
+                <DateTimePicker
+                  value={scheduledEndTime}
+                  onChange={setScheduledEndTime}
+                  placeholder="Select end date & time"
+                  minDate={scheduledStartTime ? new Date(scheduledStartTime) : new Date()}
+                />
+                <p className="text-xs text-slate-500">
+                  When interviews must end
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="grace_period_minutes">Grace Period (Minutes)</Label>
+              <Input
+                id="grace_period_minutes"
+                type="number"
+                min="0"
+                max="120"
+                value={gracePeriodMinutes}
+                onChange={(e) => setGracePeriodMinutes(parseInt(e.target.value) || 15)}
+                className="max-w-xs"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Extra time allowed after scheduled end time
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -552,9 +614,12 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-3">
-          <Link href={`/dashboard/voice-screening/campaigns/${resolvedParams.id}`}>
-            <Button variant="outline">Cancel</Button>
-          </Link>
+          <Button
+            variant="outline"
+            onClick={() => router.push(`/dashboard/voice-screening/campaigns/${resolvedParams.id}`)}
+          >
+            Cancel
+          </Button>
           <Button onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
             Save Changes

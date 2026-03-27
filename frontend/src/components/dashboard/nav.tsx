@@ -9,14 +9,14 @@ import { Button } from '@/components/ui/button'
 import { useOrg } from '@/contexts/OrganizationContext'
 
 const navItems = [
+  // {
+  //   title: 'Dashboard',
+  //   href: '/dashboard',
+  //   icon: Home,
+  //   permission: 'pipeline:view',
+  // },
   {
-    title: 'Dashboard',
-    href: '/dashboard',
-    icon: Home,
-    permission: 'pipeline:view',
-  },
-  {
-    title: 'Hiring Campaigns',
+    title: 'Batches',
     href: '/dashboard/campaigns',
     icon: Briefcase,
     permission: 'interview:view',

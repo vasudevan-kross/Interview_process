@@ -69,6 +69,12 @@ class CampaignCreateRequest(BaseModel):
     candidate_type: CandidateType = Field(default=CandidateType.GENERAL, description="Target candidate level")
     interview_style: InterviewStyle = Field(default=InterviewStyle.CONVERSATIONAL, description="Conversation style")
 
+    # Scheduling (similar to coding interviews)
+    scheduled_start_time: Optional[datetime] = Field(None, description="When interviews can start (optional - if not set, available immediately)")
+    scheduled_end_time: Optional[datetime] = Field(None, description="When interviews must end (optional - if not set, no time limit)")
+    grace_period_minutes: int = Field(default=15, ge=0, le=120, description="Grace period after scheduled end time (minutes)")
+    interview_duration_minutes: int = Field(default=15, ge=5, le=60, description="Maximum call duration per candidate (minutes)")
+
     # VAPI knowledge base (file IDs from VAPI file upload)
     knowledge_base_file_ids: List[str] = Field(default_factory=list, description="VAPI file IDs for knowledge base")
 
@@ -98,6 +104,12 @@ class CampaignResponse(BaseModel):
     required_fields: List[str]
     interview_persona: str
     candidate_type: str
+
+    # Scheduling
+    scheduled_start_time: Optional[str] = None
+    scheduled_end_time: Optional[str] = None
+    grace_period_minutes: int = 15
+    interview_duration_minutes: int = 15
     interview_style: str
 
     # AI-generated
@@ -168,8 +180,17 @@ class VoiceCandidateResponse(BaseModel):
     status: str
     latest_call_id: Optional[str] = None
 
+    # Timing
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    time_expired: bool = False
+
     # Notes
     recruiter_notes: Optional[str] = None
+
+    # Scheduling (from campaign)
+    scheduled_start_time: Optional[str] = None
+    scheduled_end_time: Optional[str] = None
 
     # VAPI Configuration (from campaign)
     vapi_config: Optional[Dict[str, Any]] = None

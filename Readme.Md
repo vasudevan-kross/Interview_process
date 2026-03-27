@@ -1,6 +1,6 @@
 # AI-Driven Interview Management Platform
 
-A comprehensive interview management system with AI-powered resume matching, automated test evaluation, and live video interviews.
+A comprehensive interview management system with AI-powered resume matching, automated test evaluation, coding interviews, and voice screening.
 
 ## 🚀 Quick Start
 
@@ -18,6 +18,8 @@ npm run dev
 
 Visit: **http://localhost:3000**
 
+Note: PDF reports are generated using **ReportLab** (no system dependencies required).
+
 ---
 
 ## 📋 Features
@@ -28,10 +30,13 @@ AI-powered resume analysis and job matching with hybrid scoring
 ### 2. Test Evaluation ✍️
 Automated answer sheet processing with OCR and scoring
 
-### 3. Video Interviews 🎥
-Live panel interviews with Daily.co (no credit card required!)
+### 3. Coding Interviews 💻
+Live coding assessments with Monaco editor
 
-### 4. Analytics Dashboard 📊
+### 4. Voice Screening 🎙️
+AI-powered voice interviews with Vapi.ai
+
+### 5. Analytics Dashboard 📊
 Comprehensive metrics and insights
 
 ---
@@ -49,7 +54,6 @@ All documentation has been consolidated into comprehensive guides:
 
 **Backend:** FastAPI, PostgreSQL (Supabase), Ollama, PaddleOCR
 **Frontend:** Next.js 15, React 19, TypeScript, Tailwind CSS
-**Video:** Daily.co
 **Storage:** Supabase Storage
 **AI:** pgvector, Ollama (Mistral/LLaMA)
 
@@ -61,7 +65,6 @@ All documentation has been consolidated into comprehensive guides:
 ```bash
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_KEY=your-service-role-key
-DAILY_API_KEY=your-daily-api-key
 OLLAMA_BASE_URL=http://localhost:11434
 SECRET_KEY=your-secret-key
 ```
@@ -79,16 +82,12 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 - ✅ Resume Matching - COMPLETE
 - ✅ Test Evaluation - COMPLETE
-- ✅ Video Interviews - COMPLETE (Daily.co)
+- ✅ Coding Interviews - COMPLETE
+- ✅ Voice Screening - COMPLETE
 - ✅ Analytics Dashboard - COMPLETE
-- ⏳ AI Transcription - COMING SOON
 
 ---
 
 ## 📖 Learn More
 
 See **[docs/AGENT_CONTEXT.md](docs/AGENT_CONTEXT.md)** for comprehensive documentation on setup, features, troubleshooting, and development.
-
----
-
-**Built with ❤️ using Daily.co for video interviews**

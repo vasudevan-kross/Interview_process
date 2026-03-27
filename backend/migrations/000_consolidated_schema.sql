@@ -1,12 +1,13 @@
 -- ============================================================================
 -- CONSOLIDATED MIGRATION SCHEMA
 -- ============================================================================
--- Description: Complete schema consolidation from migrations 001-041
+-- Description: Complete schema consolidation from migrations 001-042
 -- Date: 2026-03-25
 -- Note: This file represents the final state after all migrations.
 --       Video interview tables (009) excluded per migration 036.
 --       Migrations 038 (batch system) and 039 (remove batch) cancel out - excluded.
 --       Migrations 037 (coding FK fix), 040 (pipeline org_id), 041 (campaigns) included.
+--       Migration 042 fixes candidates summary return type.
 -- ============================================================================
 
 -- ============================================================================
@@ -532,6 +533,12 @@ CREATE TABLE voice_screening_campaigns (
     candidate_type TEXT DEFAULT 'general' CHECK (candidate_type IN ('fresher', 'experienced', 'general')),
     interview_style TEXT DEFAULT 'conversational' CHECK (interview_style IN ('structured', 'adaptive', 'conversational')),
 
+    -- Scheduling (similar to coding interviews)
+    scheduled_start_time TIMESTAMPTZ,
+    scheduled_end_time TIMESTAMPTZ,
+    grace_period_minutes INTEGER DEFAULT 15,
+    interview_duration_minutes INTEGER DEFAULT 15,
+
     -- AI-generated VAPI configuration
     generated_system_prompt TEXT NOT NULL,
     generated_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -567,6 +574,11 @@ CREATE TABLE voice_candidates (
     -- Status tracking
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed')),
     latest_call_id TEXT,
+
+    -- Timing tracking
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    time_expired BOOLEAN DEFAULT FALSE,
 
     -- Notes
     recruiter_notes TEXT
@@ -810,6 +822,7 @@ CREATE INDEX idx_campaigns_job_role ON voice_screening_campaigns(job_role);
 CREATE INDEX idx_voice_screening_campaigns_org ON voice_screening_campaigns(org_id);
 CREATE INDEX idx_voice_campaigns_job ON voice_screening_campaigns(job_id);
 CREATE INDEX idx_voice_campaigns_active ON voice_screening_campaigns(org_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_voice_campaigns_scheduled ON voice_screening_campaigns(scheduled_start_time, scheduled_end_time) WHERE deleted_at IS NULL AND is_active = TRUE;
 
 -- Voice Candidates indexes
 CREATE INDEX idx_candidates_campaign ON voice_candidates(campaign_id);
@@ -1114,7 +1127,7 @@ RETURNS TABLE(
 BEGIN
     RETURN QUERY
     SELECT
-        COALESCE(jd.title, 'No Job Assigned') AS job_title,
+        COALESCE(jd.title::text, 'No Job Assigned') AS job_title,
         COUNT(*) AS total_count,
         COUNT(*) FILTER (WHERE pc.current_stage = 'resume_screening') AS resume_screening_count,
         COUNT(*) FILTER (WHERE pc.current_stage = 'technical_assessment') AS technical_assessment_count,

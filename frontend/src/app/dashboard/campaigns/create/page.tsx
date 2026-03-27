@@ -46,7 +46,7 @@ export default function CreateCampaignPage() {
     e.preventDefault()
 
     if (!formData.name.trim()) {
-      alert('Campaign name is required')
+      alert('Batch name is required')
       return
     }
 
@@ -70,7 +70,7 @@ export default function CreateCampaignPage() {
       router.push(`/dashboard/campaigns/${campaign.id}`)
     } catch (error: any) {
       console.error('Error creating campaign:', error)
-      alert(error.response?.data?.detail || 'Failed to create campaign')
+      alert(error.response?.data?.detail || 'Failed to create batch')
     } finally {
       setLoading(false)
     }
@@ -83,17 +83,17 @@ export default function CreateCampaignPage() {
         className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900 mb-6"
       >
         <ArrowLeft className="w-4 h-4 mr-1" />
-        Back to Campaigns
+        Back to Batches
       </Link>
 
       <div className="bg-white border border-slate-200 rounded-lg p-8">
-        <h1 className="text-2xl font-semibold text-slate-900 mb-6">Create New Campaign</h1>
+        <h1 className="text-2xl font-semibold text-slate-900 mb-6">Create New Batch</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Campaign Name */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
-              Campaign Name <span className="text-red-500">*</span>
+              Batch Name <span className="text-red-500">*</span>
             </label>
             <Input
               type="text"
@@ -110,7 +110,7 @@ export default function CreateCampaignPage() {
               Description
             </label>
             <Textarea
-              placeholder="Brief description of this hiring campaign..."
+              placeholder="Brief description of this batch..."
               rows={3}
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -209,7 +209,7 @@ export default function CreateCampaignPage() {
               disabled={loading}
               className="bg-indigo-600 hover:bg-indigo-700"
             >
-              {loading ? 'Creating...' : 'Create Campaign'}
+              {loading ? 'Creating...' : 'Create Batch'}
             </Button>
           </div>
         </form>

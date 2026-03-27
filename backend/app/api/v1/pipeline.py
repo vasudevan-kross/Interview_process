@@ -5,10 +5,13 @@ from typing import Optional
 from io import BytesIO
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_org_context, OrgContext
 from app.auth.permissions import require_permission
 from app.services.pipeline_service import get_pipeline_service
+from app.services.candidate_statistics_service import get_candidate_statistics_service
+from app.services.report_renderer import build_candidate_pdf
 from app.utils.csv_field_mapper import CSVFieldMapper
 
 logger = logging.getLogger(__name__)
@@ -89,6 +92,64 @@ async def delete_pipeline_candidate(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
     return {"deleted": True}
+
+
+@router.get("/candidates/{candidate_id}/statistics")
+async def get_candidate_statistics(
+    candidate_id: str,
+    ctx: OrgContext = Depends(require_permission("pipeline:view")),
+    stats_service=Depends(get_candidate_statistics_service),
+):
+    """Get comprehensive statistics and analytics for a candidate."""
+    try:
+        stats = stats_service.get_candidate_statistics(
+            candidate_id=candidate_id,
+            org_id=ctx.org_id,
+            user_id=ctx.user_id
+        )
+        return stats
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to get candidate statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/candidates/{candidate_id}/report")
+async def download_candidate_report(
+    candidate_id: str,
+    ctx: OrgContext = Depends(require_permission("pipeline:view")),
+    stats_service=Depends(get_candidate_statistics_service),
+):
+    """Download comprehensive PDF report for a candidate."""
+    try:
+        # Get statistics
+        stats = stats_service.get_candidate_statistics(
+            candidate_id=candidate_id,
+            org_id=ctx.org_id,
+            user_id=ctx.user_id
+        )
+
+        # Generate PDF
+        pdf_bytes = build_candidate_pdf(stats)
+
+        # Prepare filename
+        candidate_name = stats.get("candidate", {}).get("name", "Candidate").replace(" ", "_")
+        filename = f"candidate_report_{candidate_name}_{candidate_id[:8]}.pdf"
+
+        # Return as downloadable file
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate candidate report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Dynamic routes (/{job_id}/*) ──────────────────────────────────────────

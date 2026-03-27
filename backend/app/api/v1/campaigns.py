@@ -1,12 +1,14 @@
+# pyright: ignore
 """
 API routes for Hiring Campaigns
 """
 
 import logging
 import io
-from typing import Optional, List
+import csv
+from typing import Optional, List, Any, Dict, cast
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas.campaigns import (
     CampaignCreate,
@@ -26,6 +28,7 @@ from app.schemas.campaigns import (
 from app.auth.dependencies import OrgContext
 from app.auth.permissions import require_permission
 from app.services.campaign_service import get_campaign_service
+from app.services.report_renderer import build_campaign_pdf, build_candidate_pdf
 from app.db.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -202,6 +205,224 @@ async def get_campaign_analytics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _build_campaign_csv(report: dict) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Candidate Name",
+            "Candidate Email",
+            "Job Title",
+            "Stage",
+            "Recommendation",
+            "Decision",
+            "Resume Score",
+            "Coding Score",
+            "Voice Status",
+            "Slot",
+            "Created At",
+            "Decided At",
+        ]
+    )
+    for row in report.get("candidates", []):
+        writer.writerow(
+            [
+                row.get("candidate_name", ""),
+                row.get("candidate_email", ""),
+                row.get("job_title", ""),
+                row.get("current_stage", ""),
+                row.get("recommendation", ""),
+                row.get("final_decision", ""),
+                row.get("resume_match_score", ""),
+                row.get("coding_score", ""),
+                row.get("voice_status", ""),
+                row.get("slot_name", ""),
+                row.get("created_at", ""),
+                row.get("decided_at", ""),
+            ]
+        )
+    return output.getvalue()
+
+
+def _build_candidate_csv(report: dict) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Name",
+            "Email",
+            "Job Title",
+            "Stage",
+            "Recommendation",
+            "Decision",
+            "Resume Score",
+            "Coding Score",
+            "Voice Status",
+            "Slot",
+            "Decision Notes",
+            "Resume Summary",
+            "Coding Summary",
+            "Voice Summary",
+        ]
+    )
+    candidate = report.get("candidate", {})
+    resume = report.get("resume") or {}
+    coding = report.get("coding") or {}
+    voice = report.get("voice") or {}
+    writer.writerow(
+        [
+            candidate.get("name", ""),
+            candidate.get("email", ""),
+            candidate.get("job_title", ""),
+            candidate.get("current_stage", ""),
+            candidate.get("recommendation", ""),
+            candidate.get("final_decision", ""),
+            candidate.get("resume_match_score", ""),
+            candidate.get("coding_score", ""),
+            candidate.get("voice_status", ""),
+            candidate.get("slot_name", ""),
+            candidate.get("decision_notes", ""),
+            resume.get("summary", ""),
+            coding.get("summary", ""),
+            voice.get("summary", ""),
+        ]
+    )
+    return output.getvalue()
+
+
+@router.get("/{campaign_id}/report", summary="Get campaign report")
+async def get_campaign_report(
+    campaign_id: str, ctx: OrgContext = Depends(require_permission("interview:view"))
+):
+    try:
+        service = get_campaign_service()
+        report = service.get_campaign_report(campaign_id, ctx.org_id)
+        return report
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching campaign report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate report")
+
+
+@router.get("/{campaign_id}/export.csv", summary="Export campaign report CSV")
+async def export_campaign_csv(
+    campaign_id: str, ctx: OrgContext = Depends(require_permission("interview:view"))
+):
+    try:
+        service = get_campaign_service()
+        report = service.get_campaign_report(campaign_id, ctx.org_id)
+        csv_data = _build_campaign_csv(report)
+        return StreamingResponse(
+            io.BytesIO(csv_data.encode("utf-8")),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=campaign_{campaign_id}.csv"
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error exporting campaign CSV: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export CSV")
+
+
+@router.get("/{campaign_id}/export.pdf", summary="Export campaign report PDF")
+async def export_campaign_pdf(
+    campaign_id: str, ctx: OrgContext = Depends(require_permission("interview:view"))
+):
+    try:
+        service = get_campaign_service()
+        report = service.get_campaign_report(campaign_id, ctx.org_id)
+        pdf_data = build_campaign_pdf(report)
+        return StreamingResponse(
+            io.BytesIO(pdf_data),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=campaign_{campaign_id}.pdf"
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error exporting campaign PDF: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export PDF")
+
+
+@router.get(
+    "/{campaign_id}/candidates/{candidate_id}/report",
+    summary="Get candidate report",
+)
+async def get_candidate_report(
+    campaign_id: str,
+    candidate_id: str,
+    ctx: OrgContext = Depends(require_permission("interview:view")),
+):
+    try:
+        service = get_campaign_service()
+        report = service.get_candidate_report(campaign_id, candidate_id, ctx.org_id)
+        return report
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching candidate report: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate report")
+
+
+@router.get(
+    "/{campaign_id}/candidates/{candidate_id}/export.csv",
+    summary="Export candidate report CSV",
+)
+async def export_candidate_csv(
+    campaign_id: str,
+    candidate_id: str,
+    ctx: OrgContext = Depends(require_permission("interview:view")),
+):
+    try:
+        service = get_campaign_service()
+        report = service.get_candidate_report(campaign_id, candidate_id, ctx.org_id)
+        csv_data = _build_candidate_csv(report)
+        return StreamingResponse(
+            io.BytesIO(csv_data.encode("utf-8")),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=candidate_{candidate_id}.csv"
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error exporting candidate CSV: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export CSV")
+
+
+@router.get(
+    "/{campaign_id}/candidates/{candidate_id}/export.pdf",
+    summary="Export candidate report PDF",
+)
+async def export_candidate_pdf(
+    campaign_id: str,
+    candidate_id: str,
+    ctx: OrgContext = Depends(require_permission("interview:view")),
+):
+    try:
+        service = get_campaign_service()
+        report = service.get_candidate_report(campaign_id, candidate_id, ctx.org_id)
+        pdf_data = build_candidate_pdf(report)
+        return StreamingResponse(
+            io.BytesIO(pdf_data),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=candidate_{candidate_id}.pdf"
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error exporting candidate PDF: {e}")
+        raise HTTPException(status_code=500, detail="Failed to export PDF")
+
+
 # ============================================================================
 # Campaign Candidates Endpoints
 # ============================================================================
@@ -234,6 +455,10 @@ async def get_campaign_candidates(
             stage=stage,
             limit=limit,
             offset=offset,
+        )
+
+        candidates = cast(
+            List[Dict[str, Any]], [c for c in candidates if isinstance(c, dict)]
         )
 
         return candidates
@@ -309,6 +534,11 @@ async def preview_candidate_import(
         service = get_campaign_service()
         supabase = get_supabase()
 
+        def _cell_to_str(value: object) -> Optional[str]:
+            if value is None:
+                return None
+            return str(value).strip()
+
         # Verify campaign belongs to org
         campaign = service.get_campaign(campaign_id, ctx.org_id)
 
@@ -318,6 +548,8 @@ async def preview_candidate_import(
         contents = await file.read()
         workbook = openpyxl.load_workbook(io.BytesIO(contents))
         sheet = workbook.active
+        if not sheet:
+            raise ValueError("Invalid Excel file")
 
         # Parse header row
         headers = [cell.value for cell in sheet[1]]
@@ -359,13 +591,13 @@ async def preview_candidate_import(
         ):
             try:
                 email = (
-                    row[col_map["email"]].strip()
-                    if "email" in col_map and row[col_map["email"]]
+                    _cell_to_str(row[col_map["email"]])
+                    if "email" in col_map and row[col_map["email"]] is not None
                     else None
                 )
                 name = (
-                    row[col_map["name"]].strip()
-                    if "name" in col_map and row[col_map["name"]]
+                    _cell_to_str(row[col_map["name"]])
+                    if "name" in col_map and row[col_map["name"]] is not None
                     else None
                 )
 
@@ -376,17 +608,17 @@ async def preview_candidate_import(
                 candidate = {
                     "email": email,
                     "name": name,
-                    "phone": row[col_map["phone"]].strip()
-                    if "phone" in col_map and row[col_map["phone"]]
+                    "phone": _cell_to_str(row[col_map["phone"]])
+                    if "phone" in col_map and row[col_map["phone"]] is not None
                     else None,
-                    "job_role": row[col_map["job_role"]].strip()
-                    if "job_role" in col_map and row[col_map["job_role"]]
+                    "job_role": _cell_to_str(row[col_map["job_role"]])
+                    if "job_role" in col_map and row[col_map["job_role"]] is not None
                     else None,
-                    "slot": row[col_map["slot"]].strip()
-                    if "slot" in col_map and row[col_map["slot"]]
+                    "slot": _cell_to_str(row[col_map["slot"]])
+                    if "slot" in col_map and row[col_map["slot"]] is not None
                     else None,
-                    "notes": row[col_map["notes"]].strip()
-                    if "notes" in col_map and row[col_map["notes"]]
+                    "notes": _cell_to_str(row[col_map["notes"]])
+                    if "notes" in col_map and row[col_map["notes"]] is not None
                     else None,
                 }
 
@@ -402,25 +634,33 @@ async def preview_candidate_import(
             .eq("org_id", ctx.org_id)
             .execute()
         )
-        available_jobs = {job["title"]: job["id"] for job in (job_results.data or [])}
+        jobs_data = job_results.data if isinstance(job_results.data, list) else []
+        available_jobs: dict[str, Any] = {}
+        for job in jobs_data:
+            if not isinstance(job, dict):
+                continue
+            title = job.get("title")
+            job_id = job.get("id")
+            if title:
+                available_jobs[str(title)] = job_id
 
         # Auto-map job roles to job descriptions
         job_mappings = {}
         for candidate in candidates:
-            if candidate["job_role"] and candidate["job_role"] not in job_mappings:
+            job_role = candidate.get("job_role")
+            if isinstance(job_role, str) and job_role and job_role not in job_mappings:
                 # Try exact match first
-                if candidate["job_role"] in available_jobs:
-                    job_mappings[candidate["job_role"]] = available_jobs[
-                        candidate["job_role"]
-                    ]
+                if job_role in available_jobs:
+                    job_mappings[job_role] = available_jobs[job_role]
                 else:
                     # Try case-insensitive partial match
+                    job_role_lower = job_role.lower()
                     for job_title, job_id in available_jobs.items():
-                        if candidate["job_role"].lower() in job_title.lower():
-                            job_mappings[candidate["job_role"]] = job_id
+                        if job_role_lower in job_title.lower():
+                            job_mappings[job_role] = job_id
                             break
-                    if candidate["job_role"] not in job_mappings:
-                        job_mappings[candidate["job_role"]] = None  # Unmapped
+                    if job_role not in job_mappings:
+                        job_mappings[job_role] = None  # Unmapped
 
         # Get campaign slots for mapping
         campaign_metadata = campaign.get("metadata", {})
@@ -486,8 +726,9 @@ async def import_candidates(
         for candidate_row in import_request.candidates:
             try:
                 # Get mapped job_id
-                job_id = import_request.job_mappings.get(candidate_row.job_role)
-                if not job_id:
+                job_role_key = candidate_row.job_role or ""
+                job_id = import_request.job_mappings.get(job_role_key)
+                if not job_role_key or not job_id:
                     errors.append(
                         f"{candidate_row.email}: No job description mapped for '{candidate_row.job_role}'"
                     )
@@ -587,7 +828,9 @@ async def get_campaign_pipeline_board(
             }
 
             for c in candidates:
-                stage = c.get("current_stage", "resume_screening")
+                if not isinstance(c, dict):
+                    continue
+                stage = str(c.get("current_stage") or "resume_screening")
                 if stage in board:
                     board[stage].append(c)
 
@@ -629,20 +872,30 @@ async def advance_campaign_candidates(
             .eq("id", data["candidate_ids"][0])
             .execute()
         )
+        first_candidate_data = (
+            first_candidate.data if isinstance(first_candidate.data, list) else []
+        )
 
-        if not first_candidate.data:
+        if not first_candidate_data:
             raise ValueError("Candidate not found")
 
-        job_id = first_candidate.data[0]["job_id"]
+        job_id = (
+            first_candidate_data[0].get("job_id")
+            if isinstance(first_candidate_data[0], dict)
+            else None
+        )
+        if not job_id:
+            raise ValueError("Candidate missing job_id")
+        job_id_str = str(job_id)
 
         # Advance candidates
         result = pipeline_service.advance_candidates(
-            job_id=job_id,
+            job_id=job_id_str,
             candidate_ids=data["candidate_ids"],
             target_stage=data["target_stage"],
             user_id=ctx.user_id,
             interview_id=data.get("interview_id"),
-            campaign_id=campaign_id,
+            campaign_id=data.get("voice_campaign_id"),
             org_id=ctx.org_id,
         )
 

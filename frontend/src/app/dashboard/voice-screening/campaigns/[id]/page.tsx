@@ -8,11 +8,11 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { getCampaign, regenerateCampaignPrompt, deleteCampaign, deleteCandidate, updateCandidate, getCallHistory, getCandidateByToken, startCall, Campaign, type VoiceCandidate, type VoiceCandidatePublic, type CallHistory } from '@/lib/api/voice-screening'
+import { getCampaign, regenerateCampaignPrompt, deleteCampaign, deleteCandidate, updateCandidate, getCallHistory, getCandidateByToken, startCall, reEvaluateInterview, Campaign, type VoiceCandidate, type VoiceCandidatePublic, type CallHistory } from '@/lib/api/voice-screening'
 import { ArrowLeft, RefreshCw, Loader2, Copy, Check, Plus, Users, Eye, Download, Phone as PhoneIcon, Edit, Trash2, Mic, MicOff } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
 import Link from 'next/link'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistanceToNow, format } from 'date-fns'
 import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
 import Vapi from '@vapi-ai/web'
@@ -43,6 +43,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
   const [selectedCandidate, setSelectedCandidate] = useState<VoiceCandidate | null>(null)
   const [callHistory, setCallHistory] = useState<CallHistory[]>([])
   const [loadingCallHistory, setLoadingCallHistory] = useState(false)
+  const [selectedCallIndex, setSelectedCallIndex] = useState(0)
 
   // Regenerate confirmation dialog
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false)
@@ -62,11 +63,31 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
   const [deleteCandidateDialogOpen, setDeleteCandidateDialogOpen] = useState(false)
   const [candidateToDelete, setCandidateToDelete] = useState<string | null>(null)
 
+  // Re-evaluate state
+  const [reEvaluating, setReEvaluating] = useState(false)
+
   // Edit candidate modal
   const [showEditModal, setShowEditModal] = useState(false)
   const [editCandidate, setEditCandidate] = useState<VoiceCandidate | null>(null)
   const [editForm, setEditForm] = useState({ name: '', email: '', phone: '' })
   const [editLoading, setEditLoading] = useState(false)
+
+  // Re-evaluate interview
+  const handleReEvaluate = async (callHistoryId: string) => {
+    try {
+      setReEvaluating(true)
+      toast.loading('Re-generating AI summary...', { id: 'reeval' })
+      const updatedCall = await reEvaluateInterview(callHistoryId)
+      setCallHistory(prev =>
+        prev.map(call => call.id === callHistoryId ? updatedCall : call)
+      )
+      toast.success('AI summary regenerated successfully!', { id: 'reeval' })
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to regenerate summary', { id: 'reeval' })
+    } finally {
+      setReEvaluating(false)
+    }
+  }
 
   useEffect(() => {
     loadCampaign()
@@ -406,6 +427,7 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
       <PageHeader
         title={campaign.name}
         description={campaign.job_role}
+        backHref="/dashboard/voice-screening/campaigns"
         action={
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => setShowAddModal(true)}>
@@ -435,12 +457,6 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
               {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
               Delete
             </Button>
-            <Link href="/dashboard/voice-screening/campaigns">
-              <Button variant="ghost" size="sm">
-                <ArrowLeft className="h-4 w-4 mr-1" />
-                Back
-              </Button>
-            </Link>
           </div>
         }
       />
@@ -485,6 +501,141 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
             </div>
           </CardContent>
         </Card>
+
+        {/* Interview Scheduling */}
+        {(campaign.scheduled_start_time || campaign.scheduled_end_time || campaign.grace_period_minutes) && (
+          <Card className="border-indigo-200 bg-indigo-50/30">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <svg className="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Interview Scheduling
+              </CardTitle>
+              <CardDescription>Time window and grace period for voice interviews</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="bg-white rounded-lg p-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {campaign.scheduled_start_time && (
+                    <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                      <p className="text-xs font-medium text-indigo-600 uppercase tracking-wide mb-1">
+                        Start Time
+                      </p>
+                      <p className="text-sm font-semibold text-indigo-900">
+                        {format(new Date(campaign.scheduled_start_time), 'MMM dd, yyyy')}
+                      </p>
+                      <p className="text-sm text-indigo-700">
+                        {format(new Date(campaign.scheduled_start_time), 'hh:mm a')}
+                      </p>
+                    </div>
+                  )}
+
+                  {campaign.scheduled_end_time && (
+                    <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                      <p className="text-xs font-medium text-indigo-600 uppercase tracking-wide mb-1">
+                        End Time
+                      </p>
+                      <p className="text-sm font-semibold text-indigo-900">
+                        {format(new Date(campaign.scheduled_end_time), 'MMM dd, yyyy')}
+                      </p>
+                      <p className="text-sm text-indigo-700">
+                        {format(new Date(campaign.scheduled_end_time), 'hh:mm a')}
+                      </p>
+                    </div>
+                  )}
+
+                  {campaign.grace_period_minutes !== undefined && campaign.grace_period_minutes !== null && (
+                    <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                      <p className="text-xs font-medium text-indigo-600 uppercase tracking-wide mb-1">
+                        Grace Period
+                      </p>
+                      <p className="text-2xl font-semibold text-indigo-900 tabular-nums">
+                        {campaign.grace_period_minutes}
+                      </p>
+                      <p className="text-sm text-indigo-700">
+                        minutes
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+
+                {/* Total Duration Display */}
+                {campaign.scheduled_start_time && campaign.scheduled_end_time && (
+                  <div className="mt-4 p-4 bg-gradient-to-r from-indigo-100 to-purple-100 rounded-lg border border-indigo-300">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-indigo-700 uppercase tracking-wide mb-1">
+                          Total Interview Window
+                        </p>
+                        <p className="text-lg font-bold text-indigo-900">
+                          {(() => {
+                            const start = new Date(campaign.scheduled_start_time)
+                            const end = new Date(campaign.scheduled_end_time)
+                            const diffMs = end.getTime() - start.getTime()
+                            const diffMins = Math.floor(diffMs / (1000 * 60))
+                            const hours = Math.floor(diffMins / 60)
+                            const minutes = diffMins % 60
+                            const days = Math.floor(hours / 24)
+                            const remainingHours = hours % 24
+
+                            if (days > 0) {
+                              return `${days} day${days > 1 ? 's' : ''} ${remainingHours}h ${minutes}m`
+                            } else if (hours > 0) {
+                              return `${hours}h ${minutes}m`
+                            } else {
+                              return `${minutes} minutes`
+                            }
+                          })()}
+                        </p>
+                      </div>
+                      {campaign.grace_period_minutes !== undefined && campaign.grace_period_minutes > 0 && (
+                        <div className="text-right">
+                          <p className="text-xs font-medium text-purple-700 uppercase tracking-wide mb-1">
+                            + Grace Period
+                          </p>
+                          <p className="text-lg font-bold text-purple-900">
+                            {campaign.grace_period_minutes}m
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-indigo-200">
+                      <p className="text-xs text-indigo-700">
+                        <strong>Total Time Available:</strong> {(() => {
+                          const start = new Date(campaign.scheduled_start_time)
+                          const end = new Date(campaign.scheduled_end_time)
+                          const diffMs = end.getTime() - start.getTime()
+                          const totalMins = Math.floor(diffMs / (1000 * 60)) + (campaign.grace_period_minutes || 0)
+                          const hours = Math.floor(totalMins / 60)
+                          const minutes = totalMins % 60
+                          const days = Math.floor(hours / 24)
+                          const remainingHours = hours % 24
+
+                          if (days > 0) {
+                            return `${days} day${days > 1 ? 's' : ''} ${remainingHours}h ${minutes}m`
+                          } else if (hours > 0) {
+                            return `${hours}h ${minutes}m`
+                          } else {
+                            return `${minutes} minutes`
+                          }
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {(!campaign.scheduled_start_time && !campaign.scheduled_end_time) && (
+                  <div className="mt-4 p-3 bg-indigo-100 rounded-lg border border-indigo-200">
+                    <p className="text-xs text-indigo-800">
+                      <strong>Note:</strong> No time restrictions set. Interviews can be taken anytime.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Generated System Prompt */}
         <Card>
@@ -888,8 +1039,57 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                 </div>
               ) : (
                 <>
-                  {callHistory.map((call) => (
-                    <div key={call.id} className="space-y-4 border-b pb-6 last:border-b-0">
+                  {/* Call Tabs */}
+                  {callHistory.length > 1 && (
+                    <div className="flex gap-2 border-b pb-2 overflow-x-auto">
+                      {callHistory.map((call, index) => (
+                        <button
+                          key={call.id}
+                          onClick={() => setSelectedCallIndex(index)}
+                          className={`px-4 py-2 font-medium text-sm whitespace-nowrap rounded-t transition-colors ${
+                            selectedCallIndex === index
+                              ? 'bg-teal-50 text-teal-700 border-b-2 border-teal-600'
+                              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {index === 0 ? 'Latest Interview' : `Call ${callHistory.length - index}`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Selected Call Content */}
+                  {(() => {
+                    const call = callHistory[selectedCallIndex]
+                    if (!call) return null
+
+                    return (
+                    <div className="space-y-4">
+                      {/* Re-evaluate Button */}
+                      {call.transcript && (
+                        <div className="flex justify-end">
+                          <Button
+                            onClick={() => handleReEvaluate(call.id)}
+                            disabled={reEvaluating}
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                          >
+                            {reEvaluating ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Regenerating...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="h-4 w-4" />
+                                Re-evaluate Interview
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      )}
+
                       {/* Recording Player */}
                       {call.recording_url && (
                         <div>
@@ -1042,7 +1242,8 @@ export default function CampaignDetailsPage({ params }: { params: Promise<{ id: 
                         </div>
                       )}
                     </div>
-                  ))}
+                    )
+                  })()}
                 </>
               )}
             </CardContent>

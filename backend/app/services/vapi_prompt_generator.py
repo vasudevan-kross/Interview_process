@@ -24,7 +24,7 @@ class VAPIPromptGenerator:
     def __init__(self):
         self.settings = get_settings()
         self.model = "qwen2.5:7b"  # Upgraded for better prompt quality
-        self.temperature = 0.7  # Balanced creativity for prompt generation
+        self.temperature = 0.3  # Reduced for more consistent behavior (was 0.7)
         self.base_url = self.settings.OLLAMA_BASE_URL
 
     async def generate_system_prompt(
@@ -80,7 +80,7 @@ class VAPIPromptGenerator:
                     {"role": "user", "content": user_prompt_for_llm}
                 ],
                 options={
-                    "temperature": self.temperature,
+                    "temperature": 0.3,  # Reduced from 0.7 for more consistent behavior
                     "seed": 42,
                     "num_predict": 2000  # Allow longer responses for detailed prompts
                 }
@@ -136,7 +136,22 @@ VAPI SYSTEM PROMPT REQUIREMENTS:
 5. **Clarification Handling:** Instructions for what to do when candidates are unclear
 6. **Data Extraction:** Specific fields to extract and how to ask for them
 7. **Graceful Closings:** Thank candidates and explain next steps
-8. **IMPORTANT FOR FRESHERS:** If the candidate type is "fresher", the system prompt MUST:
+8. **CRITICAL - Strict Turn-Taking Rules (MANDATORY):**
+   The generated prompt MUST include this exact behavior block word-for-word:
+
+   "TURN-TAKING RULES (FOLLOW STRICTLY):
+   - After asking a question, WAIT SILENTLY for the candidate to answer
+   - FILLER WORDS ARE NOT ANSWERS: If candidate says only 'ah', 'uh', 'um', 'hmm', 'one second', 'let me think' - STAY SILENT and keep waiting
+   - INCOMPLETE ANSWERS: If the answer seems incomplete or candidate trails off, say: 'Take your time' or 'Please continue when you're ready'
+   - ONLY move to next question after:
+     * A complete, substantive answer (2+ sentences), OR
+     * Candidate explicitly says 'skip', 'pass', 'I don't know', 'next question', OR
+     * Candidate says 'I'm done' or 'that's all'
+   - NEVER rush to the next question just because there's a pause
+   - Pauses of 3-5 seconds while thinking are NORMAL and EXPECTED
+   - If unsure whether candidate is done, ask: 'Is there anything else you'd like to add?'"
+
+9. **IMPORTANT FOR FRESHERS:** If the candidate type is "fresher", the system prompt MUST:
    - Start with self-introduction questions (name, college, degree, graduation year)
    - Ask "Which programming language or framework are you most comfortable with?"
    - Based on their answer, ask BASIC FUNDAMENTAL questions about that specific technology
@@ -309,6 +324,17 @@ REQUIREMENTS FOR THE SYSTEM PROMPT:
 
 10. **NEVER answer your own questions** - wait for the candidate to respond
 
+11. **CRITICAL - Include Exact Turn-Taking Block:**
+    The generated system prompt MUST include this turn-taking instruction block word-for-word:
+
+    "TURN-TAKING RULES (FOLLOW STRICTLY):
+    - After asking a question, WAIT SILENTLY for the candidate to answer
+    - FILLER WORDS ARE NOT ANSWERS: 'ah', 'uh', 'um', 'hmm', 'one second' = keep waiting
+    - INCOMPLETE ANSWERS: If answer seems partial, say 'Take your time' or 'Please continue'
+    - ONLY move to next question after complete answer OR explicit skip/pass
+    - Pauses of 3-5 seconds while thinking are NORMAL
+    - If unsure, ask: 'Is there anything else you'd like to add?'"
+
 IMPORTANT FOR FRESHERS:
 - If candidate says "Java": Ask about OOPs concepts (what is encapsulation? inheritance? polymorphism? abstraction?), data types, basic syntax
 - If candidate says "Python": Ask about data types, functions, OOP basics, difference between list and tuple
@@ -381,17 +407,30 @@ Generate the complete configuration now. Return ONLY the JSON object."""
 
         system_prompt = f"""You are a technical interviewer conducting a phone interview for the {job_role} position. Your role is to ask questions to the candidate and evaluate their responses. You are NOT the candidate. The person on the phone is the candidate who will answer your questions.
 
+TURN-TAKING RULES (FOLLOW STRICTLY):
+- After asking a question, WAIT SILENTLY for the candidate to answer
+- FILLER WORDS ARE NOT ANSWERS: If candidate says only 'ah', 'uh', 'um', 'hmm', 'one second', 'let me think' - STAY SILENT and keep waiting
+- INCOMPLETE ANSWERS: If the answer seems incomplete or candidate trails off, say: 'Take your time' or 'Please continue when you're ready'
+- ONLY move to next question after:
+  * A complete, substantive answer (2+ sentences), OR
+  * Candidate explicitly says 'skip', 'pass', 'I don't know', 'next question', OR
+  * Candidate says 'I'm done' or 'that's all'
+- NEVER rush to the next question just because there's a pause
+- Pauses of 3-5 seconds while thinking are NORMAL and EXPECTED
+- If unsure whether candidate is done, ask: 'Is there anything else you'd like to add?'
+
 Your task is to:
 1. Greet the candidate warmly: "Hello! Thank you for taking the time to interview with us today."
 2. Ask questions to gather the required information
-3. Listen carefully to the candidate's answers
-4. Ask for clarification if needed
-5. NEVER answer your own questions - always wait for the candidate to respond
-6. Thank the candidate at the end
+3. WAIT PATIENTLY after each question - follow the turn-taking rules above
+4. Listen carefully to the candidate's answers
+5. Ask for clarification if needed, but do NOT rush
+6. NEVER answer your own questions - always wait for the candidate to respond
+7. Thank the candidate at the end
 
 Required information to collect: {', '.join(required_fields)}
 
-Remember: You are the INTERVIEWER asking questions. The candidate is the person answering. Be professional, conversational, and friendly throughout the interview."""
+Remember: You are the INTERVIEWER asking questions. The candidate is the person answering. Be professional, conversational, friendly, and PATIENT throughout the interview."""
 
         return {
             "system_prompt": system_prompt,

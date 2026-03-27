@@ -32,6 +32,12 @@ export interface Campaign {
     candidate_type: 'fresher' | 'experienced' | 'general'
     interview_style: 'structured' | 'adaptive' | 'conversational'
 
+    // Scheduling
+    scheduled_start_time?: string
+    scheduled_end_time?: string
+    grace_period_minutes?: number
+    interview_duration_minutes?: number
+
     // AI-generated
     generated_system_prompt: string
     generated_schema: Record<string, any>
@@ -97,6 +103,8 @@ export interface VoiceCandidatePublic {
     status: string
     campaign_id?: string
     vapi_config?: any
+    scheduled_start_time?: string
+    scheduled_end_time?: string
 }
 
 // Call History Types

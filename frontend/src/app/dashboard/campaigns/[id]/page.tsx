@@ -18,6 +18,9 @@ import {
   Plus,
   Trash2,
   ChevronRight,
+  Download,
+  FileText,
+  Filter,
   CheckCircle2,
   XCircle,
   Clock,
@@ -125,6 +128,11 @@ export default function CampaignDetailPage() {
   const [showDecisionDialog, setShowDecisionDialog] = useState(false)
   const [decisionCandidate, setDecisionCandidate] = useState<Candidate | null>(null)
   const [decisionForm, setDecisionForm] = useState({ decision: 'pending', notes: '' })
+  const [showFilters, setShowFilters] = useState(false)
+
+  const [candidateReport, setCandidateReport] = useState<any>(null)
+  const [candidateReportLoading, setCandidateReportLoading] = useState(false)
+  const [showCandidateReportDialog, setShowCandidateReportDialog] = useState(false)
 
   // Move dialog
   const [showAdvanceDialog, setShowAdvanceDialog] = useState(false)
@@ -543,6 +551,62 @@ export default function CampaignDetailPage() {
     }
   }
 
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.URL.revokeObjectURL(url)
+  }
+
+
+  const openCandidateReport = async (candidate: Candidate) => {
+    try {
+      setCandidateReportLoading(true)
+      setShowCandidateReportDialog(true)
+      const report = await apiClient.getCandidateReport(campaignId, candidate.id)
+      setCandidateReport(report)
+    } catch (error: any) {
+      console.error('Error loading candidate report:', error)
+      toast.error('Failed to load candidate report')
+      setShowCandidateReportDialog(false)
+    } finally {
+      setCandidateReportLoading(false)
+    }
+  }
+
+  const handleDownloadCandidateCsv = async () => {
+    if (!candidateReport?.candidate?.id) return
+    try {
+      const blob = await apiClient.downloadCandidateReportCsv(
+        campaignId,
+        candidateReport.candidate.id
+      )
+      downloadBlob(blob, `candidate_${candidateReport.candidate.id}.csv`)
+    } catch (error: any) {
+      console.error('Error downloading candidate CSV:', error)
+      toast.error('Failed to download CSV')
+    }
+  }
+
+  const handleDownloadCandidatePdf = async () => {
+    if (!candidateReport?.candidate?.id) return
+    try {
+      const blob = await apiClient.downloadCandidateReportPdf(
+        campaignId,
+        candidateReport.candidate.id
+      )
+      downloadBlob(blob, `candidate_${candidateReport.candidate.id}.pdf`)
+    } catch (error: any) {
+      console.error('Error downloading candidate PDF:', error)
+      toast.error('Failed to download PDF')
+    }
+  }
+
   const openDeleteCampaignDialog = () => {
     setShowDeleteCampaignDialog(true)
   }
@@ -691,7 +755,7 @@ export default function CampaignDetailPage() {
           className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900 mb-4"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
-          Back to Campaigns
+          Back to Batches
         </Link>
 
         <div className="flex justify-between items-start">
@@ -702,6 +766,12 @@ export default function CampaignDetailPage() {
             )}
           </div>
           <div className="flex gap-2">
+            <Link href={`/dashboard/campaigns/${campaignId}/report`}>
+              <Button variant="outline" size="sm">
+                <FileText className="w-4 h-4 mr-2" />
+                Report
+              </Button>
+            </Link>
             <Button variant="outline" size="sm" onClick={openSettingsDialog}>
               <Settings className="w-4 h-4 mr-2" />
               Settings
@@ -775,101 +845,111 @@ export default function CampaignDetailPage() {
 
       {/* Filters */}
       {(jobs.length > 0 || (campaign?.metadata?.slots && campaign.metadata.slots.length > 0)) && (
-        <div className="mb-6 bg-white border border-slate-200 rounded-lg p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="text-sm font-medium text-slate-700">Filters</div>
-              <div className="text-xs text-slate-500">Refine the board by role or slot</div>
-            </div>
-            <div className="text-xs text-slate-500">
-              {selectedJobFilter === 'all' ? 'All roles' : 'Single role'} ·{' '}
-              {selectedSlotFilter === 'all' ? 'All slots' : selectedSlotFilter === 'no_slot' ? 'No slot' : 'Single slot'}
-            </div>
-          </div>
+        <div className="mb-6">
+          <div
+            className={`transition-all duration-200 ease-out ${
+              showFilters
+                ? 'max-h-[520px] opacity-100'
+                : 'max-h-0 opacity-0 pointer-events-none'
+            } overflow-hidden`}
+          >
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-700">Filters</div>
+                  <div className="text-xs text-slate-500">Refine the board by role or slot</div>
+                </div>
+                <div className="text-xs text-slate-500">
+                  {selectedJobFilter === 'all' ? 'All roles' : 'Single role'} ·{' '}
+                  {selectedSlotFilter === 'all' ? 'All slots' : selectedSlotFilter === 'no_slot' ? 'No slot' : 'Single slot'}
+                </div>
+              </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            {jobs.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Job Roles</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => handleJobFilterChange('all')}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-                      selectedJobFilter === 'all'
-                        ? 'bg-indigo-600 border-indigo-600 text-white'
-                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    All Jobs ({totalCandidates})
-                  </button>
-                  {jobs.map((job) => {
-                    const jobCandidateCount = jobCandidateCounts[job.id] || 0
-
-                    if (jobCandidateCount === 0) return null
-
-                    return (
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                {jobs.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Job Roles</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <button
-                        key={job.id}
-                        onClick={() => handleJobFilterChange(job.id)}
+                        onClick={() => handleJobFilterChange('all')}
                         className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-                          selectedJobFilter === job.id
+                          selectedJobFilter === 'all'
                             ? 'bg-indigo-600 border-indigo-600 text-white'
                             : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                         }`}
                       >
-                        {job.title} ({jobCandidateCount})
+                        All Jobs ({totalCandidates})
                       </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
+                      {jobs.map((job) => {
+                        const jobCandidateCount = jobCandidateCounts[job.id] || 0
 
-            {campaign?.metadata?.slots && campaign.metadata.slots.length > 0 && (
-              <div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Interview Slots</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => handleSlotFilterChange('all')}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-                      selectedSlotFilter === 'all'
-                        ? 'bg-indigo-600 border-indigo-600 text-white'
-                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    All Slots
-                  </button>
-                  {campaign.metadata.slots.map((slot: any, idx: number) => {
-                    const slotCount = slotCandidateCounts[slot.name] || 0
-                    if (slotCount === 0) return null
+                        if (jobCandidateCount === 0) return null
 
-                    return (
+                        return (
+                          <button
+                            key={job.id}
+                            onClick={() => handleJobFilterChange(job.id)}
+                            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
+                              selectedJobFilter === job.id
+                                ? 'bg-indigo-600 border-indigo-600 text-white'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {job.title} ({jobCandidateCount})
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {campaign?.metadata?.slots && campaign.metadata.slots.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Interview Slots</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <button
-                        key={idx}
-                        onClick={() => handleSlotFilterChange(slot.name)}
+                        onClick={() => handleSlotFilterChange('all')}
                         className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-                          selectedSlotFilter === slot.name
+                          selectedSlotFilter === 'all'
                             ? 'bg-indigo-600 border-indigo-600 text-white'
                             : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                         }`}
                       >
-                        {slot.name} ({slotCount})
+                        All Slots
                       </button>
-                    )
-                  })}
-                  <button
-                    onClick={() => handleSlotFilterChange('no_slot')}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-                      selectedSlotFilter === 'no_slot'
-                        ? 'bg-amber-600 border-amber-600 text-white'
-                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    No Slot Assigned
-                  </button>
-                </div>
+                      {campaign.metadata.slots.map((slot: any, idx: number) => {
+                        const slotCount = slotCandidateCounts[slot.name] || 0
+                        if (slotCount === 0) return null
+
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => handleSlotFilterChange(slot.name)}
+                            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
+                              selectedSlotFilter === slot.name
+                                ? 'bg-indigo-600 border-indigo-600 text-white'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {slot.name} ({slotCount})
+                          </button>
+                        )
+                      })}
+                      <button
+                        onClick={() => handleSlotFilterChange('no_slot')}
+                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
+                          selectedSlotFilter === 'no_slot'
+                            ? 'bg-amber-600 border-amber-600 text-white'
+                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        No Slot Assigned
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -926,6 +1006,17 @@ export default function CampaignDetailPage() {
             </Button>
           </>
         )}
+
+        <div className="ml-auto flex items-center">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setShowFilters(!showFilters)}
+            aria-label="Toggle filters"
+          >
+            <Filter className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
       {!canMoveSelected && selectedCandidates.size > 0 && (
         <div className="mb-6 text-xs text-slate-500">
@@ -1066,25 +1157,34 @@ export default function CampaignDetailPage() {
                             )}
                           </div>
 
-                          <div className="flex gap-2 mt-3">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setDecisionCandidate(candidate)
-                                setDecisionForm({ decision: candidate.final_decision, notes: '' })
-                                setShowDecisionDialog(true)
-                              }}
-                              className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded-md hover:bg-slate-50"
-                            >
-                              Decision
-                            </button>
-                            <button
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDecisionCandidate(candidate)
+                            setDecisionForm({ decision: candidate.final_decision, notes: '' })
+                            setShowDecisionDialog(true)
+                          }}
+                          className="flex-1 px-2 py-1.5 text-xs border border-slate-300 rounded-md hover:bg-slate-50"
+                        >
+                          Decision
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openCandidateReport(candidate)
+                          }}
+                          className="px-2 py-1.5 text-xs border border-slate-300 rounded-md hover:bg-slate-50"
+                        >
+                          Report
+                        </button>
+                        <button
                           onClick={(e) => {
                             e.stopPropagation()
                             openDeleteCandidateDialog(candidate.id)
                           }}
-                              className="px-2 py-1.5 text-xs border border-red-300 text-red-700 rounded-md hover:bg-red-50"
-                            >
+                          className="px-2 py-1.5 text-xs border border-red-300 text-red-700 rounded-md hover:bg-red-50"
+                        >
                               <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
@@ -1588,7 +1688,7 @@ export default function CampaignDetailPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-slate-200">
-              <h2 className="text-xl font-semibold">Campaign Settings</h2>
+              <h2 className="text-xl font-semibold">Batch Settings</h2>
             </div>
 
             <div className="p-6 space-y-6">
@@ -1598,7 +1698,7 @@ export default function CampaignDetailPage() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Campaign Name <span className="text-red-500">*</span>
+                      Batch Name <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -1622,7 +1722,7 @@ export default function CampaignDetailPage() {
                         setSettingsForm({ ...settingsForm, description: e.target.value })
                       }
                       rows={3}
-                      placeholder="Brief description of this hiring campaign"
+                      placeholder="Brief description of this batch"
                     />
                   </div>
 
@@ -1744,7 +1844,7 @@ export default function CampaignDetailPage() {
                   className="border-red-300 text-red-700 hover:bg-red-50"
                 >
                   <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Campaign
+                  Delete Batch
                 </Button>
               </div>
             </div>
@@ -1769,13 +1869,184 @@ export default function CampaignDetailPage() {
         </div>
       )}
 
+      {showCandidateReportDialog && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-white/20">
+            {/* Header section with gradient background */}
+            <div className="p-6 md:p-8 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shrink-0">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight mb-1">Candidate Profile</h2>
+                  <div className="flex items-center gap-3 text-indigo-100">
+                    <span className="text-lg font-medium">{candidateReport?.candidate?.name || 'Unknown Candidate'}</span>
+                    {candidateReport?.candidate?.email && (
+                      <span className="text-sm px-2.5 py-1 bg-white/10 rounded-full">{candidateReport.candidate.email}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button variant="outline" className="bg-white/10 text-white border-white/20 hover:bg-white/20 hover:text-white transition-colors" onClick={handleDownloadCandidateCsv} disabled={candidateReportLoading}>
+                    <Download className="w-4 h-4 mr-2" />
+                    CSV
+                  </Button>
+                  <Button className="bg-white text-indigo-700 hover:bg-indigo-50 transition-colors" onClick={handleDownloadCandidatePdf} disabled={candidateReportLoading}>
+                    <FileText className="w-4 h-4 mr-2" />
+                    PDF
+                  </Button>
+                </div>
+              </div>
+              
+              {!candidateReportLoading && candidateReport && (
+                <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10">
+                    <div className="text-indigo-200 text-xs font-medium uppercase tracking-wider mb-1">Final Decision</div>
+                    <div className={`font-semibold text-lg capitalize ${
+                       candidateReport.candidate?.final_decision === 'selected' ? 'text-emerald-300' 
+                     : candidateReport.candidate?.final_decision === 'rejected' ? 'text-red-300' 
+                     : candidateReport.candidate?.final_decision === 'hold' ? 'text-amber-300' 
+                     : 'text-white'
+                    }`}>
+                      {candidateReport.candidate?.final_decision || 'Pending'}
+                    </div>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10">
+                    <div className="text-indigo-200 text-xs font-medium uppercase tracking-wider mb-1">AI Recommendation</div>
+                    <div className="font-semibold text-white capitalize">
+                      {candidateReport.candidate?.recommendation?.replace('_', ' ') || 'Pending'}
+                    </div>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10">
+                    <div className="text-indigo-200 text-xs font-medium uppercase tracking-wider mb-1">Resume Match</div>
+                    <div className="flex items-center gap-2">
+                       <span className="font-bold text-xl text-white">
+                         {candidateReport.candidate?.resume_match_score ? `${Number(candidateReport.candidate.resume_match_score).toFixed(0)}%` : '-'}
+                       </span>
+                    </div>
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10">
+                    <div className="text-indigo-200 text-xs font-medium uppercase tracking-wider mb-1">Coding Score</div>
+                    <div className="flex items-center gap-2">
+                       <span className="font-bold text-xl text-white">
+                         {candidateReport.candidate?.coding_score ? `${Number(candidateReport.candidate.coding_score).toFixed(1)}%` : '-'}
+                       </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Content Body */}
+            <div className="p-6 md:p-8 overflow-y-auto bg-slate-50 flex-1">
+              {candidateReportLoading ? (
+                <div className="space-y-6">
+                  <Skeleton className="h-32 w-full rounded-xl" />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     <Skeleton className="h-40 w-full rounded-xl" />
+                     <Skeleton className="h-40 w-full rounded-xl" />
+                  </div>
+                </div>
+              ) : (
+                candidateReport && (
+                  <div className="space-y-6">
+                    {candidateReport.resume && (
+                      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md">
+                        <div className="flex items-center gap-2 mb-3 pb-3 border-b border-slate-100">
+                           <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                             <FileText className="w-4 h-4" />
+                           </div>
+                           <h3 className="text-base font-semibold text-slate-800">Resume Summary</h3>
+                        </div>
+                        <p className="text-sm leading-relaxed text-slate-600 whitespace-pre-wrap">
+                          {candidateReport.resume.summary || 'No summary available.'}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {candidateReport.coding && (
+                        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md">
+                          <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+                             <div className="flex items-center gap-2">
+                               <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                               </div>
+                               <h3 className="text-base font-semibold text-slate-800">Coding Assessment</h3>
+                             </div>
+                             <span className={`px-2.5 py-1 text-xs font-semibold rounded-full capitalize ${
+                               candidateReport.coding.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-700'
+                             }`}>
+                               {candidateReport.coding.status || 'Pending'}
+                             </span>
+                          </div>
+                          {candidateReport.coding.summary ? (
+                            <p className="text-sm text-slate-600 leading-relaxed">
+                              {candidateReport.coding.summary}
+                            </p>
+                          ) : (
+                            <p className="text-sm text-slate-400 italic">No detailed summary available yet.</p>
+                          )}
+                        </div>
+                      )}
+
+                      {candidateReport.voice && (
+                        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm transition-all hover:shadow-md flex flex-col">
+                          <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-100">
+                             <div className="flex items-center gap-2">
+                               <div className="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>
+                               </div>
+                               <h3 className="text-base font-semibold text-slate-800">Voice Screening</h3>
+                             </div>
+                             <span className={`px-2.5 py-1 text-xs font-semibold rounded-full capitalize ${
+                               candidateReport.voice.status === 'completed' || candidateReport.voice.status === 'passed' ? 'bg-green-100 text-green-700' 
+                               : candidateReport.voice.status === 'failed' ? 'bg-red-100 text-red-700' 
+                               : 'bg-slate-100 text-slate-700'
+                             }`}>
+                               {candidateReport.voice.status?.replace('_', ' ') || 'Pending'}
+                             </span>
+                          </div>
+                          {candidateReport.voice.summary ? (
+                            <div className="text-sm text-slate-600 leading-relaxed flex-1 whitespace-pre-wrap">
+                              {candidateReport.voice.summary}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-400 italic flex-1">No detailed transcript or summary available yet.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {candidateReport.candidate?.decision_notes && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+                        <div className="flex items-center gap-2 mb-2">
+                           <h3 className="text-sm font-semibold text-amber-900">Decision Notes</h3>
+                        </div>
+                        <p className="text-sm text-amber-800 whitespace-pre-wrap leading-relaxed">
+                          {candidateReport.candidate.decision_notes}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+
+            <div className="p-5 border-t border-slate-200 bg-white flex justify-end shrink-0">
+              <Button variant="outline" onClick={() => setShowCandidateReportDialog(false)} className="px-6 hover:bg-slate-100 transition-colors">
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         open={showDeleteCampaignDialog}
         onOpenChange={setShowDeleteCampaignDialog}
         onConfirm={confirmDeleteCampaign}
-        title="Delete Campaign"
-        description="This will permanently remove the campaign and all associated data. This action cannot be undone."
-        confirmText="Delete Campaign"
+        title="Delete Batch"
+        description="This will permanently remove the batch and all associated data. This action cannot be undone."
+        confirmText="Delete Batch"
         cancelText="Cancel"
         variant="destructive"
       />
@@ -1785,7 +2056,7 @@ export default function CampaignDetailPage() {
         onOpenChange={setShowDeleteCandidateDialog}
         onConfirm={confirmDeleteCandidate}
         title="Remove Candidate"
-        description="This will remove the candidate from the campaign. You can re-add them later if needed."
+        description="This will remove the candidate from the batch. You can re-add them later if needed."
         confirmText="Remove Candidate"
         cancelText="Cancel"
         variant="destructive"

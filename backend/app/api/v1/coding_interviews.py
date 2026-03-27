@@ -42,6 +42,8 @@ from app.services.document_processor import get_document_processor
 from app.services.resume_auto_processor import get_resume_auto_processor
 from app.services.llm_orchestrator import get_llm_orchestrator
 from app.services.voice_interview_service import get_voice_interview_service
+from app.services.candidate_statistics_service import get_candidate_statistics_service
+from app.services.report_renderer import build_candidate_pdf
 from app.db.supabase_client import get_supabase
 from app.auth.dependencies import get_current_user_id, get_current_org_context, OrgContext
 from app.auth.permissions import require_permission
@@ -1101,6 +1103,339 @@ async def get_submission(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get submission"
         )
+
+
+@router.get("/submissions/{submission_id}/statistics", summary="Get comprehensive candidate statistics")
+async def get_submission_statistics(
+    submission_id: str,
+    ctx: OrgContext = Depends(require_permission('interview:view'))
+):
+    """
+    Get comprehensive statistics for a coding submission candidate.
+
+    This endpoint builds statistics from the coding submission and attempts to find
+    the candidate in the pipeline for complete assessment data.
+    """
+    try:
+        client = get_supabase()
+        stats_service = get_candidate_statistics_service()
+
+        # Get submission
+        submission_result = client.table('coding_submissions').select(
+            'id, interview_id, candidate_name, candidate_email, candidate_phone'
+        ).eq('id', submission_id).execute()
+
+        if not submission_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Submission not found"
+            )
+
+        submission = submission_result.data[0]
+
+        # Verify org access through interview
+        interview_result = client.table('coding_interviews').select('id, org_id').eq(
+            'id', submission['interview_id']
+        ).eq('org_id', ctx.org_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this submission"
+            )
+
+        # Try to find the candidate in pipeline_candidates
+        pipeline_result = client.table('pipeline_candidates').select('id').eq(
+            'coding_submission_id', submission_id
+        ).eq('org_id', ctx.org_id).is_('deleted_at', 'null').execute()
+
+        if pipeline_result.data and len(pipeline_result.data) > 0:
+            # Found in pipeline - use full statistics
+            candidate_id = pipeline_result.data[0]['id']
+            stats = stats_service.get_candidate_statistics(
+                candidate_id=candidate_id,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id
+            )
+            return stats
+        else:
+            # Not in pipeline - build statistics from coding submission only
+            return await _build_submission_only_statistics(submission_id, ctx.org_id, ctx.user_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting submission statistics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get statistics: {str(e)}"
+        )
+
+
+@router.get("/submissions/{submission_id}/report", summary="Download candidate assessment report PDF")
+async def download_submission_report(
+    submission_id: str,
+    ctx: OrgContext = Depends(require_permission('interview:view'))
+):
+    """Download comprehensive PDF report for a coding submission candidate."""
+    try:
+        client = get_supabase()
+        stats_service = get_candidate_statistics_service()
+
+        # Get submission
+        submission_result = client.table('coding_submissions').select(
+            'id, interview_id, candidate_name, candidate_email'
+        ).eq('id', submission_id).execute()
+
+        if not submission_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Submission not found"
+            )
+
+        submission = submission_result.data[0]
+
+        # Verify org access
+        interview_result = client.table('coding_interviews').select('id, org_id').eq(
+            'id', submission['interview_id']
+        ).eq('org_id', ctx.org_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized"
+            )
+
+        # Try to find in pipeline
+        pipeline_result = client.table('pipeline_candidates').select('id').eq(
+            'coding_submission_id', submission_id
+        ).eq('org_id', ctx.org_id).is_('deleted_at', 'null').execute()
+
+        if pipeline_result.data:
+            candidate_id = pipeline_result.data[0]['id']
+            stats = stats_service.get_candidate_statistics(
+                candidate_id=candidate_id,
+                org_id=ctx.org_id,
+                user_id=ctx.user_id
+            )
+        else:
+            stats = await _build_submission_only_statistics(submission_id, ctx.org_id, ctx.user_id)
+
+        # Generate PDF
+        pdf_bytes = build_candidate_pdf(stats)
+
+        # Prepare filename
+        candidate_name = submission['candidate_name'].replace(" ", "_")
+        filename = f"technical_assessment_{candidate_name}_{submission_id[:8]}.pdf"
+
+        # Return PDF
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate report: {str(e)}"
+        )
+
+
+async def _build_submission_only_statistics(submission_id: str, org_id: str, user_id: str) -> dict:
+    """Build statistics from coding submission only (not in pipeline)."""
+    client = get_supabase()
+
+    # Get full submission details
+    submission_result = client.table('coding_submissions').select(
+        '''
+        *,
+        coding_interviews:interview_id (
+            id,
+            title,
+            total_marks
+        ),
+        coding_answers (
+            question_id,
+            submitted_code,
+            programming_language,
+            marks_awarded,
+            coding_questions (
+                id,
+                question_text,
+                difficulty,
+                marks
+            )
+        )
+        '''
+    ).eq('id', submission_id).execute()
+
+    if not submission_result.data:
+        raise ValueError("Submission not found")
+
+    submission = submission_result.data[0]
+    interview = submission.get('coding_interviews') or {}
+    coding_answers = submission.get('coding_answers') or []
+
+    # Calculate technical assessment stats
+    total_questions = len(coding_answers)
+    questions_attempted = sum(1 for a in coding_answers if a.get('submitted_code'))  # Use submitted_code
+    questions_fully_correct = 0
+
+    question_details = []
+    for answer in coding_answers:
+        question_info = answer.get('coding_questions') or {}
+        marks_obtained = answer.get('marks_awarded') or 0  # Use marks_awarded
+        max_marks = question_info.get('marks') or 0  # Get from question
+
+        attempted = bool(answer.get('submitted_code'))  # Use submitted_code
+        fully_correct = (marks_obtained == max_marks) if max_marks > 0 else False
+
+        if fully_correct:
+            questions_fully_correct += 1
+
+        question_details.append({
+            "question_id": answer.get('question_id'),
+            "title": question_info.get('question_text', '')[:50] + '...' if question_info.get('question_text') else 'Question',
+            "difficulty": question_info.get('difficulty', 'medium'),
+            "language": answer.get('programming_language', '-'),  # Use programming_language
+            "marks_obtained": marks_obtained,
+            "max_marks": max_marks,
+            "percentage": (marks_obtained / max_marks * 100) if max_marks > 0 else 0,
+            "attempted": attempted,
+            "fully_correct": fully_correct,
+        })
+
+    # Calculate duration
+    started_at = submission.get('started_at')
+    submitted_at = submission.get('submitted_at')
+    duration_seconds = submission.get('session_duration_seconds') or 0
+
+    if started_at and submitted_at:
+        try:
+            start_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            end_time = datetime.fromisoformat(submitted_at.replace("Z", "+00:00"))
+            duration_seconds = int((end_time - start_time).total_seconds())
+        except Exception:
+            pass
+
+    def format_duration(seconds: int) -> str:
+        if not seconds:
+            return "0s"
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        parts = []
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        if secs > 0 or not parts:
+            parts.append(f"{secs}s")
+        return " ".join(parts)
+
+    # Build statistics structure
+    stats = {
+        "candidate": {
+            "id": submission_id,
+            "name": submission.get('candidate_name', 'Unknown'),
+            "email": submission.get('candidate_email', ''),
+            "phone": submission.get('candidate_phone'),
+            "current_stage": "technical_assessment",
+            "recommendation": "pending",
+            "final_decision": submission.get('candidate_decision', 'pending'),
+            "decision_notes": None,
+            "created_at": submission.get('started_at'),
+            "updated_at": submission.get('submitted_at'),
+        },
+        "job": {
+            "id": interview.get('id'),
+            "title": interview.get('title', 'Coding Interview'),
+            "department": None,  # coding_interviews table doesn't have department field
+            "experience_required": None,
+        },
+        "campaign": None,
+        "resume_screening": {
+            "completed": False,
+        },
+        "technical_assessment": {
+            "completed": True,
+            "status": submission.get('status', 'submitted'),
+            "total_score": submission.get('total_marks_obtained'),
+            "percentage": submission.get('percentage'),
+            "duration_seconds": duration_seconds,
+            "duration_formatted": format_duration(duration_seconds),
+            "started_at": started_at,
+            "submitted_at": submitted_at,
+            "late_submission": submission.get('late_submission', False),
+            "suspicious_activity": submission.get('suspicious_activity', False),
+            "questions": {
+                "total": total_questions,
+                "attempted": questions_attempted,
+                "fully_correct": questions_fully_correct,
+                "attempt_rate": (questions_attempted / total_questions * 100) if total_questions > 0 else 0,
+                "accuracy_rate": (questions_fully_correct / questions_attempted * 100) if questions_attempted > 0 else 0,
+                "details": question_details,
+            },
+        },
+        "voice_screening": {
+            "completed": False,
+        },
+        "timeline": [
+            {
+                "stage": "technical_assessment",
+                "event": "Technical Assessment Started",
+                "timestamp": started_at,
+                "status": "completed" if submitted_at else "in_progress",
+            }
+        ],
+        "overall_performance": {
+            "overall_score": submission.get('percentage'),
+            "stages_completed": 1,
+            "stages_total": 3,
+            "completion_rate": 33.33,
+            "rating": _get_rating(submission.get('percentage', 0)),
+            "score_breakdown": {
+                "resume": None,
+                "technical": submission.get('percentage'),
+                "voice": "Not Started",
+            },
+        },
+        "comparative_analytics": {
+            "available": False,
+            "reason": "Comparative analytics only available for pipeline candidates",
+        },
+    }
+
+    if submitted_at:
+        stats["timeline"].append({
+            "stage": "technical_assessment",
+            "event": "Technical Assessment Submitted",
+            "timestamp": submitted_at,
+            "score": submission.get('percentage'),
+            "status": "completed",
+        })
+
+    return stats
+
+
+def _get_rating(score: float) -> str:
+    """Get rating from score."""
+    if score >= 85:
+        return "Excellent"
+    elif score >= 75:
+        return "Very Good"
+    elif score >= 65:
+        return "Good"
+    elif score >= 50:
+        return "Average"
+    else:
+        return "Below Average"
 
 
 @router.post("/submissions/{submission_id}/evaluate", summary="Re-evaluate submission")

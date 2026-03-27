@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -20,9 +21,9 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { createCampaign, uploadFileToVapi, deleteVapiFile } from '@/lib/api/voice-screening'
-import { ArrowLeft, Plus, Trash2, Loader2, Upload, Sparkles, FileText, X } from 'lucide-react'
+import { Plus, Trash2, Loader2, Upload, Sparkles, FileText, X } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
-import Link from 'next/link'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { toast } from 'sonner'
 import { apiClient } from '@/lib/api/client'
 
@@ -63,7 +64,11 @@ export default function CreateCampaignPage() {
     interview_persona: 'professional' as const,
     candidate_type: 'general' as const,
     interview_style: 'conversational' as const,
-    knowledge_base_file_ids: [] as string[]
+    knowledge_base_file_ids: [] as string[],
+    // Scheduling fields
+    scheduled_start_time: '',
+    scheduled_end_time: '',
+    grace_period_minutes: 15,
   })
 
   const [uploadedFiles, setUploadedFiles] = useState<Array<{id: string, name: string}>>([])
@@ -269,11 +274,20 @@ export default function CreateCampaignPage() {
       // Filter out empty questions
       const cleanedQuestions = formData.custom_questions.filter(q => q.trim())
 
-      const campaign = await createCampaign({
+      // DateTimePicker already provides datetime-local format, convert to ISO
+      const payload = {
         ...formData,
         custom_questions: cleanedQuestions,
+        scheduled_start_time: formData.scheduled_start_time
+          ? new Date(formData.scheduled_start_time).toISOString()
+          : null,
+        scheduled_end_time: formData.scheduled_end_time
+          ? new Date(formData.scheduled_end_time).toISOString()
+          : null,
         ...(pipelineJobId ? { job_id: pipelineJobId } : {})
-      })
+      }
+
+      const campaign = await createCampaign(payload)
 
       // If created from pipeline, navigate back to pipeline
       if (pipelineJobId) {
@@ -296,14 +310,7 @@ export default function CreateCampaignPage() {
     <div className="container mx-auto py-8 max-w-4xl">
       <PageHeader
         title="Create Voice Screening Campaign"
-        action={
-          <Link href="/dashboard/voice-screening">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4 mr-1" />
-              Back
-            </Button>
-          </Link>
-        }
+        backHref="/dashboard/voice-screening"
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -462,6 +469,70 @@ export default function CreateCampaignPage() {
                   <SelectItem value="general">General (Adaptive)</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Scheduling */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Interview Scheduling</CardTitle>
+            <CardDescription>
+              Set time window and grace period for voice interviews (optional)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="scheduled_start_time">Start Time (Optional)</Label>
+                <DateTimePicker
+                  value={formData.scheduled_start_time}
+                  onChange={(value) => setFormData(prev => ({
+                    ...prev,
+                    scheduled_start_time: value
+                  }))}
+                  placeholder="Select start date & time"
+                  minDate={new Date()}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  When interviews can begin
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="scheduled_end_time">End Time (Optional)</Label>
+                <DateTimePicker
+                  value={formData.scheduled_end_time}
+                  onChange={(value) => setFormData(prev => ({
+                    ...prev,
+                    scheduled_end_time: value
+                  }))}
+                  placeholder="Select end date & time"
+                  minDate={formData.scheduled_start_time ? new Date(formData.scheduled_start_time) : new Date()}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  When interviews must end
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="grace_period_minutes">Grace Period (Minutes)</Label>
+              <Input
+                id="grace_period_minutes"
+                type="number"
+                min="0"
+                max="120"
+                value={formData.grace_period_minutes}
+                onChange={(e) => setFormData(prev => ({
+                  ...prev,
+                  grace_period_minutes: parseInt(e.target.value) || 15
+                }))}
+                className="max-w-xs"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Extra time allowed after scheduled end time
+              </p>
             </div>
           </CardContent>
         </Card>

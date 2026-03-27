@@ -13,12 +13,20 @@ import secrets
 import asyncio
 import uuid
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import httpx
 import pandas as pd
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    BackgroundTasks,
+    Request,
+)
 from fastapi.responses import StreamingResponse
 from app.services.user_service import get_user_service
 from postgrest import APIError
@@ -39,25 +47,36 @@ from app.schemas.voice_screening import (
     QuestionGenerationResponse,
     FetchCallDataRequest,
     FetchCallDataResponse,
-    VoiceWebhookPayload
+    VoiceWebhookPayload,
 )
 from app.services.vapi_prompt_generator import VAPIPromptGenerator
 from app.services.vapi_config_builder import VAPIConfigBuilder
 from app.services.vapi_file_service import get_vapi_file_service
 from app.services.interview_summary_service import get_interview_summary_service
+from app.services.vapi_event_logger import VapiEventLogger
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice-screening", tags=["voice-screening"])
+
+
+def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
 
 
 # ============================================================================
 # CAMPAIGN ENDPOINTS
 # ============================================================================
 
+
 @router.post("/campaigns", response_model=CampaignResponse)
 async def create_campaign(
     request: CampaignCreateRequest,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """
     Create a new voice screening campaign with AI-generated VAPI configuration.
@@ -79,8 +98,11 @@ async def create_campaign(
             candidate_type=request.candidate_type.value,
             interview_style=request.interview_style.value,
             job_description_text=request.job_description_text,
-            technical_requirements=request.technical_requirements
+            technical_requirements=request.technical_requirements,
         )
+
+        # Calculate max duration in seconds from interview_duration_minutes
+        max_duration_seconds = request.interview_duration_minutes * 60
 
         # Build VAPI config
         config_builder = VAPIConfigBuilder()
@@ -90,7 +112,8 @@ async def create_campaign(
             candidate_type=request.candidate_type.value,
             knowledge_base_file_ids=request.knowledge_base_file_ids,
             enable_functions=True,
-            interview_style=request.interview_style.value
+            interview_style=request.interview_style.value,
+            max_duration_seconds=max_duration_seconds,
         )
 
         # Build default function definitions
@@ -98,7 +121,10 @@ async def create_campaign(
             {
                 "name": "end_call",
                 "description": "End interview when candidate indicates they're done",
-                "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}}
+                "parameters": {
+                    "type": "object",
+                    "properties": {"reason": {"type": "string"}},
+                },
             }
         ]
 
@@ -116,6 +142,16 @@ async def create_campaign(
             "interview_persona": request.interview_persona.value,
             "candidate_type": request.candidate_type.value,
             "interview_style": request.interview_style.value,
+            # Scheduling fields
+            "scheduled_start_time": request.scheduled_start_time.isoformat()
+            if request.scheduled_start_time
+            else None,
+            "scheduled_end_time": request.scheduled_end_time.isoformat()
+            if request.scheduled_end_time
+            else None,
+            "grace_period_minutes": request.grace_period_minutes,
+            "interview_duration_minutes": request.interview_duration_minutes,
+            # VAPI configuration
             "generated_system_prompt": generated_config["system_prompt"],
             "generated_schema": generated_config["structured_data_schema"],
             "vapi_config": vapi_config,
@@ -124,13 +160,15 @@ async def create_campaign(
             "generation_model": "qwen2.5:7b",
             "generation_metadata": {
                 "expected_questions": generated_config.get("expected_questions", []),
-                "conversation_flow": generated_config.get("conversation_flow", "")
+                "conversation_flow": generated_config.get("conversation_flow", ""),
             },
             "is_active": True,
-            "job_id": request.job_id
+            "job_id": request.job_id,
         }
 
-        result = supabase.table("voice_screening_campaigns").insert(campaign_data).execute()
+        result = (
+            supabase.table("voice_screening_campaigns").insert(campaign_data).execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=500, detail="Failed to create campaign")
@@ -151,17 +189,19 @@ async def create_campaign(
 @router.get("/campaigns", response_model=List[CampaignResponse])
 async def list_campaigns(
     is_active: Optional[bool] = None,
-    ctx: OrgContext = Depends(require_permission('campaign:view'))
+    ctx: OrgContext = Depends(require_permission("campaign:view")),
 ):
     """List all voice screening campaigns for current org."""
     try:
         supabase = get_supabase()
 
-        query = (supabase.table("voice_screening_campaigns")
+        query = (
+            supabase.table("voice_screening_campaigns")
             .select("*")
             .eq("org_id", ctx.org_id)
             .is_("deleted_at", "null")
-            .order("created_at", desc=True))
+            .order("created_at", desc=True)
+        )
 
         if is_active is not None:
             query = query.eq("is_active", is_active)
@@ -177,19 +217,20 @@ async def list_campaigns(
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignResponse)
 async def get_campaign(
-    campaign_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:view'))
+    campaign_id: str, ctx: OrgContext = Depends(require_permission("campaign:view"))
 ):
     """Get campaign details by ID."""
     try:
         supabase = get_supabase()
 
-        result = supabase.table("voice_screening_campaigns") \
-            .select("*") \
-            .eq("id", campaign_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        result = (
+            supabase.table("voice_screening_campaigns")
+            .select("*")
+            .eq("id", campaign_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -209,52 +250,84 @@ async def get_campaign(
 async def update_campaign(
     campaign_id: str,
     updates: Dict[str, Any],
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Update campaign details. If system prompt is changed, vapi_config is rebuilt."""
     try:
         supabase = get_supabase()
 
         # Verify org membership and get current data
-        existing_result = supabase.table("voice_screening_campaigns") \
-            .select("*") \
-            .eq("id", campaign_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        existing_result = (
+            supabase.table("voice_screening_campaigns")
+            .select("*")
+            .eq("id", campaign_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not existing_result.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
         existing_campaign = existing_result.data
 
-        # If generated_system_prompt is being updated, rebuild vapi_config
-        if "generated_system_prompt" in updates and updates["generated_system_prompt"] != existing_campaign.get("generated_system_prompt"):
-            logger.info(f"System prompt changed, rebuilding vapi_config for campaign {campaign_id}")
+        # If generated_system_prompt or interview_duration_minutes is being updated, rebuild vapi_config
+        needs_rebuild = (
+            "generated_system_prompt" in updates
+            and updates["generated_system_prompt"]
+            != existing_campaign.get("generated_system_prompt")
+        ) or (
+            "interview_duration_minutes" in updates
+            and updates["interview_duration_minutes"]
+            != existing_campaign.get("interview_duration_minutes")
+        )
+
+        if needs_rebuild:
+            logger.info(
+                f"System prompt or duration changed, rebuilding vapi_config for campaign {campaign_id}"
+            )
 
             # Get the structured data schema from the campaign
             generated_schema = existing_campaign.get("generated_schema", {})
 
-            # Rebuild vapi_config with the new system prompt
+            # Use updated values or fall back to existing
+            system_prompt = updates.get(
+                "generated_system_prompt",
+                existing_campaign.get("generated_system_prompt"),
+            )
+            interview_duration = updates.get(
+                "interview_duration_minutes",
+                existing_campaign.get("interview_duration_minutes", 15),
+            )
+            max_duration_seconds = interview_duration * 60
+
+            # Rebuild vapi_config with the new system prompt and/or duration
             config_builder = VAPIConfigBuilder()
             new_vapi_config = config_builder.build_vapi_config(
-                system_prompt=updates["generated_system_prompt"],
+                system_prompt=system_prompt,
                 structured_data_schema=generated_schema,
                 candidate_type=existing_campaign.get("candidate_type", "general"),
-                knowledge_base_file_ids=existing_campaign.get("knowledge_base_file_ids", []),
+                knowledge_base_file_ids=existing_campaign.get(
+                    "knowledge_base_file_ids", []
+                ),
                 enable_functions=True,
-                interview_style=existing_campaign.get("interview_style", "conversational")
+                interview_style=existing_campaign.get(
+                    "interview_style", "conversational"
+                ),
+                max_duration_seconds=max_duration_seconds,
             )
 
             # Add the updated vapi_config to updates
             updates["vapi_config"] = new_vapi_config
-            logger.info(f"✅ Rebuilt vapi_config with updated system prompt")
+            logger.info(f"✅ Rebuilt vapi_config with updated configuration")
 
         # Update
-        result = supabase.table("voice_screening_campaigns") \
-            .update(updates) \
-            .eq("id", campaign_id) \
+        result = (
+            supabase.table("voice_screening_campaigns")
+            .update(updates)
+            .eq("id", campaign_id)
             .execute()
+        )
 
         return CampaignResponse(**result.data[0])
 
@@ -267,19 +340,20 @@ async def update_campaign(
 
 @router.delete("/campaigns/{campaign_id}")
 async def delete_campaign(
-    campaign_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    campaign_id: str, ctx: OrgContext = Depends(require_permission("campaign:create"))
 ):
     """Delete campaign (cascades to candidates and call history)."""
     try:
         supabase = get_supabase()
 
-        result = supabase.table("voice_screening_campaigns") \
-            .update({"deleted_at": datetime.utcnow().isoformat()}) \
-            .eq("id", campaign_id) \
-            .eq("org_id", ctx.org_id) \
-            .is_("deleted_at", "null") \
+        result = (
+            supabase.table("voice_screening_campaigns")
+            .update({"deleted_at": datetime.utcnow().isoformat()})
+            .eq("id", campaign_id)
+            .eq("org_id", ctx.org_id)
+            .is_("deleted_at", "null")
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -296,22 +370,25 @@ async def delete_campaign(
 # CANDIDATE ENDPOINTS
 # ============================================================================
 
+
 @router.post("/candidates", response_model=VoiceCandidateResponse)
 async def create_candidate(
     request: VoiceCandidateCreate,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Create a single voice screening candidate."""
     try:
         supabase = get_supabase()
 
         # Verify campaign exists and belongs to org
-        campaign_check = supabase.table("voice_screening_campaigns") \
-            .select("id") \
-            .eq("id", request.campaign_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        campaign_check = (
+            supabase.table("voice_screening_campaigns")
+            .select("id")
+            .eq("id", request.campaign_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not campaign_check.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -328,7 +405,7 @@ async def create_candidate(
             "name": request.name,
             "email": request.email,
             "phone": request.phone,
-            "status": "pending"
+            "status": "pending",
         }
 
         result = supabase.table("voice_candidates").insert(candidate_data).execute()
@@ -351,19 +428,21 @@ async def create_candidate(
 @router.post("/candidates/bulk", response_model=List[VoiceCandidateResponse])
 async def bulk_create_candidates(
     request: VoiceCandidateBulkCreate,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Bulk create candidates for a campaign."""
     try:
         supabase = get_supabase()
 
         # Verify campaign
-        campaign_check = supabase.table("voice_screening_campaigns") \
-            .select("id") \
-            .eq("id", request.campaign_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        campaign_check = (
+            supabase.table("voice_screening_campaigns")
+            .select("id")
+            .eq("id", request.campaign_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not campaign_check.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -371,21 +450,25 @@ async def bulk_create_candidates(
         # Prepare candidate data
         candidates_data = []
         for candidate in request.candidates:
-            candidates_data.append({
-                "created_by": ctx.user_id,
-                "org_id": ctx.org_id,
-                "campaign_id": request.campaign_id,
-                "interview_token": uuid.uuid4().hex[:12],
-                "name": candidate.get("name", ""),
-                "email": candidate.get("email"),
-                "phone": candidate.get("phone"),
-                "status": "pending"
-            })
+            candidates_data.append(
+                {
+                    "created_by": ctx.user_id,
+                    "org_id": ctx.org_id,
+                    "campaign_id": request.campaign_id,
+                    "interview_token": uuid.uuid4().hex[:12],
+                    "name": candidate.get("name", ""),
+                    "email": candidate.get("email"),
+                    "phone": candidate.get("phone"),
+                    "status": "pending",
+                }
+            )
 
         # Bulk insert
         result = supabase.table("voice_candidates").insert(candidates_data).execute()
 
-        logger.info(f"✅ Created {len(result.data)} candidates for campaign {request.campaign_id}")
+        logger.info(
+            f"✅ Created {len(result.data)} candidates for campaign {request.campaign_id}"
+        )
 
         return [VoiceCandidateResponse(**c) for c in result.data]
 
@@ -400,18 +483,20 @@ async def bulk_create_candidates(
 async def upload_candidates_file(
     campaign_id: str,
     file: UploadFile = File(...),
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Upload CSV/Excel file to bulk create candidates."""
     try:
         # Verify campaign
         supabase = get_supabase()
-        campaign_check = supabase.table("voice_screening_campaigns") \
-            .select("id") \
-            .eq("id", campaign_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        campaign_check = (
+            supabase.table("voice_screening_campaigns")
+            .select("id")
+            .eq("id", campaign_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not campaign_check.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -425,7 +510,9 @@ async def upload_candidates_file(
         elif file.filename.endswith((".xlsx", ".xls")):
             df = pd.read_excel(BytesIO(content))
         else:
-            raise HTTPException(status_code=400, detail="Only CSV and Excel files supported")
+            raise HTTPException(
+                status_code=400, detail="Only CSV and Excel files supported"
+            )
 
         # Validate required columns
         if "name" not in df.columns:
@@ -434,16 +521,22 @@ async def upload_candidates_file(
         # Prepare candidate data
         candidates_data = []
         for _, row in df.iterrows():
-            candidates_data.append({
-                "created_by": ctx.user_id,
-                "org_id": ctx.org_id,
-                "campaign_id": campaign_id,
-                "interview_token": uuid.uuid4().hex[:12],
-                "name": str(row.get("name", "")),
-                "email": str(row.get("email", "")) if pd.notna(row.get("email")) else None,
-                "phone": str(row.get("phone", "")) if pd.notna(row.get("phone")) else None,
-                "status": "pending"
-            })
+            candidates_data.append(
+                {
+                    "created_by": ctx.user_id,
+                    "org_id": ctx.org_id,
+                    "campaign_id": campaign_id,
+                    "interview_token": uuid.uuid4().hex[:12],
+                    "name": str(row.get("name", "")),
+                    "email": str(row.get("email", ""))
+                    if pd.notna(row.get("email"))
+                    else None,
+                    "phone": str(row.get("phone", ""))
+                    if pd.notna(row.get("phone"))
+                    else None,
+                    "status": "pending",
+                }
+            )
 
         # Bulk insert
         result = supabase.table("voice_candidates").insert(candidates_data).execute()
@@ -452,7 +545,7 @@ async def upload_candidates_file(
 
         return {
             "message": f"Successfully uploaded {len(result.data)} candidates",
-            "count": len(result.data)
+            "count": len(result.data),
         }
 
     except HTTPException:
@@ -466,17 +559,19 @@ async def upload_candidates_file(
 async def list_candidates(
     campaign_id: Optional[str] = None,
     status: Optional[str] = None,
-    ctx: OrgContext = Depends(require_permission('campaign:view'))
+    ctx: OrgContext = Depends(require_permission("campaign:view")),
 ):
     """List all candidates for current org with campaign name."""
     try:
         supabase = get_supabase()
 
         # Select with campaign name join
-        query = supabase.table("voice_candidates") \
-            .select("*, voice_screening_campaigns(name)") \
-            .eq("org_id", ctx.org_id) \
+        query = (
+            supabase.table("voice_candidates")
+            .select("*, voice_screening_campaigns(name)")
+            .eq("org_id", ctx.org_id)
             .order("created_at", desc=True)
+        )
 
         if campaign_id:
             query = query.eq("campaign_id", campaign_id)
@@ -492,7 +587,9 @@ async def list_candidates(
             candidate_dict = dict(candidate)
             # Extract campaign name from nested object
             if candidate.get("voice_screening_campaigns"):
-                candidate_dict["campaign_name"] = candidate["voice_screening_campaigns"].get("name")
+                candidate_dict["campaign_name"] = candidate[
+                    "voice_screening_campaigns"
+                ].get("name")
             # Remove nested object
             candidate_dict.pop("voice_screening_campaigns", None)
             candidates_with_campaign.append(VoiceCandidateResponse(**candidate_dict))
@@ -511,23 +608,31 @@ async def get_candidate_by_token(token: str):
         supabase = get_supabase()
 
         # Fetch candidate
-        result = supabase.table("voice_candidates") \
-            .select("*") \
-            .eq("interview_token", token) \
-            .single() \
+        result = (
+            supabase.table("voice_candidates")
+            .select("*")
+            .eq("interview_token", token)
+            .single()
             .execute()
+        )
 
         # FALLBACK: Partial match for legacy links if exact match fails
         if not result.data:
-            logger.info(f"Exact match failed for token {token[:10]}... trying partial match")
-            fallback_result = supabase.table("voice_candidates") \
-                .select("*") \
-                .like("interview_token", f"{token}%") \
+            logger.info(
+                f"Exact match failed for token {token[:10]}... trying partial match"
+            )
+            fallback_result = (
+                supabase.table("voice_candidates")
+                .select("*")
+                .like("interview_token", f"{token}%")
                 .execute()
-            
+            )
+
             if fallback_result.data and len(fallback_result.data) == 1:
-                result = type('obj', (object,), {'data': fallback_result.data[0]})
-                logger.info(f"✅ Found candidate via fallback partial match: {result.data['id']}")
+                result = type("obj", (object,), {"data": fallback_result.data[0]})
+                logger.info(
+                    f"✅ Found candidate via fallback partial match: {result.data['id']}"
+                )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Interview not found")
@@ -536,24 +641,69 @@ async def get_candidate_by_token(token: str):
 
         # Fetch campaign vapi_config if candidate has campaign_id
         vapi_config = None
+        campaign_scheduled_start = None
+        campaign_scheduled_end = None
         if candidate.get("campaign_id"):
             try:
-                campaign_response = supabase.table("voice_screening_campaigns") \
-                    .select("vapi_config") \
-                    .eq("id", candidate["campaign_id"]) \
-                    .single() \
+                campaign_response = (
+                    supabase.table("voice_screening_campaigns")
+                    .select(
+                        "vapi_config, scheduled_start_time, scheduled_end_time, grace_period_minutes, interview_duration_minutes"
+                    )
+                    .eq("id", candidate["campaign_id"])
+                    .single()
                     .execute()
+                )
 
-                if campaign_response.data and campaign_response.data.get("vapi_config"):
-                    vapi_config = campaign_response.data["vapi_config"]
-                    logger.info(f"✅ Fetched vapi_config for campaign {candidate['campaign_id']}")
+                if campaign_response.data:
+                    campaign_scheduled_start = campaign_response.data.get("scheduled_start_time")
+                    campaign_scheduled_end = campaign_response.data.get("scheduled_end_time")
+
+                    if campaign_response.data.get("vapi_config"):
+                        vapi_config = campaign_response.data["vapi_config"]
+                        scheduled_end = _parse_timestamp(
+                            campaign_response.data.get("scheduled_end_time")
+                        )
+                        grace_minutes = (
+                            campaign_response.data.get("grace_period_minutes") or 0
+                        )
+                        duration_minutes = (
+                            campaign_response.data.get("interview_duration_minutes") or 0
+                        )
+                        now = datetime.now(timezone.utc)
+
+                        max_duration = None
+                        if scheduled_end:
+                            end_with_grace = scheduled_end + timedelta(
+                                minutes=int(grace_minutes)
+                            )
+                            remaining = int((end_with_grace - now).total_seconds())
+                            if remaining > 0:
+                                max_duration = remaining
+                        elif duration_minutes:
+                            max_duration = int(duration_minutes * 60)
+
+                        if isinstance(vapi_config, dict) and max_duration:
+                            existing = vapi_config.get("maxDurationSeconds")
+                            if isinstance(existing, (int, float)):
+                                max_duration = min(int(existing), max_duration)
+                            vapi_config = {
+                                **vapi_config,
+                                "maxDurationSeconds": max_duration,
+                            }
+
+                    logger.info(
+                        f"✅ Fetched vapi_config for campaign {candidate['campaign_id']}"
+                    )
             except Exception as campaign_err:
                 logger.warning(f"⚠️ Failed to fetch campaign config: {campaign_err}")
                 # Continue with vapi_config = None (fallback to static assistant)
 
         return VoiceCandidateResponse(
             **candidate,
-            vapi_config=vapi_config
+            vapi_config=vapi_config,
+            scheduled_start_time=campaign_scheduled_start,
+            scheduled_end_time=campaign_scheduled_end,
         )
 
     except APIError as e:
@@ -567,19 +717,20 @@ async def get_candidate_by_token(token: str):
 
 @router.get("/candidates/{candidate_id}", response_model=VoiceCandidateResponse)
 async def get_candidate(
-    candidate_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:view'))
+    candidate_id: str, ctx: OrgContext = Depends(require_permission("campaign:view"))
 ):
     """Get candidate details."""
     try:
         supabase = get_supabase()
 
-        result = supabase.table("voice_candidates") \
-            .select("*") \
-            .eq("id", candidate_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        result = (
+            supabase.table("voice_candidates")
+            .select("*")
+            .eq("id", candidate_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
@@ -597,19 +748,21 @@ async def get_candidate(
 async def update_candidate(
     candidate_id: str,
     updates: VoiceCandidateUpdate,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Update candidate details (name, email, phone)."""
     try:
         supabase = get_supabase()
 
         # Verify org membership
-        existing = supabase.table("voice_candidates") \
-            .select("id, status") \
-            .eq("id", candidate_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        existing = (
+            supabase.table("voice_candidates")
+            .select("id, status")
+            .eq("id", candidate_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not existing.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
@@ -627,10 +780,12 @@ async def update_candidate(
             raise HTTPException(status_code=400, detail="No fields to update")
 
         # Update
-        result = supabase.table("voice_candidates") \
-            .update(update_data) \
-            .eq("id", candidate_id) \
+        result = (
+            supabase.table("voice_candidates")
+            .update(update_data)
+            .eq("id", candidate_id)
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=500, detail="Failed to update candidate")
@@ -647,18 +802,19 @@ async def update_candidate(
 
 @router.delete("/candidates/{candidate_id}")
 async def delete_candidate(
-    candidate_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    candidate_id: str, ctx: OrgContext = Depends(require_permission("campaign:create"))
 ):
     """Delete candidate (cascades to call history)."""
     try:
         supabase = get_supabase()
 
-        result = supabase.table("voice_candidates") \
-            .delete() \
-            .eq("id", candidate_id) \
-            .eq("org_id", ctx.org_id) \
+        result = (
+            supabase.table("voice_candidates")
+            .delete()
+            .eq("id", candidate_id)
+            .eq("org_id", ctx.org_id)
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
@@ -675,33 +831,88 @@ async def delete_candidate(
 # CALL MANAGEMENT ENDPOINTS (Public)
 # ============================================================================
 
-@router.post("/candidates/token/{token}/start-call", summary="Mark call started (public)")
+
+@router.post(
+    "/candidates/token/{token}/start-call", summary="Mark call started (public)"
+)
 async def start_call(token: str, call_id: Optional[str] = None):
     """Mark a candidate's call as in progress and store the VAPI call_id."""
     try:
         supabase = get_supabase()
 
         # Find candidate by token
-        result = supabase.table("voice_candidates") \
-            .select("id") \
-            .eq("interview_token", token) \
-            .single() \
+        result = (
+            supabase.table("voice_candidates")
+            .select("id,campaign_id,started_at")
+            .eq("interview_token", token)
+            .single()
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
 
+        candidate = result.data
+
+        # Enforce scheduling window if campaign has schedule
+        if candidate.get("campaign_id"):
+            campaign_result = (
+                supabase.table("voice_screening_campaigns")
+                .select(
+                    "scheduled_start_time, scheduled_end_time, grace_period_minutes"
+                )
+                .eq("id", candidate["campaign_id"])
+                .single()
+                .execute()
+            )
+            if campaign_result.data:
+                scheduled_start = _parse_timestamp(
+                    campaign_result.data.get("scheduled_start_time")
+                )
+                scheduled_end = _parse_timestamp(
+                    campaign_result.data.get("scheduled_end_time")
+                )
+                grace_minutes = campaign_result.data.get("grace_period_minutes") or 0
+                now = datetime.now(timezone.utc)
+
+                if scheduled_start and now < scheduled_start:
+                    raise HTTPException(
+                        status_code=403, detail="Interview window has not started yet"
+                    )
+
+                if scheduled_end:
+                    end_with_grace = scheduled_end + timedelta(
+                        minutes=int(grace_minutes)
+                    )
+                    if now > end_with_grace:
+                        supabase.table("voice_candidates").update(
+                            {
+                                "status": "failed",
+                                "time_expired": True,
+                                "ended_at": now.isoformat(),
+                            }
+                        ).eq("id", candidate["id"]).execute()
+                        raise HTTPException(
+                            status_code=403, detail="Interview window has ended"
+                        )
+
         # Update status to in_progress and save call_id if provided
-        update_data: Dict[str, Any] = {"status": "in_progress"}
+        update_data: Dict[str, Any] = {
+            "status": "in_progress",
+            "time_expired": False,
+        }
+        if not candidate.get("started_at"):
+            update_data["started_at"] = datetime.now(timezone.utc).isoformat()
         if call_id:
             update_data["latest_call_id"] = call_id
 
-        supabase.table("voice_candidates") \
-            .update(update_data) \
-            .eq("id", result.data["id"]) \
-            .execute()
+        supabase.table("voice_candidates").update(update_data).eq(
+            "id", candidate["id"]
+        ).execute()
 
-        logger.info(f"✅ Call started for candidate {result.data['id']}, call_id: {call_id}")
+        logger.info(
+            f"✅ Call started for candidate {candidate['id']}, call_id: {call_id}"
+        )
         return {"status": "in_progress"}
 
     except HTTPException:
@@ -711,8 +922,13 @@ async def start_call(token: str, call_id: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"Failed to start call: {str(e)}")
 
 
-@router.post("/candidates/token/{token}/reconnect", summary="Log microphone reconnection event (public)")
-async def log_reconnection_event(token: str, call_id: str, timestamp: str, event_type: str = "reconnect_attempt"):
+@router.post(
+    "/candidates/token/{token}/reconnect",
+    summary="Log microphone reconnection event (public)",
+)
+async def log_reconnection_event(
+    token: str, call_id: str, timestamp: str, event_type: str = "reconnect_attempt"
+):
     """
     Log a microphone disconnection/reconnection event during an active call.
 
@@ -729,25 +945,31 @@ async def log_reconnection_event(token: str, call_id: str, timestamp: str, event
         supabase = get_supabase()
 
         # Find candidate by token
-        candidate_result = supabase.table("voice_candidates") \
-            .select("id") \
-            .eq("interview_token", token) \
-            .single() \
+        candidate_result = (
+            supabase.table("voice_candidates")
+            .select("id")
+            .eq("interview_token", token)
+            .single()
             .execute()
+        )
 
         if not candidate_result.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
 
         # Find the call history record
-        call_result = supabase.table("voice_call_history") \
-            .select("id, disconnect_events") \
-            .eq("call_id", call_id) \
-            .eq("candidate_id", candidate_result.data["id"]) \
+        call_result = (
+            supabase.table("voice_call_history")
+            .select("id, disconnect_events")
+            .eq("call_id", call_id)
+            .eq("candidate_id", candidate_result.data["id"])
             .execute()
+        )
 
         if not call_result.data:
             # Call might not be in history yet (early disconnect)
-            logger.warning(f"Call {call_id} not found in history - event logged to candidate notes")
+            logger.warning(
+                f"Call {call_id} not found in history - event logged to candidate notes"
+            )
             return {"status": "logged_to_notes"}
 
         call_record = call_result.data[0]
@@ -756,24 +978,30 @@ async def log_reconnection_event(token: str, call_id: str, timestamp: str, event
         disconnect_events = call_record.get("disconnect_events") or []
 
         # Determine reconnection attempt number
-        reconnection_attempt = sum(
-            1 for e in disconnect_events if e.get("event_type") == "reconnect_attempt"
-        ) + 1
+        reconnection_attempt = (
+            sum(
+                1
+                for e in disconnect_events
+                if e.get("event_type") == "reconnect_attempt"
+            )
+            + 1
+        )
 
         # Add new event
         new_event = {
             "timestamp": timestamp,
             "event_type": event_type,
-            "reconnection_attempt": reconnection_attempt if "reconnect" in event_type else None
+            "reconnection_attempt": reconnection_attempt
+            if "reconnect" in event_type
+            else None,
         }
 
         disconnect_events.append(new_event)
 
         # Update call history
-        supabase.table("voice_call_history") \
-            .update({"disconnect_events": disconnect_events}) \
-            .eq("id", call_record["id"]) \
-            .execute()
+        supabase.table("voice_call_history").update(
+            {"disconnect_events": disconnect_events}
+        ).eq("id", call_record["id"]).execute()
 
         logger.info(
             f"✅ Logged {event_type} event for call {call_id}, "
@@ -783,7 +1011,9 @@ async def log_reconnection_event(token: str, call_id: str, timestamp: str, event
         return {
             "status": "logged",
             "event_type": event_type,
-            "reconnection_attempt": reconnection_attempt if "reconnect" in event_type else None
+            "reconnection_attempt": reconnection_attempt
+            if "reconnect" in event_type
+            else None,
         }
 
     except HTTPException:
@@ -797,17 +1027,20 @@ async def log_reconnection_event(token: str, call_id: str, timestamp: str, event
 # CALL HISTORY ENDPOINTS
 # ============================================================================
 
+
 @router.get("/campaigns/{campaign_id}/debug-config")
 async def debug_campaign_config(campaign_id: str):
     """Debug endpoint to check campaign vapi_config structure."""
     try:
         supabase = get_supabase_client()
 
-        result = supabase.table("voice_screening_campaigns") \
-            .select("id, name, vapi_config, generated_schema") \
-            .eq("id", campaign_id) \
-            .single() \
+        result = (
+            supabase.table("voice_screening_campaigns")
+            .select("id, name, vapi_config, generated_schema")
+            .eq("id", campaign_id)
+            .single()
             .execute()
+        )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Campaign not found")
@@ -838,7 +1071,9 @@ async def debug_campaign_config(campaign_id: str):
             "schema_fields_count": schema_fields_count,
             "generated_schema_fields": len(campaign.get("generated_schema", {})),
             "vapi_config_keys": list(vapi_config.keys()),
-            "analysis_plan_preview": vapi_config.get("analysisPlan", {}) if has_analysis_plan else None
+            "analysis_plan_preview": vapi_config.get("analysisPlan", {})
+            if has_analysis_plan
+            else None,
         }
 
     except Exception as e:
@@ -846,11 +1081,11 @@ async def debug_campaign_config(campaign_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/candidates/token/{token}/fetch-call-data", response_model=FetchCallDataResponse)
+@router.post(
+    "/candidates/token/{token}/fetch-call-data", response_model=FetchCallDataResponse
+)
 async def fetch_call_data(
-    token: str,
-    request: FetchCallDataRequest,
-    background_tasks: BackgroundTasks
+    token: str, request: FetchCallDataRequest, background_tasks: BackgroundTasks
 ):
     """
     Fetch call data from VAPI API and store in call_history.
@@ -861,11 +1096,13 @@ async def fetch_call_data(
         settings = get_settings()
 
         # Get candidate
-        candidate_result = supabase.table("voice_candidates") \
-            .select("*") \
-            .eq("interview_token", token) \
-            .single() \
+        candidate_result = (
+            supabase.table("voice_candidates")
+            .select("*")
+            .eq("interview_token", token)
+            .single()
             .execute()
+        )
 
         if not candidate_result.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
@@ -873,24 +1110,28 @@ async def fetch_call_data(
         candidate = candidate_result.data
 
         # Dedup: check if call data already saved (e.g. by webhook)
-        existing = supabase.table("voice_call_history") \
-            .select("id") \
-            .eq("call_id", request.call_id) \
+        existing = (
+            supabase.table("voice_call_history")
+            .select("id")
+            .eq("call_id", request.call_id)
             .execute()
+        )
 
         if existing.data:
-            logger.info(f"ℹ️ Call {request.call_id} already saved, returning existing record")
+            logger.info(
+                f"ℹ️ Call {request.call_id} already saved, returning existing record"
+            )
             return FetchCallDataResponse(
                 success=True,
                 message="Call data already saved (by webhook)",
-                call_history_id=existing.data[0]["id"]
+                call_history_id=existing.data[0]["id"],
             )
 
         # Fetch call data from VAPI
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"https://api.vapi.ai/call/{request.call_id}",
-                headers={"Authorization": f"Bearer {settings.VAPI_PRIVATE_KEY}"}
+                headers={"Authorization": f"Bearer {settings.VAPI_PRIVATE_KEY}"},
             )
             response.raise_for_status()
             call_data = response.json()
@@ -906,7 +1147,9 @@ async def fetch_call_data(
 
         structured_data = analysis_data.get("structuredData", {})
         logger.info(f"📊 Extracted structured_data: {structured_data}")
-        logger.info(f"📊 Structured data fields count: {len(structured_data) if structured_data else 0}")
+        logger.info(
+            f"📊 Structured data fields count: {len(structured_data) if structured_data else 0}"
+        )
 
         started_at = call_data.get("startedAt")
         ended_at = call_data.get("endedAt")
@@ -937,10 +1180,12 @@ async def fetch_call_data(
             "call_type": "actual",
             "vapi_cost_cents": int(cost * 100) if cost else None,
             "vapi_duration_minutes": round(duration / 60, 2) if duration else None,
-            "vapi_metadata": {"raw_call_data": call_data}
+            "vapi_metadata": {"raw_call_data": call_data},
         }
 
-        history_result = supabase.table("voice_call_history").insert(call_history_data).execute()
+        history_result = (
+            supabase.table("voice_call_history").insert(call_history_data).execute()
+        )
 
         if not history_result.data:
             raise HTTPException(status_code=500, detail="Failed to save call history")
@@ -948,24 +1193,28 @@ async def fetch_call_data(
         call_history_id = history_result.data[0]["id"]
 
         # Update candidate
-        supabase.table("voice_candidates") \
-            .update({
-                "status": "completed",
-                "latest_call_id": request.call_id
-            }) \
-            .eq("id", candidate["id"]) \
-            .execute()
+        supabase.table("voice_candidates").update(
+            {"status": "completed", "latest_call_id": request.call_id}
+        ).eq("id", candidate["id"]).execute()
 
         # Generate summary in background
         if transcript:
-            campaign_result = supabase.table("voice_screening_campaigns") \
-                .select("job_role, technical_requirements") \
-                .eq("id", candidate.get("campaign_id")) \
-                .single() \
+            campaign_result = (
+                supabase.table("voice_screening_campaigns")
+                .select("job_role, technical_requirements")
+                .eq("id", candidate.get("campaign_id"))
+                .single()
                 .execute()
+            )
 
-            job_role = campaign_result.data.get("job_role") if campaign_result.data else None
-            tech_req = campaign_result.data.get("technical_requirements") if campaign_result.data else None
+            job_role = (
+                campaign_result.data.get("job_role") if campaign_result.data else None
+            )
+            tech_req = (
+                campaign_result.data.get("technical_requirements")
+                if campaign_result.data
+                else None
+            )
 
             background_tasks.add_task(
                 generate_and_save_summary,
@@ -973,26 +1222,33 @@ async def fetch_call_data(
                 transcript,
                 structured_data,
                 job_role,
-                tech_req
+                tech_req,
             )
 
         logger.info(f"✅ Fetched call data for {request.call_id}")
 
         # Add warning if no structured data was extracted
         if not structured_data or len(structured_data) == 0:
-            logger.warning(f"⚠️ No structured data extracted from call {request.call_id}")
-            logger.warning(f"⚠️ Check if campaign vapi_config has analysisPlan.structuredDataPlan enabled")
+            logger.warning(
+                f"⚠️ No structured data extracted from call {request.call_id}"
+            )
+            logger.warning(
+                f"⚠️ Check if campaign vapi_config has analysisPlan.structuredDataPlan enabled"
+            )
 
         return FetchCallDataResponse(
             success=True,
             message="Call data fetched successfully",
             call_data=call_data,
-            call_history_id=call_history_id
+            call_history_id=call_history_id,
         )
 
     except httpx.HTTPStatusError as e:
         logger.error(f"❌ VAPI API error: {e.response.status_code}")
-        raise HTTPException(status_code=e.response.status_code, detail="Failed to fetch call data from VAPI")
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail="Failed to fetch call data from VAPI",
+        )
     except Exception as e:
         logger.error(f"❌ Error fetching call data: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1003,7 +1259,7 @@ async def generate_and_save_summary(
     transcript: str,
     structured_data: dict,
     job_role: str = None,
-    technical_requirements: str = None
+    technical_requirements: str = None,
 ):
     """Background task to generate and save interview summary."""
     try:
@@ -1013,19 +1269,18 @@ async def generate_and_save_summary(
             transcript=transcript,
             structured_data=structured_data,
             job_role=job_role,
-            technical_requirements=technical_requirements
+            technical_requirements=technical_requirements,
         )
 
         # Save to database
         supabase = get_supabase()
-        supabase.table("voice_call_history") \
-            .update({
+        supabase.table("voice_call_history").update(
+            {
                 "interview_summary": summary_result.get("interview_summary"),
                 "key_points": summary_result.get("key_points", []),
-                "technical_assessment": summary_result.get("technical_assessment", {})
-            }) \
-            .eq("id", call_history_id) \
-            .execute()
+                "technical_assessment": summary_result.get("technical_assessment", {}),
+            }
+        ).eq("id", call_history_id).execute()
 
         logger.info(f"✅ Generated summary for call history {call_history_id}")
 
@@ -1033,32 +1288,37 @@ async def generate_and_save_summary(
         logger.error(f"❌ Error generating summary: {str(e)}")
 
 
-@router.get("/candidates/{candidate_id}/call-history", response_model=List[CallHistoryResponse])
+@router.get(
+    "/candidates/{candidate_id}/call-history", response_model=List[CallHistoryResponse]
+)
 async def get_call_history(
-    candidate_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:view'))
+    candidate_id: str, ctx: OrgContext = Depends(require_permission("campaign:view"))
 ):
     """Get all calls for a candidate."""
     try:
         supabase = get_supabase()
 
         # Verify candidate belongs to org
-        candidate_check = supabase.table("voice_candidates") \
-            .select("id") \
-            .eq("id", candidate_id) \
-            .eq("org_id", ctx.org_id) \
-            .single() \
+        candidate_check = (
+            supabase.table("voice_candidates")
+            .select("id")
+            .eq("id", candidate_id)
+            .eq("org_id", ctx.org_id)
+            .single()
             .execute()
+        )
 
         if not candidate_check.data:
             raise HTTPException(status_code=404, detail="Candidate not found")
 
         # Get call history
-        result = supabase.table("voice_call_history") \
-            .select("*") \
-            .eq("candidate_id", candidate_id) \
-            .order("created_at", desc=True) \
+        result = (
+            supabase.table("voice_call_history")
+            .select("*")
+            .eq("candidate_id", candidate_id)
+            .order("created_at", desc=True)
             .execute()
+        )
 
         return [CallHistoryResponse(**call) for call in result.data]
 
@@ -1072,7 +1332,7 @@ async def get_call_history(
 @router.post("/call-history/{call_history_id}/re-evaluate")
 async def re_evaluate_interview(
     call_history_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """
     Re-generate AI summary and technical assessment from existing transcript.
@@ -1082,11 +1342,13 @@ async def re_evaluate_interview(
         supabase = get_supabase()
 
         # Get call history record with org check via voice_candidates
-        call_result = supabase.table("voice_call_history") \
-            .select("*, voice_candidates!inner(org_id, campaign_id)") \
-            .eq("id", call_history_id) \
-            .single() \
+        call_result = (
+            supabase.table("voice_call_history")
+            .select("*, voice_candidates!inner(org_id, campaign_id)")
+            .eq("id", call_history_id)
+            .single()
             .execute()
+        )
 
         if not call_result.data:
             raise HTTPException(status_code=404, detail="Call history not found")
@@ -1099,7 +1361,9 @@ async def re_evaluate_interview(
 
         # Check if transcript exists
         if not call_data.get("transcript"):
-            raise HTTPException(status_code=400, detail="No transcript available for re-evaluation")
+            raise HTTPException(
+                status_code=400, detail="No transcript available for re-evaluation"
+            )
 
         # Get campaign details for context
         job_role = None
@@ -1107,15 +1371,19 @@ async def re_evaluate_interview(
         campaign_id = call_data["voice_candidates"].get("campaign_id")
 
         if campaign_id:
-            campaign_result = supabase.table("voice_screening_campaigns") \
-                .select("job_role, technical_requirements") \
-                .eq("id", campaign_id) \
-                .single() \
+            campaign_result = (
+                supabase.table("voice_screening_campaigns")
+                .select("job_role, technical_requirements")
+                .eq("id", campaign_id)
+                .single()
                 .execute()
+            )
 
             if campaign_result.data:
                 job_role = campaign_result.data.get("job_role")
-                technical_requirements = campaign_result.data.get("technical_requirements")
+                technical_requirements = campaign_result.data.get(
+                    "technical_requirements"
+                )
 
         # Generate new summary
         summary_service = get_interview_summary_service()
@@ -1123,18 +1391,24 @@ async def re_evaluate_interview(
             transcript=call_data["transcript"],
             structured_data=call_data.get("structured_data", {}),
             job_role=job_role,
-            technical_requirements=technical_requirements
+            technical_requirements=technical_requirements,
         )
 
         # Update database with new summary
-        update_result = supabase.table("voice_call_history") \
-            .update({
-                "interview_summary": summary_result.get("interview_summary"),
-                "key_points": summary_result.get("key_points", []),
-                "technical_assessment": summary_result.get("technical_assessment", {})
-            }) \
-            .eq("id", call_history_id) \
+        update_result = (
+            supabase.table("voice_call_history")
+            .update(
+                {
+                    "interview_summary": summary_result.get("interview_summary"),
+                    "key_points": summary_result.get("key_points", []),
+                    "technical_assessment": summary_result.get(
+                        "technical_assessment", {}
+                    ),
+                }
+            )
+            .eq("id", call_history_id)
             .execute()
+        )
 
         logger.info(f"✅ Re-evaluated call history {call_history_id}")
 
@@ -1155,13 +1429,14 @@ async def re_evaluate_interview(
 # VAPI FILE UPLOAD ENDPOINTS
 # ============================================================================
 
+
 @router.post("/files/upload")
 async def upload_file_to_vapi(
     file: UploadFile = File(...),
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Upload file to VAPI for knowledge base."""
-    
+
     import tempfile
     import os
 
@@ -1196,7 +1471,9 @@ async def upload_file_to_vapi(
 
 
 @router.get("/files")
-async def list_vapi_files(ctx: OrgContext = Depends(require_permission('campaign:view'))):
+async def list_vapi_files(
+    ctx: OrgContext = Depends(require_permission("campaign:view")),
+):
     """List all files in VAPI."""
     try:
         vapi_file_service = get_vapi_file_service()
@@ -1211,12 +1488,10 @@ async def list_vapi_files(ctx: OrgContext = Depends(require_permission('campaign
 
 @router.delete("/files/{file_id}")
 async def delete_vapi_file(
-    file_id: str,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    file_id: str, ctx: OrgContext = Depends(require_permission("campaign:create"))
 ):
     """Delete file from VAPI."""
     try:
-        
         vapi_file_service = get_vapi_file_service()
         success = await vapi_file_service.delete_file(file_id)
 
@@ -1234,39 +1509,59 @@ async def delete_vapi_file(
 # QUESTION GENERATION ENDPOINT
 # ============================================================================
 
+
 @router.post("/generate-questions", response_model=QuestionGenerationResponse)
 async def generate_questions(
     request: QuestionGenerationRequest,
-    ctx: OrgContext = Depends(require_permission('campaign:create'))
+    ctx: OrgContext = Depends(require_permission("campaign:create")),
 ):
     """Generate interview questions using Ollama."""
     try:
-        
         import ollama
 
         # Build context based on question_basis
         context_parts = []
 
         if request.question_basis:
-            if "job_description" in request.question_basis and request.job_description_text:
-                context_parts.append(f"Job Description: {request.job_description_text[:500]}")
-            if "technical_requirements" in request.question_basis and request.technical_requirements:
-                context_parts.append(f"Technical Requirements: {request.technical_requirements}")
+            if (
+                "job_description" in request.question_basis
+                and request.job_description_text
+            ):
+                context_parts.append(
+                    f"Job Description: {request.job_description_text[:500]}"
+                )
+            if (
+                "technical_requirements" in request.question_basis
+                and request.technical_requirements
+            ):
+                context_parts.append(
+                    f"Technical Requirements: {request.technical_requirements}"
+                )
             if "job_role" in request.question_basis:
                 context_parts.append(f"Job Role: {request.job_role}")
         else:
             # Default fallback
             if request.job_description_text:
-                context_parts.append(f"Job Description: {request.job_description_text[:500]}")
+                context_parts.append(
+                    f"Job Description: {request.job_description_text[:500]}"
+                )
             if request.technical_requirements:
-                context_parts.append(f"Technical Requirements: {request.technical_requirements}")
+                context_parts.append(
+                    f"Technical Requirements: {request.technical_requirements}"
+                )
 
-        context = "\n\n".join(context_parts) if context_parts else f"Job Role: {request.job_role}"
+        context = (
+            "\n\n".join(context_parts)
+            if context_parts
+            else f"Job Role: {request.job_role}"
+        )
 
         # Build focus areas instruction
         focus_instruction = ""
         if request.focus_areas and len(request.focus_areas) > 0:
-            focus_instruction = f"\nFocus specifically on these areas: {', '.join(request.focus_areas)}"
+            focus_instruction = (
+                f"\nFocus specifically on these areas: {', '.join(request.focus_areas)}"
+            )
 
         # Build adaptive questioning instruction
         adaptive_instruction = ""
@@ -1295,10 +1590,13 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
         response = ollama.chat(
             model="qwen2.5:7b",
             messages=[
-                {"role": "system", "content": "You are an expert technical recruiter. Generate high-quality interview questions that feel natural and conversational."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are an expert technical recruiter. Generate high-quality interview questions that feel natural and conversational.",
+                },
+                {"role": "user", "content": prompt},
             ],
-            options={"temperature": 0.7}
+            options={"temperature": 0.7},
         )
 
         response_text = response["message"]["content"]
@@ -1315,8 +1613,16 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
             questions = json.loads(response_text)
             if isinstance(questions, list):
                 # Handle list of dicts with 'question' key
-                if questions and isinstance(questions[0], dict) and 'question' in questions[0]:
-                    questions = [q['question'] for q in questions if isinstance(q, dict) and 'question' in q]
+                if (
+                    questions
+                    and isinstance(questions[0], dict)
+                    and "question" in questions[0]
+                ):
+                    questions = [
+                        q["question"]
+                        for q in questions
+                        if isinstance(q, dict) and "question" in q
+                    ]
             else:
                 questions = []
         except:
@@ -1324,13 +1630,16 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
 
         if not questions:
             # Fallback: extract lines that look like questions
-            questions = [line.strip() for line in response_text.split("\\n") if line.strip() and "?" in line]
+            questions = [
+                line.strip()
+                for line in response_text.split("\\n")
+                if line.strip() and "?" in line
+            ]
 
         logger.info(f"✅ Generated {len(questions)} questions")
 
         return QuestionGenerationResponse(
-            questions=questions[:request.num_questions],
-            model="qwen2.5:7b"
+            questions=questions[: request.num_questions], model="qwen2.5:7b"
         )
 
     except Exception as e:
@@ -1341,6 +1650,7 @@ Return ONLY a JSON array of strings: ["Question 1", "Question 2", ...]
 # ============================================================================
 # WEBHOOK ENDPOINT
 # ============================================================================
+
 
 @router.post("/webhook")
 async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -1358,48 +1668,108 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
         # Handle different webhook types
         message = payload_dict.get("message", {})
         message_type = message.get("type") if message else None
+        call_data = message.get("call", {}) if message else {}
+        call_id = call_data.get("id", "unknown")
 
         logger.info(f"📨 Message type: {message_type}")
+
+        # Log event based on message type
+        if message_type == "transcript":
+            # Log transcript events (candidate or assistant speech)
+            transcript_data = message.get("transcript", {})
+            role = transcript_data.get("role", "unknown")
+            text = transcript_data.get("text", "")
+            is_final = transcript_data.get("isFinal", True)
+            timestamp = transcript_data.get("timestamp")
+
+            VapiEventLogger.log_transcript(
+                call_id=call_id,
+                role=role,
+                transcript=text,
+                is_final=is_final,
+                timestamp=timestamp,
+            )
+
+        elif message_type == "speech-update":
+            # Log speech updates (when AI starts/stops speaking)
+            status = message.get("status", "unknown")
+            VapiEventLogger.log_speech_update(
+                call_id=call_id, status=status, details=message
+            )
+
+        elif (
+            message_type == "assistant-request" or message_type == "assistant-response"
+        ):
+            # Log when assistant is about to speak or has finished speaking
+            assistant_message = message.get("message", {})
+            content = assistant_message.get("content", "")
+            if content:
+                VapiEventLogger.log_assistant_speech(call_id=call_id, message=content)
+
+        elif message_type == "user-interrupted":
+            # Log when user interrupts assistant
+            interrupted_by = message.get("text", "unknown")
+            VapiEventLogger.log_interruption(
+                call_id=call_id, interrupted_by=interrupted_by, context=message
+            )
 
         if message_type == "end-of-call-report":
             # Extract call data from the webhook payload
             call_data = message.get("call", {})
             call_id = call_data.get("id")
-            transcript = message.get("transcript", "") or call_data.get("transcript", "")
+            transcript = message.get("transcript", "") or call_data.get(
+                "transcript", ""
+            )
             recording_url = message.get("recordingUrl") or call_data.get("recordingUrl")
-            structured_data = message.get("analysis", {}).get("structuredData", {}) or {}
+            structured_data = (
+                message.get("analysis", {}).get("structuredData", {}) or {}
+            )
+            duration = call_data.get("duration")
+            end_reason = call_data.get("endedReason", "unknown")
 
             logger.info(f"✅ Received end-of-call report for call {call_id}")
             logger.info(f"📝 Transcript length: {len(transcript)} chars")
             logger.info(f"🎙️ Recording URL: {recording_url}")
 
+            # Log call end event
+            VapiEventLogger.log_call_end(
+                call_id=call_id, duration_seconds=duration, end_reason=end_reason
+            )
+
             if call_id:
                 supabase = get_supabase()
 
                 # Dedup: check if already saved
-                existing = supabase.table("voice_call_history") \
-                    .select("id") \
-                    .eq("call_id", call_id) \
+                existing = (
+                    supabase.table("voice_call_history")
+                    .select("id")
+                    .eq("call_id", call_id)
                     .execute()
+                )
 
                 if existing.data:
-                    logger.info(f"ℹ️ Call {call_id} already saved in voice_call_history, skipping webhook save")
+                    logger.info(
+                        f"ℹ️ Call {call_id} already saved in voice_call_history, skipping webhook save"
+                    )
                 else:
                     # Find candidate by latest_call_id
                     try:
-                        candidate_result = supabase.table("voice_candidates") \
-                            .select("id, campaign_id") \
-                            .eq("latest_call_id", call_id) \
-                            .single() \
+                        candidate_result = (
+                            supabase.table("voice_candidates")
+                            .select("id, campaign_id")
+                            .eq("latest_call_id", call_id)
+                            .single()
                             .execute()
+                        )
                         candidate = candidate_result.data
                     except Exception as e:
                         # No candidate found with this call_id (Vapi sent event for unknown call)
-                        logger.info(f"No candidate found for call_id {call_id}, skipping webhook save")
+                        logger.info(
+                            f"No candidate found for call_id {call_id}, skipping webhook save"
+                        )
                         candidate = None
 
                     if candidate:
-
                         started_at = call_data.get("startedAt")
                         ended_at = call_data.get("endedAt")
                         duration = call_data.get("duration")
@@ -1426,32 +1796,52 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
                             "structured_data": structured_data,
                             "call_type": "actual",
                             "vapi_cost_cents": int(cost * 100) if cost else None,
-                            "vapi_duration_minutes": round(duration / 60, 2) if duration else None,
-                            "vapi_metadata": {"source": "webhook", "raw_message": message}
+                            "vapi_duration_minutes": round(duration / 60, 2)
+                            if duration
+                            else None,
+                            "vapi_metadata": {
+                                "source": "webhook",
+                                "raw_message": message,
+                            },
                         }
 
-                        history_result = supabase.table("voice_call_history").insert(call_history_data).execute()
+                        history_result = (
+                            supabase.table("voice_call_history")
+                            .insert(call_history_data)
+                            .execute()
+                        )
 
                         if history_result.data:
                             call_history_id = history_result.data[0]["id"]
-                            logger.info(f"✅ Webhook saved call data for {call_id}, history_id: {call_history_id}")
+                            logger.info(
+                                f"✅ Webhook saved call data for {call_id}, history_id: {call_history_id}"
+                            )
 
                             # Update candidate status
-                            supabase.table("voice_candidates") \
-                                .update({"status": "completed"}) \
-                                .eq("id", candidate["id"]) \
-                                .execute()
+                            supabase.table("voice_candidates").update(
+                                {"status": "completed"}
+                            ).eq("id", candidate["id"]).execute()
 
                             # Generate summary in background
                             if transcript:
-                                campaign_result = supabase.table("voice_screening_campaigns") \
-                                    .select("job_role, technical_requirements") \
-                                    .eq("id", candidate.get("campaign_id")) \
-                                    .single() \
+                                campaign_result = (
+                                    supabase.table("voice_screening_campaigns")
+                                    .select("job_role, technical_requirements")
+                                    .eq("id", candidate.get("campaign_id"))
+                                    .single()
                                     .execute()
+                                )
 
-                                job_role = campaign_result.data.get("job_role") if campaign_result.data else None
-                                tech_req = campaign_result.data.get("technical_requirements") if campaign_result.data else None
+                                job_role = (
+                                    campaign_result.data.get("job_role")
+                                    if campaign_result.data
+                                    else None
+                                )
+                                tech_req = (
+                                    campaign_result.data.get("technical_requirements")
+                                    if campaign_result.data
+                                    else None
+                                )
 
                                 background_tasks.add_task(
                                     generate_and_save_summary,
@@ -1459,12 +1849,16 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
                                     transcript,
                                     structured_data,
                                     job_role,
-                                    tech_req
+                                    tech_req,
                                 )
                         else:
-                            logger.error(f"❌ Webhook failed to insert call history for {call_id}")
+                            logger.error(
+                                f"❌ Webhook failed to insert call history for {call_id}"
+                            )
                     else:
-                        logger.warning(f"⚠️ No candidate found with latest_call_id={call_id}, webhook data not saved")
+                        logger.warning(
+                            f"⚠️ No candidate found with latest_call_id={call_id}, webhook data not saved"
+                        )
 
         elif message_type == "function-call":
             # Handle function calling (e.g., end_call)
@@ -1484,19 +1878,18 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
 # EXPORT ENDPOINT
 # ============================================================================
 
+
 @router.get("/export")
 async def export_candidates(
     campaign_id: Optional[str] = None,
-    ctx: OrgContext = Depends(require_permission('campaign:view'))
+    ctx: OrgContext = Depends(require_permission("campaign:view")),
 ):
     """Export candidates to Excel with call history and summaries."""
     try:
         supabase = get_supabase()
 
         # Fetch candidates
-        query = supabase.table("voice_candidates") \
-            .select("*") \
-            .eq("org_id", ctx.org_id)
+        query = supabase.table("voice_candidates").select("*").eq("org_id", ctx.org_id)
 
         if campaign_id:
             query = query.eq("campaign_id", campaign_id)
@@ -1506,10 +1899,12 @@ async def export_candidates(
 
         # Fetch call history for all candidates
         candidate_ids = [c["id"] for c in candidates]
-        call_history_result = supabase.table("voice_call_history") \
-            .select("*") \
-            .in_("candidate_id", candidate_ids) \
+        call_history_result = (
+            supabase.table("voice_call_history")
+            .select("*")
+            .in_("candidate_id", candidate_ids)
             .execute()
+        )
 
         call_history_map = {}
         for call in call_history_result.data:
@@ -1534,7 +1929,7 @@ async def export_candidates(
                 "Status": candidate.get("status"),
                 "Campaign ID": candidate.get("campaign_id"),
                 "Interview Link": f"{settings.FRONTEND_URL}/voice-interview/{candidate['interview_token']}",
-                "Total Calls": len(calls)
+                "Total Calls": len(calls),
             }
 
             # Add latest call data
@@ -1542,8 +1937,12 @@ async def export_candidates(
                 row["Latest Call Date"] = latest_call.get("created_at")
                 row["Duration (mins)"] = latest_call.get("vapi_duration_minutes")
                 row["Summary"] = latest_call.get("interview_summary")
-                row["Recommendation"] = latest_call.get("technical_assessment", {}).get("recommendation")
-                row["Experience Level"] = latest_call.get("technical_assessment", {}).get("experience_level")
+                row["Recommendation"] = latest_call.get("technical_assessment", {}).get(
+                    "recommendation"
+                )
+                row["Experience Level"] = latest_call.get(
+                    "technical_assessment", {}
+                ).get("experience_level")
 
                 # Add structured data fields
                 structured = latest_call.get("structured_data", {})
@@ -1555,15 +1954,17 @@ async def export_candidates(
         # Create Excel
         df = pd.DataFrame(export_data)
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Candidates')
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Candidates")
 
         output.seek(0)
 
         return StreamingResponse(
             output,
-            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            headers={'Content-Disposition': f'attachment; filename="voice_screening_export.xlsx"'}
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="voice_screening_export.xlsx"'
+            },
         )
 
     except Exception as e:

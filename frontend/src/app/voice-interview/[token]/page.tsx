@@ -3,9 +3,36 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { getCandidateByToken, startCall, fetchCallData, type VoiceCandidatePublic } from '@/lib/api/voice-screening'
-import { Phone, Mic, MicOff, Loader2, CheckCircle, AlertCircle, WifiOff, MicOff as MicOffIcon } from 'lucide-react'
+import { Phone, Mic, MicOff, Loader2, CheckCircle, AlertCircle, WifiOff, MicOff as MicOffIcon, Clock, Calendar } from 'lucide-react'
 import Vapi from '@vapi-ai/web'
 import { DisconnectionModal } from '@/components/voice-screening/DisconnectionModal'
+
+function formatTime(seconds: number): string {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function formatScheduleTime(isoString: string): string {
+    try {
+        const d = new Date(isoString)
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    } catch {
+        return isoString
+    }
+}
+
+function getTimerColor(seconds: number): string {
+    if (seconds > 300) return 'text-green-400'
+    if (seconds > 60) return 'text-yellow-400'
+    return 'text-red-400'
+}
+
+function getTimerBgColor(seconds: number): string {
+    if (seconds > 300) return 'bg-green-500/20 border-green-500/40'
+    if (seconds > 60) return 'bg-yellow-500/20 border-yellow-500/40'
+    return 'bg-red-500/20 border-red-500/40'
+}
 
 const VAPI_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY || ''
 const VAPI_ASSISTANT_ID = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID || ''
@@ -83,9 +110,14 @@ export default function VoiceInterviewPage() {
     const [errorType, setErrorType] = useState<ErrorType>('generic')
     const [isOnline, setIsOnline] = useState(true)
     const [showDisconnectionModal, setShowDisconnectionModal] = useState(false)
+    const [tooEarly, setTooEarly] = useState(false)
+    const [timeRemaining, setTimeRemaining] = useState(0)
+    const [toastMessage, setToastMessage] = useState<string | null>(null)
     const vapiRef = useRef<Vapi | null>(null)
     const capturedCallIdRef = useRef<string | null>(null)
     const disconnectTimeRef = useRef<string | null>(null)
+    const timerRef = useRef<NodeJS.Timeout | null>(null)
+    const toastTimerRef = useRef<NodeJS.Timeout | null>(null)
 
     // Redirect to setup page if microphone setup hasn't been completed
     // Microphone is MANDATORY for voice interviews - no skip option
@@ -122,6 +154,12 @@ export default function VoiceInterviewPage() {
         if (token) fetchCandidate()
     }, [token])
 
+    const showToast = useCallback((msg: string, durationMs = 4000) => {
+        setToastMessage(msg)
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), durationMs)
+    }, [])
+
     const fetchCandidate = async () => {
         try {
             setLoading(true)
@@ -131,12 +169,55 @@ export default function VoiceInterviewPage() {
             if (data.status === 'completed') {
                 setCallState('ended')
             }
+
+            // Check scheduling
+            if (data.scheduled_start_time) {
+                const startTime = new Date(data.scheduled_start_time)
+                if (startTime > new Date()) {
+                    setTooEarly(true)
+                    showToast(`Interview starts at ${formatScheduleTime(data.scheduled_start_time)}. Please wait.`, 6000)
+                }
+            }
         } catch (err: any) {
             setError('Interview link is invalid or has expired.')
         } finally {
             setLoading(false)
         }
     }
+
+    // Re-check tooEarly every 10s in case time passes
+    useEffect(() => {
+        if (!tooEarly || !candidate?.scheduled_start_time) return
+        const interval = setInterval(() => {
+            const startTime = new Date(candidate.scheduled_start_time!)
+            if (startTime <= new Date()) {
+                setTooEarly(false)
+                showToast('Interview window is now open. You may start.')
+            }
+        }, 10000)
+        return () => clearInterval(interval)
+    }, [tooEarly, candidate?.scheduled_start_time, showToast])
+
+    // Timer countdown effect
+    useEffect(() => {
+        if (callState !== 'active' || timeRemaining <= 0) {
+            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+            return
+        }
+        timerRef.current = setInterval(() => {
+            setTimeRemaining(prev => {
+                const next = prev - 1
+                if (next === 120) showToast('⏰ 2 minutes remaining')
+                if (next === 60) showToast('⏰ 1 minute remaining')
+                if (next <= 0) {
+                    if (timerRef.current) clearInterval(timerRef.current)
+                    return 0
+                }
+                return next
+            })
+        }, 1000)
+        return () => { if (timerRef.current) clearInterval(timerRef.current) }
+    }, [callState, timeRemaining > 0, showToast])
 
     const showError = useCallback((err: any) => {
         const type = classifyError(err)
@@ -241,11 +322,23 @@ export default function VoiceInterviewPage() {
 
             vapi.on('call-start', () => {
                 setCallState('active')
+                // Initialize timer: prefer scheduled_end_time (excludes grace), fallback to maxDurationSeconds
+                if (candidate.scheduled_end_time) {
+                    const endTime = new Date(candidate.scheduled_end_time)
+                    const remaining = Math.max(0, Math.floor((endTime.getTime() - Date.now()) / 1000))
+                    if (remaining > 0) setTimeRemaining(remaining)
+                } else {
+                    const maxDur = candidate.vapi_config?.maxDurationSeconds
+                    if (maxDur && typeof maxDur === 'number' && maxDur > 0) {
+                        setTimeRemaining(maxDur)
+                    }
+                }
                 startCall(candidate.interview_token, '').catch(() => { })
             })
 
             vapi.on('call-end', () => {
                 vapiRef.current = null
+                setTimeRemaining(0)
                 const callId = capturedCallIdRef.current
                 if (callId && token) {
                     setCallState('processing')
@@ -435,6 +528,34 @@ Be conversational and professional.`,
                             <p>The call will take approximately 5-10 minutes.</p>
                         </div>
 
+                        {/* Scheduling info */}
+                        {(candidate?.scheduled_start_time || candidate?.scheduled_end_time) && (
+                            <div className="bg-teal-500/10 border border-teal-500/30 rounded-xl p-4 text-left text-sm space-y-2">
+                                {candidate.scheduled_start_time && (
+                                    <p className="text-teal-200 flex items-center gap-2">
+                                        <Calendar className="h-4 w-4 flex-shrink-0" />
+                                        <span>Scheduled: {formatScheduleTime(candidate.scheduled_start_time)}</span>
+                                    </p>
+                                )}
+                                {candidate.scheduled_end_time && (
+                                    <p className="text-teal-200 flex items-center gap-2">
+                                        <Clock className="h-4 w-4 flex-shrink-0" />
+                                        <span>Call will end at {formatScheduleTime(candidate.scheduled_end_time)}</span>
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Too early warning */}
+                        {tooEarly && candidate?.scheduled_start_time && (
+                            <div className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-4 text-left text-sm">
+                                <p className="text-orange-200 font-medium flex items-start gap-2">
+                                    <Clock className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                    <span>The interview window hasn&apos;t opened yet. It starts at {formatScheduleTime(candidate.scheduled_start_time)}. Please wait.</span>
+                                </p>
+                            </div>
+                        )}
+
                         {/* Screen monitoring notice */}
                         <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-left text-sm">
                             <p className="text-yellow-200 font-medium flex items-start gap-2">
@@ -445,11 +566,11 @@ Be conversational and professional.`,
 
                         <button
                             onClick={handleStartInterview}
-                            disabled={!isOnline}
+                            disabled={!isOnline || tooEarly}
                             className="w-full py-4 rounded-xl bg-gradient-to-r from-teal-500 to-green-500 hover:from-teal-600 hover:to-green-600 text-white font-semibold text-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                         >
                             <Mic className="h-6 w-6" />
-                            {isOnline ? 'Start Interview' : 'Waiting for connection...'}
+                            {tooEarly ? 'Interview not started yet' : isOnline ? 'Start Interview' : 'Waiting for connection...'}
                         </button>
                     </div>
                 )}
@@ -546,6 +667,43 @@ Be conversational and professional.`,
                     </div>
                 )}
             </div>
+
+            {/* Toast notification */}
+            {toastMessage && (
+                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-fade-in">
+                    <div className="bg-slate-800/95 backdrop-blur-lg border border-white/20 rounded-xl px-5 py-3 shadow-2xl">
+                        <p className="text-white text-sm font-medium">{toastMessage}</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Footer bar - visible during active call */}
+            {callState === 'active' && (
+                <div className="fixed bottom-0 left-0 right-0 z-40">
+                    <div className="bg-slate-900/95 backdrop-blur-lg border-t border-white/10 px-4 py-3">
+                        <div className="max-w-md mx-auto flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2 text-green-400">
+                                <Mic className="h-4 w-4" />
+                                <span className="text-xs">Live</span>
+                            </div>
+                            {candidate?.scheduled_start_time && (
+                                <div className="flex items-center gap-1.5 text-gray-400">
+                                    <Calendar className="h-3.5 w-3.5" />
+                                    <span className="text-xs">Start: {formatScheduleTime(candidate.scheduled_start_time)}</span>
+                                </div>
+                            )}
+                            {timeRemaining > 0 && (
+                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${getTimerBgColor(timeRemaining)}`}>
+                                    <Clock className={`h-3.5 w-3.5 ${getTimerColor(timeRemaining)}`} />
+                                    <span className={`text-xs font-mono font-semibold ${getTimerColor(timeRemaining)}`}>
+                                        {formatTime(timeRemaining)} remaining
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Disconnection Modal */}
             <DisconnectionModal

@@ -30,7 +30,8 @@ class VAPIConfigBuilder:
         candidate_type: str = "general",
         knowledge_base_file_ids: list = None,
         enable_functions: bool = True,
-        interview_style: str = "conversational"
+        interview_style: str = "conversational",
+        max_duration_seconds: int = 900
     ) -> Dict[str, Any]:
         """
         Construct full VAPI assistant configuration.
@@ -42,6 +43,7 @@ class VAPIConfigBuilder:
             knowledge_base_file_ids: List of VAPI file IDs for knowledge base
             enable_functions: Enable function calling (e.g., end_call)
             interview_style: structured/adaptive/conversational
+            max_duration_seconds: Maximum call duration in seconds (default: 900 = 15 min)
 
         Returns:
             Complete VAPI configuration dict ready for vapi.start(config)
@@ -72,28 +74,34 @@ class VAPIConfigBuilder:
             },
             "firstMessage": "Hi! Thank you for taking the time to speak with me today. Let's get started with the interview.",
             "recordingEnabled": True,
-            "maxDurationSeconds": 900,  # 15 minutes
+            "maxDurationSeconds": max_duration_seconds,  # Configurable duration (default: 900 = 15 min)
             "silenceTimeoutSeconds": 60,  # 60s silence before auto-end (was 45, too aggressive)
             "transcriber": {
                 "provider": "deepgram",
                 "model": "nova-2",
                 "language": "en",
-                "endpointing": 500,  # Wait 500ms of silence before finalizing speech
+                "endpointing": 1200,  # Wait 1200ms (1.2s) of silence - allows thinking pauses
             },
             "analysisPlan": {
-                "structuredDataPrompt": "You are an expert data extractor. Extract the structured data from this interview conversation per the JSON Schema. Focus on extracting accurate information discussed during the call. If information is unclear or not mentioned, use null values.",
+                "structuredDataPrompt": "You are a strict data extractor. ONLY extract information that was EXPLICITLY stated by the candidate during the conversation. If the candidate did not clearly mention a piece of information, you MUST use null. Do NOT guess, infer, or assume any information. If the conversation was too short or the candidate did not provide substantive answers, ALL fields should be null.",
                 "structuredDataSchema": self._build_analysis_schema(structured_data_schema)
             },
             # Use VAPI's built-in end call — no webhook needed
             "endCallFunctionEnabled": True,
             # Turn-taking: prevent AI from speaking over the candidate
             "startSpeakingPlan": {
-                "waitSeconds": 1.8,
+                "waitSeconds": 2.8,  # Wait 2.8s before assistant starts speaking (gives thinking time)
                 "smartEndpointingEnabled": True,
+                "transcriptionEndpointingPlan": {
+                    "onPunctuationSeconds": 0.4,   # Wait 0.4s after punctuation
+                    "onNoPunctuationSeconds": 1.8, # Wait 1.8s if no punctuation (thinking/incomplete)
+                    "onNumberSeconds": 1.2,        # Wait 1.2s for complete numbers
+                }
             },
             "stopSpeakingPlan": {
-                "numWords": 0,
-                "backoffSeconds": 1.0,
+                "numWords": 2,           # Require 2+ words to count as interruption (ignores "ah", "um")
+                "voiceSeconds": 0.4,     # Require 0.4s of voice activity to count as interruption
+                "backoffSeconds": 1.5,   # Wait 1.5s after interruption before resuming
             },
         }
 

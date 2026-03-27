@@ -238,15 +238,15 @@ export default function CampaignsPage() {
       {/* Header */}
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Hiring Campaigns</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">Batches</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Organize candidates by hiring drives with multiple jobs and interview slots
+            Organize candidates by batches with multiple jobs and interview slots
           </p>
         </div>
         <Link href="/dashboard/campaigns/create">
           <Button className="bg-indigo-600 hover:bg-indigo-700">
             <Plus className="w-4 h-4 mr-2" />
-            New Campaign
+            New Batch
           </Button>
         </Link>
       </div>
@@ -287,7 +287,7 @@ export default function CampaignsPage() {
       {campaigns.length === 0 ? (
         <div className="text-center py-16">
           <Briefcase className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-slate-900 mb-2">No campaigns found</h3>
+          <h3 className="text-lg font-medium text-slate-900 mb-2">No batches found</h3>
           <p className="text-slate-600 mb-6">
             {filter === 'active'
               ? 'Create your first campaign to start organizing candidates'
@@ -296,7 +296,7 @@ export default function CampaignsPage() {
           <Link href="/dashboard/campaigns/create">
             <Button className="bg-indigo-600 hover:bg-indigo-700">
               <Plus className="w-4 h-4 mr-2" />
-              Create Campaign
+              Create Batch
             </Button>
           </Link>
         </div>
@@ -331,7 +331,7 @@ export default function CampaignsPage() {
                         openEditDialog(campaign)
                       }}
                       className="h-8 w-8"
-                      aria-label="Edit campaign"
+                      aria-label="Edit batch"
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -343,7 +343,7 @@ export default function CampaignsPage() {
                         openDeleteDialog(campaign.id)
                       }}
                       className="h-8 w-8 border-red-200 text-red-600 hover:bg-red-50"
-                      aria-label="Delete campaign"
+                      aria-label="Delete batch"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -402,9 +402,9 @@ export default function CampaignsPage() {
         open={showDeleteDialog}
         onOpenChange={setShowDeleteDialog}
         onConfirm={confirmDeleteCampaign}
-        title="Delete Campaign"
-        description="This will permanently remove the campaign and all associated data. This action cannot be undone."
-        confirmText="Delete Campaign"
+        title="Delete Batch"
+        description="This will permanently remove the batch and all associated data. This action cannot be undone."
+        confirmText="Delete Batch"
         cancelText="Cancel"
         variant="destructive"
       />
@@ -413,7 +413,7 @@ export default function CampaignsPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-slate-200">
-              <h2 className="text-xl font-semibold">Campaign Settings</h2>
+              <h2 className="text-xl font-semibold">Batch Settings</h2>
             </div>
 
             <div className="p-6 space-y-6">
@@ -422,7 +422,7 @@ export default function CampaignsPage() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Campaign Name <span className="text-red-500">*</span>
+                      Batch Name <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -442,7 +442,7 @@ export default function CampaignsPage() {
                       value={editForm.description}
                       onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
                       rows={3}
-                      placeholder="Brief description of this hiring campaign"
+                      placeholder="Brief description of this batch"
                     />
                   </div>
 

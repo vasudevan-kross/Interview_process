@@ -34,7 +34,6 @@ ollama pull qwen2.5:7b && ollama pull glm-ocr   # required models
 Copy `backend/.env.example` → `backend/.env` and fill in:
 - `SUPABASE_URL`, `SUPABASE_KEY` (service role), `SUPABASE_ANON_KEY`
 - `SECRET_KEY` (min 32 chars)
-- `DAILY_API_KEY` (video interviews, optional)
 - `VAPI_PRIVATE_KEY` / `VAPI_ASSISTANT_ID` (voice screening, optional)
 - `GMAIL_APP_PASSWORD` (transactional email, optional)
 
@@ -50,7 +49,7 @@ Run the single consolidated schema file in Supabase SQL editor:
 This file contains the complete, up-to-date database schema including all tables, indexes, RLS policies, functions, triggers, and seed data.
 
 **For existing projects or incremental updates:**
-Individual migration files (numbered 001–036) are kept in `backend/migrations/` for reference and can be run sequentially. The consolidated file (`000_consolidated_schema.sql`) represents the final state after all migrations.
+Individual migration files (numbered 001–042) are kept in `backend/migrations/` for reference and can be run sequentially. The consolidated file (`000_consolidated_schema.sql`) represents the final state after all migrations.
 
 **Note:** There is no migration runner script — all migrations are plain SQL executed manually in Supabase's SQL editor.
 
@@ -63,7 +62,7 @@ Individual migration files (numbered 001–036) are kept in `backend/migrations/
 - **Frontend:** Next.js 15 (App Router) + React 19 + TypeScript + Tailwind CSS + shadcn/ui
 - **Database:** Supabase (PostgreSQL + pgvector + Auth + Storage)
 - **LLM:** Ollama (local) — default model `qwen2.5:7b`, vision/OCR model `glm-ocr`
-- **Video:** Daily.co (`@daily-co/daily-js`)
+- **PDF Reports:** ReportLab (no system dependencies)
 - **Voice AI:** Vapi.ai (`@vapi-ai/web`)
 
 ### Backend API Structure
@@ -74,7 +73,6 @@ All routes are under `/api/v1/` and registered in `backend/app/api/v1/__init__.p
 | `common.py` | Health, auth, shared endpoints |
 | `resume_matching.py` | Job descriptions + resume upload & scoring |
 | `test_evaluation.py` / `test_evaluation_batch.py` | Answer sheet grading |
-| `video_interviews.py` | Daily.co room lifecycle |
 | `coding_interviews.py` | Monaco editor sessions |
 | `voice_screening.py` | Vapi campaign management |
 | `pipeline.py` | Candidate pipeline CRUD |

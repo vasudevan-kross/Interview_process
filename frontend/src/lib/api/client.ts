@@ -245,7 +245,7 @@ class APIClient {
 
   async createCampaign(data: {
     name: string
-    description?: string
+    description?: string | null
     metadata?: {
       slots?: Array<{ name: string; time_start: string; time_end: string; description?: string }>
       target_roles?: string[]
@@ -258,7 +258,7 @@ class APIClient {
 
   async updateCampaign(campaignId: string, data: {
     name?: string
-    description?: string
+    description?: string | null
     status?: string
     metadata?: any
   }) {
@@ -273,6 +273,48 @@ class APIClient {
 
   async getCampaignAnalytics(campaignId: string) {
     const response = await this.client.get(`/api/v1/campaigns/${campaignId}/analytics`)
+    return response.data
+  }
+
+  async getCampaignReport(campaignId: string) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}/report`)
+    return response.data
+  }
+
+  async downloadCampaignReportCsv(campaignId: string) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}/export.csv`, {
+      responseType: 'blob',
+    })
+    return response.data
+  }
+
+  async downloadCampaignReportPdf(campaignId: string) {
+    const response = await this.client.get(`/api/v1/campaigns/${campaignId}/export.pdf`, {
+      responseType: 'blob',
+    })
+    return response.data
+  }
+
+  async getCandidateReport(campaignId: string, candidateId: string) {
+    const response = await this.client.get(
+      `/api/v1/campaigns/${campaignId}/candidates/${candidateId}/report`
+    )
+    return response.data
+  }
+
+  async downloadCandidateReportCsv(campaignId: string, candidateId: string) {
+    const response = await this.client.get(
+      `/api/v1/campaigns/${campaignId}/candidates/${candidateId}/export.csv`,
+      { responseType: 'blob' }
+    )
+    return response.data
+  }
+
+  async downloadCandidateReportPdf(campaignId: string, candidateId: string) {
+    const response = await this.client.get(
+      `/api/v1/campaigns/${campaignId}/candidates/${candidateId}/export.pdf`,
+      { responseType: 'blob' }
+    )
     return response.data
   }
 
@@ -373,6 +415,32 @@ class APIClient {
 
   async deleteCampaignCandidate(campaignId: string, candidateId: string) {
     const response = await this.client.delete(`/api/v1/campaigns/${campaignId}/candidates/${candidateId}`)
+    return response.data
+  }
+
+  // Candidate Statistics APIs
+  async getCandidateStatistics(candidateId: string) {
+    const response = await this.client.get(`/api/v1/pipeline/candidates/${candidateId}/statistics`)
+    return response.data
+  }
+
+  async downloadCandidateReport(candidateId: string): Promise<Blob> {
+    const response = await this.client.get(`/api/v1/pipeline/candidates/${candidateId}/report`, {
+      responseType: 'blob'
+    })
+    return response.data
+  }
+
+  // Coding Submission Statistics APIs
+  async getSubmissionStatistics(submissionId: string) {
+    const response = await this.client.get(`/api/v1/coding-interviews/submissions/${submissionId}/statistics`)
+    return response.data
+  }
+
+  async downloadSubmissionReport(submissionId: string): Promise<Blob> {
+    const response = await this.client.get(`/api/v1/coding-interviews/submissions/${submissionId}/report`, {
+      responseType: 'blob'
+    })
     return response.data
   }
 

@@ -27,7 +27,7 @@ This single file contains the complete, production-ready database schema includi
 
 ## Migration History (Reference)
 
-The numbered migration files (001–041) represent the schema evolution history:
+The numbered migration files (001–042) represent the schema evolution history:
 
 | Range | Purpose |
 |-------|---------|
@@ -44,6 +44,7 @@ The numbered migration files (001–041) represent the schema evolution history:
 | 038–039 | Batch system (created then removed) |
 | 040 | Pipeline org_id for multi-tenancy |
 | 041 | Hiring campaigns system |
+| 042 | Fix campaign candidates summary return types |
 
 These files are kept for:
 - Understanding schema evolution
@@ -64,6 +65,7 @@ If you're updating an existing database, determine which migration you last appl
 037_fix_coding_answers_evaluator_fkey.sql
 040_pipeline_add_org_id.sql
 041_create_hiring_campaigns.sql
+042_fix_campaign_candidates_summary.sql
 ```
 
 Note: Migrations 038 and 039 (batch system) were created then removed, so they are excluded from the list.
@@ -110,3 +112,4 @@ Note: Migrations 038 and 039 (batch system) were created then removed, so they a
 - **Soft deletes:** deleted_at columns added in migration 031
 - **Vector search:** pgvector extension required for resume matching
 - **Hiring campaigns:** Added in migration 041 for organizing candidates
+- **Campaign report fix:** Migration 042 fixes candidates summary return types

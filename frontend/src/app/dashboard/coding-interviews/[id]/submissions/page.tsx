@@ -30,6 +30,8 @@ import {
   Laptop,
   Smartphone,
   Tablet,
+  BarChart3,
+  FileText,
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { PageHeader } from '@/components/ui/page-header'
@@ -48,7 +50,8 @@ import {
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
-import { FileText } from 'lucide-react'
+import { apiClient } from '@/lib/api/client'
+import Link from 'next/link'
 
 export default function SubmissionsPage() {
   const params = useParams()
@@ -169,6 +172,23 @@ export default function SubmissionsPage() {
       toast.error(error.message || 'Failed to export submissions CSV')
     } finally {
       setExportingCsv(false)
+    }
+  }
+
+  const handleDownloadReport = async (submissionId: string, candidateName: string) => {
+    try {
+      const blob = await apiClient.downloadSubmissionReport(submissionId)
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${candidateName.replace(/\s+/g, '_')}_assessment_report.pdf`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(url)
+      toast.success('Report downloaded successfully')
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to download report')
     }
   }
 
@@ -572,12 +592,30 @@ export default function SubmissionsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
+                          <Link href={`/dashboard/coding-interviews/submissions/${submission.id}/statistics`}>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title="View Full Report"
+                            >
+                              <BarChart3 className="h-4 w-4 text-indigo-600" />
+                            </Button>
+                          </Link>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDownloadReport(submission.id, submission.candidate_name)}
+                            title="Download PDF Report"
+                          >
+                            <FileText className="h-4 w-4 text-slate-600" />
+                          </Button>
                           <Button
                             size="sm"
                             variant="ghost"
                             onClick={() =>
                               router.push(`/dashboard/coding-interviews/submissions/${submission.id}`)
                             }
+                            title="Review Answers"
                           >
                             <Eye className="h-4 w-4 mr-1" />
                             Review
