@@ -48,6 +48,78 @@ import CodeEditor from '@/components/coding/CodeEditor'
 import { toast } from 'sonner'
 import { format, formatDistanceToNow } from 'date-fns'
 
+// ---------------------------------------------------------------------------
+// Video Playback Component
+// ---------------------------------------------------------------------------
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+
+function VideoPlaybackSection({ submissionId }: { submissionId: string }) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/coding-interviews/submissions/${submissionId}/video-playback`, {
+      headers: { 'Authorization': `Bearer ${typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || '') : ''}` },
+    })
+      .then((r) => r.json())
+      .then((d) => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [submissionId])
+
+  if (loading || !data?.session) return null
+
+  const hasWebcam = data.webcam_chunks && data.webcam_chunks.length > 0
+  const hasScreen = data.screen_chunks && data.screen_chunks.length > 0
+  if (!hasWebcam && !hasScreen) return null
+
+  return (
+    <Card className="border-l-4 border-l-red-500">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Camera className="h-5 w-5 text-red-600" />
+          Video Proctoring
+        </CardTitle>
+        <CardDescription>
+          {data.webcam_chunk_count ?? 0} webcam chunks · {data.screen_chunk_count ?? 0} screen chunks recorded
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {hasWebcam && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Webcam — chunk 1 preview</p>
+            <video
+              key={data.webcam_chunks[0]}
+              src={data.webcam_chunks[0]}
+              controls
+              className="w-full max-w-sm rounded border bg-black"
+              style={{ maxHeight: 240 }}
+            />
+            {data.webcam_chunks.length > 1 && (
+              <p className="text-xs text-gray-500 mt-1">{data.webcam_chunks.length - 1} more chunk(s) available</p>
+            )}
+          </div>
+        )}
+        {hasScreen && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Screen — chunk 1 preview</p>
+            <video
+              key={data.screen_chunks[0]}
+              src={data.screen_chunks[0]}
+              controls
+              className="w-full rounded border bg-black"
+              style={{ maxHeight: 360 }}
+            />
+            {data.screen_chunks.length > 1 && (
+              <p className="text-xs text-gray-500 mt-1">{data.screen_chunks.length - 1} more chunk(s) available</p>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function SubmissionReviewPage() {
   const params = useParams()
   const router = useRouter()
@@ -785,6 +857,9 @@ export default function SubmissionReviewPage() {
           </Card>
         ))}
       </div>
+
+      {/* Video Proctoring */}
+      <VideoPlaybackSection submissionId={submissionId} />
 
       {/* Anti-Cheating Panel */}
       {submission.activities && submission.activities.length > 0 && (() => {
