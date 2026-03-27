@@ -41,7 +41,6 @@ import {
   type Interview,
 } from '@/lib/api/coding-interviews'
 import { initializeEnhancedAntiCheating, createCodeChangeTracker } from '@/lib/anti-cheating-enhanced'
-import { useVideoProctoring } from '@/hooks/useVideoProctoring'
 import CodeEditor from '@/components/coding/CodeEditor'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
@@ -104,9 +103,6 @@ export default function CandidateInterviewPage() {
   // Anti-cheating (enhanced)
   const antiCheatingRef = useRef<Awaited<ReturnType<typeof initializeEnhancedAntiCheating>> | null>(null)
   const codeChangeTrackerRef = useRef<ReturnType<typeof createCodeChangeTracker> | null>(null)
-
-  // Video proctoring
-  const videoProctoring = useVideoProctoring()
 
   // Performance refs — avoid stale closures in intervals and debounce hot paths
   const codeAnswersRef = useRef<Record<string, string>>({})
@@ -262,13 +258,6 @@ export default function CandidateInterviewPage() {
       const currentQuestionId = interview?.questions?.[0]?.id || '0'
       antiCheatingRef.current = await initializeEnhancedAntiCheating(response.submission_id, currentQuestionId)
       codeChangeTrackerRef.current = createCodeChangeTracker(response.submission_id, currentQuestionId)
-
-      // Start video proctoring (non-blocking — interview continues if recording fails)
-      try {
-        await videoProctoring.startRecording(response.submission_id)
-      } catch {
-        // Permission denied or unsupported browser — continue without recording
-      }
 
       // Request fullscreen mode for better focus (optional - can be declined by user)
       try {
@@ -457,11 +446,6 @@ export default function CandidateInterviewPage() {
       if (interview?.require_signature) {
         if (interview.bond_timing === 'before_start') {
           // Bond already signed before start — submit directly with the stored signature
-          // Stop video proctoring before submit
-          if (videoProctoring.isRecording) {
-            await videoProctoring.stopRecording()
-          }
-
           await submitInterview(submissionId, { 
             signature_data: bondSignatureData || undefined, 
             terms_accepted: true,
@@ -474,9 +458,6 @@ export default function CandidateInterviewPage() {
           router.push(`/interview/${accessToken}/thank-you`)
         } else {
           // before_submission (default): redirect to signature page
-          if (videoProctoring.isRecording) {
-            await videoProctoring.stopRecording()
-          }
           antiCheatingRef.current?.cleanup()
           clearSession()
           toast.info('Please review and sign the bond agreement')
@@ -484,9 +465,6 @@ export default function CandidateInterviewPage() {
         }
       } else {
         // No signature required — submit directly
-        if (videoProctoring.isRecording) {
-          await videoProctoring.stopRecording()
-        }
         await submitInterview(submissionId, { 
           submission_trigger: 'manual',
           device_info: getDeviceInfo()
@@ -518,11 +496,6 @@ export default function CandidateInterviewPage() {
             programming_language: interview.programming_language,
           })
         }
-      }
-
-      // Stop video proctoring
-      if (videoProctoring.isRecording) {
-        try { await videoProctoring.stopRecording() } catch { /* non-blocking */ }
       }
 
       // Cleanup anti-cheating
@@ -1036,24 +1009,6 @@ export default function CandidateInterviewPage() {
             </div>
           </div>
         </div>
-
-        {/* Self-view camera overlay (top-right corner, visible when recording) */}
-        {videoProctoring.isRecording && (
-          <div className="fixed top-[4.5rem] right-4 w-40 h-[7.5rem] rounded-sm overflow-hidden border border-[#00E5FF]/50 shadow-lg shadow-[#00E5FF]/10 bg-black z-50">
-            <video
-              ref={videoProctoring.selfViewRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-full object-cover"
-            />
-            {/* REC indicator */}
-            <div className="absolute top-1.5 left-2 flex items-center gap-1 bg-red-600/90 text-white px-1.5 py-0.5 rounded-sm text-[9px] font-bold">
-              <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-              REC
-            </div>
-          </div>
-        )}
 
         {/* Dialogs - Styled with Cyber Theme */}
         <ConfirmDialog
