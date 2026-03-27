@@ -11,6 +11,9 @@ import { toast } from 'sonner'
 import { Loader2, Upload, CheckCircle2, XCircle } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
 import { ImportCandidatesTab } from '@/components/pipeline/ImportCandidatesTab'
+import { CreditCostBanner } from '@/components/credits/CreditCostBanner'
+import { useQuery } from '@tanstack/react-query'
+import { getCreditBalance, calculateResumeCost, isInsufficientCreditsError, getInsufficientCreditsDetails } from '@/lib/api/credits'
 
 interface UploadResult {
   filename: string
@@ -30,6 +33,15 @@ export default function UploadResumesPage() {
   const [resumeFiles, setResumeFiles] = useState<File[]>([])
   const [uploadResults, setUploadResults] = useState<UploadResult[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
+
+  // Fetch credit balance
+  const { data: balance } = useQuery({
+    queryKey: ['credit-balance'],
+    queryFn: getCreditBalance,
+  })
+
+  // Calculate cost for selected resumes
+  const costInfo = resumeFiles.length > 0 ? calculateResumeCost(resumeFiles.length) : null
 
   const handleUpload = async () => {
     if (resumeFiles.length === 0) {
@@ -81,6 +93,14 @@ export default function UploadResumesPage() {
         })
         processed++
       } catch (err: any) {
+        // Check for insufficient credits error
+        if (isInsufficientCreditsError(err)) {
+          const details = getInsufficientCreditsDetails(err)
+          toast.error(`Insufficient Credits: Need ${details?.required}, available ${details?.available}`)
+          setLoading(false)
+          return // Stop processing
+        }
+
         const message = err.response?.data?.detail || 'Processing failed'
         setUploadResults((prev) => {
           const next = [...prev]
@@ -115,6 +135,17 @@ export default function UploadResumesPage() {
         description="Upload candidate resumes or import candidate lists directly to the pipeline."
         backHref="/dashboard/resume-matching/jobs"
       />
+
+      {/* Credit Cost Banner */}
+      {costInfo && balance && (
+        <CreditCostBanner
+          featureName="Resume Processing"
+          cost={costInfo.total}
+          currentBalance={balance.balance}
+          breakdown={[costInfo.breakdown]}
+          message="Each resume will be analyzed by AI to extract candidate information and calculate job match scores."
+        />
+      )}
 
       <Tabs defaultValue="upload-resumes" className="w-full">
         <TabsList className="grid w-full grid-cols-2 bg-slate-100">

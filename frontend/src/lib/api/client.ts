@@ -449,6 +449,32 @@ class APIClient {
     const response = await this.client.get('/api/v1/health')
     return response.data
   }
+
+  // Generic HTTP methods for use by other API clients
+  async get<T = any>(url: string, config?: any) {
+    const response = await this.client.get<T>(url, config)
+    return response
+  }
+
+  async post<T = any>(url: string, data?: any, config?: any) {
+    const response = await this.client.post<T>(url, data, config)
+    return response
+  }
+
+  async put<T = any>(url: string, data?: any, config?: any) {
+    const response = await this.client.put<T>(url, data, config)
+    return response
+  }
+
+  async patch<T = any>(url: string, data?: any, config?: any) {
+    const response = await this.client.patch<T>(url, data, config)
+    return response
+  }
+
+  async delete<T = any>(url: string, config?: any) {
+    const response = await this.client.delete<T>(url, config)
+    return response
+  }
 }
 
 // Export singleton instance

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, Briefcase } from 'lucide-react'
+import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, Briefcase, Coins } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useOrg } from '@/contexts/OrganizationContext'
 
@@ -53,6 +53,13 @@ const navItems = [
     permission: 'campaign:view',
   },
 ]
+
+const creditsItem = {
+  title: 'Credits',
+  href: '/dashboard/credits',
+  icon: Coins,
+  permission: 'organization:view',
+}
 
 const settingsItem = {
   title: 'Settings',
@@ -195,13 +202,14 @@ export function DashboardNav() {
             ))}
           </div>
 
-          {/* Settings section */}
+          {/* Credits & Settings section */}
           {!collapsed && (
             <p className="px-3 py-2 mt-4 text-xs font-medium text-slate-600 uppercase tracking-widest">
               Account
             </p>
           )}
           {collapsed && <div className="mt-4" />}
+          <NavLink item={creditsItem} />
           <NavLink item={settingsItem} />
         </nav>
 

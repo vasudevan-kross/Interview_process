@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Outfit, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'sonner'
+import { QueryProvider } from '@/components/providers/QueryProvider'
 
 const outfit = Outfit({
   subsets: ['latin'],
@@ -37,8 +38,10 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${outfit.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
-        {children}
-        <Toaster position="top-right" />
+        <QueryProvider>
+          {children}
+          <Toaster position="top-right" />
+        </QueryProvider>
       </body>
     </html>
   )

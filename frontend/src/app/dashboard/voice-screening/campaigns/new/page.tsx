@@ -26,6 +26,9 @@ import { PageHeader } from '@/components/ui/page-header'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { toast } from 'sonner'
 import { apiClient } from '@/lib/api/client'
+import { CreditCostBanner } from '@/components/credits/CreditCostBanner'
+import { useQuery } from '@tanstack/react-query'
+import { getCreditBalance } from '@/lib/api/credits'
 
 const AVAILABLE_FIELDS = [
   { id: 'email', label: 'Email Address', default: true },
@@ -48,6 +51,12 @@ export default function CreateCampaignPage() {
   const pipelineJobId = searchParams.get('job_id')
   const [loading, setLoading] = useState(false)
   const [generatingQuestions, setGeneratingQuestions] = useState(false)
+
+  // Fetch credit balance
+  const { data: balance } = useQuery({
+    queryKey: ['credit-balance'],
+    queryFn: getCreditBalance,
+  })
   const [showAIDialog, setShowAIDialog] = useState(false)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -700,6 +709,19 @@ export default function CreateCampaignPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Credit Cost Information */}
+        <CreditCostBanner
+          featureName="Voice Screening Calls"
+          cost={75}
+          currentBalance={balance?.balance}
+          breakdown={[
+            '15 credits per minute of voice call',
+            '3 credits for AI-generated call summary',
+            'Example: 5-minute call = 75 credits (call) + 3 credits (summary) = 78 credits total',
+          ]}
+          message="Credits are held when call starts and actual usage is charged when call ends. Unused credits are automatically refunded."
+        />
 
         {/* Submit */}
         <div className="flex gap-4">

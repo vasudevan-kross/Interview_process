@@ -11,6 +11,9 @@ import { apiClient } from '@/lib/api/client'
 import { toast } from 'sonner'
 import { Loader2, Briefcase, FileText, Users, Award, ChevronRight, Zap } from 'lucide-react'
 import { PageHeader } from '@/components/ui/page-header'
+import { CreditCostBanner } from '@/components/credits/CreditCostBanner'
+import { useQuery } from '@tanstack/react-query'
+import { getCreditBalance } from '@/lib/api/credits'
 
 export default function ResumeMatchingPage() {
   const router = useRouter()
@@ -18,6 +21,12 @@ export default function ResumeMatchingPage() {
   const [jobFile, setJobFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
   const [department, setDepartment] = useState('')
+
+  // Fetch credit balance
+  const { data: balance } = useQuery({
+    queryKey: ['credit-balance'],
+    queryFn: getCreditBalance,
+  })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -58,6 +67,17 @@ export default function ResumeMatchingPage() {
           </Button>
         }
       />
+
+      {/* Credit Cost Banner */}
+      {balance && (
+        <CreditCostBanner
+          featureName="Job Description Processing"
+          cost={5}
+          currentBalance={balance.balance}
+          breakdown={['AI skill extraction from job description: 5 credits']}
+          message="Processing a job description uses AI to extract required skills and qualifications."
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
         {/* Left — Upload form (3/5 width) */}

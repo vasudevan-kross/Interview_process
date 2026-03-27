@@ -47,6 +47,7 @@ from app.services.report_renderer import build_candidate_pdf
 from app.db.supabase_client import get_supabase
 from app.auth.dependencies import get_current_user_id, get_current_org_context, OrgContext
 from app.auth.permissions import require_permission
+from app.services.credit_service import get_credit_service, InsufficientCreditsError
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,21 @@ async def generate_questions(
     - Testing questions (test cases, automation code)
     - Auto-detects testing roles from job description
     """
+    credit_service = get_credit_service()
+    transaction_id = None
+
     try:
+        # Check and deduct credits (4 credits for AI question generation)
+        credit_service.ensure_balance(str(ctx.org_id), 4)
+        transaction_id = credit_service.deduct_credits(
+            org_id=str(ctx.org_id),
+            feature="coding_interview",
+            action="generation",
+            amount=4,
+            notes=f"AI question generation: {request.num_questions} questions",
+            user_id=ctx.user_id,
+        )
+
         generator = get_question_generator()
 
         # --- Auto-detect domain from job description keywords ---
@@ -186,7 +201,28 @@ async def generate_questions(
             'detected_type': effective_type,
         }
 
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": "Insufficient credits",
+                "required": e.required,
+                "available": e.available,
+                "feature": "coding_interview",
+                "action": "generation",
+            }
+        )
     except Exception as e:
+        # Refund credits if generation fails
+        if transaction_id:
+            credit_service.refund_credits(
+                org_id=str(ctx.org_id),
+                amount=4,
+                feature="coding_interview",
+                action="generation",
+                reason=f"Question generation failed: {str(e)}",
+                user_id=ctx.user_id,
+            )
         logger.error(f"Error generating questions: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -745,8 +781,34 @@ async def submit_interview(
 
     Also triggers background resume processing to link uploaded resumes to pipeline.
     """
+    credit_service = get_credit_service()
+    transaction_id = None
+    supabase = get_supabase()
+
     try:
         service = get_coding_interview_service()
+
+        # Get org_id from submission record (need this for credit check)
+        submission_result = supabase.table("coding_submissions").select(
+            "id, interview_id, coding_interviews(org_id)"
+        ).eq("id", request.submission_id).execute()
+
+        if not submission_result.data or not submission_result.data[0]:
+            raise ValueError("Submission not found")
+
+        org_id = submission_result.data[0]["coding_interviews"]["org_id"]
+
+        # Check and deduct credits (1 credit for submission storage)
+        credit_service.ensure_balance(str(org_id), 1)
+        transaction_id = credit_service.deduct_credits(
+            org_id=str(org_id),
+            feature="coding_interview",
+            action="submission",
+            amount=1,
+            reference_id=request.submission_id,
+            notes=f"Coding interview submission",
+            user_id=None,  # Public endpoint, no user_id
+        )
 
         # Get IP address for audit trail
         client_ip = req.client.host if req.client else None
@@ -769,12 +831,50 @@ async def submit_interview(
 
         return result
 
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": "Insufficient credits",
+                "required": e.required,
+                "available": e.available,
+                "feature": "coding_interview",
+                "action": "submission",
+            }
+        )
     except ValueError as e:
+        # Refund credits if submission fails
+        if transaction_id:
+            org_id = submission_result.data[0]["coding_interviews"]["org_id"]
+            credit_service.refund_credits(
+                org_id=str(org_id),
+                amount=1,
+                feature="coding_interview",
+                action="submission",
+                reference_id=request.submission_id,
+                reason=f"Submission failed: {str(e)}",
+                user_id=None,
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
     except Exception as e:
+        # Refund credits if submission fails
+        if transaction_id:
+            try:
+                org_id = submission_result.data[0]["coding_interviews"]["org_id"]
+                credit_service.refund_credits(
+                    org_id=str(org_id),
+                    amount=1,
+                    feature="coding_interview",
+                    action="submission",
+                    reference_id=request.submission_id,
+                    reason=f"Submission error: {str(e)}",
+                    user_id=None,
+                )
+            except:
+                pass  # Don't fail if refund fails
         logger.error(f"Error submitting interview: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -36,6 +36,9 @@ import { createInterview, generateQuestions, generateShareableLink, extractQuest
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { PageHeader } from '@/components/ui/page-header'
 import { toast } from 'sonner'
+import { CreditCostBanner } from '@/components/credits/CreditCostBanner'
+import { useQuery } from '@tanstack/react-query'
+import { getCreditBalance } from '@/lib/api/credits'
 
 /**
  * Convert a datetime-local string (treated as LOCAL time) to an ISO 8601
@@ -66,6 +69,12 @@ export default function CreateInterviewPage() {
   const [extracting, setExtracting] = useState(false)
   const [activeTab, setActiveTab] = useState('ai-generate')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+
+  // Fetch credit balance
+  const { data: balance } = useQuery({
+    queryKey: ['credit-balance'],
+    queryFn: getCreditBalance,
+  })
 
   // Interview details
   const [title, setTitle] = useState('')
@@ -787,6 +796,14 @@ export default function CreateInterviewPage() {
                   </p>
                 </div>
               </div>
+
+              {/* Credit Cost Banner */}
+              <CreditCostBanner
+                featureName="AI Question Generation"
+                cost={4}
+                currentBalance={balance?.balance}
+                message="Generates coding/testing questions based on your job description"
+              />
 
               <Button onClick={handleGenerateQuestions} disabled={generating} className="w-full">
                 {generating ? (

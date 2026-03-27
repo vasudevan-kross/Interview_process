@@ -35,6 +35,7 @@ from app.db.supabase_client import get_supabase
 from app.core.config import get_settings
 from app.auth.dependencies import get_current_user, get_current_org_context, OrgContext
 from app.auth.permissions import require_permission
+from app.services.credit_service import get_credit_service, InsufficientCreditsError
 from app.schemas.voice_screening import (
     CampaignCreateRequest,
     CampaignResponse,
@@ -837,13 +838,16 @@ async def delete_candidate(
 )
 async def start_call(token: str, call_id: Optional[str] = None):
     """Mark a candidate's call as in progress and store the VAPI call_id."""
+    credit_service = get_credit_service()
+    hold_id = None
+
     try:
         supabase = get_supabase()
 
-        # Find candidate by token
+        # Find candidate by token (include org_id for credit check)
         result = (
             supabase.table("voice_candidates")
-            .select("id,campaign_id,started_at")
+            .select("id,campaign_id,started_at,org_id")
             .eq("interview_token", token)
             .single()
             .execute()
@@ -896,6 +900,34 @@ async def start_call(token: str, call_id: Optional[str] = None):
                             status_code=403, detail="Interview window has ended"
                         )
 
+        # Hold credits for estimated call duration (assume 5 min max initially)
+        # 15 credits/min × 5 min = 75 credits
+        estimated_duration_minutes = 5
+        credits_to_hold = estimated_duration_minutes * 15
+
+        try:
+            if call_id and candidate.get("org_id"):
+                hold_id = credit_service.hold_credits(
+                    org_id=str(candidate["org_id"]),
+                    amount=credits_to_hold,
+                    feature="voice_screening",
+                    reference_id=call_id,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),  # Hold expires in 30 min
+                )
+                logger.info(f"✅ Held {credits_to_hold} credits for call {call_id}, hold_id: {hold_id}")
+        except InsufficientCreditsError as e:
+            logger.error(f"❌ Insufficient credits for call {call_id}: required {e.required}, available {e.available}")
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "message": "Insufficient credits to start voice call",
+                    "required": e.required,
+                    "available": e.available,
+                    "feature": "voice_screening",
+                    "action": "call",
+                }
+            )
+
         # Update status to in_progress and save call_id if provided
         update_data: Dict[str, Any] = {
             "status": "in_progress",
@@ -913,7 +945,7 @@ async def start_call(token: str, call_id: Optional[str] = None):
         logger.info(
             f"✅ Call started for candidate {candidate['id']}, call_id: {call_id}"
         )
-        return {"status": "in_progress"}
+        return {"status": "in_progress", "credits_held": credits_to_hold}
 
     except HTTPException:
         raise
@@ -1262,7 +1294,46 @@ async def generate_and_save_summary(
     technical_requirements: str = None,
 ):
     """Background task to generate and save interview summary."""
+    credit_service = get_credit_service()
+    transaction_id = None
+    supabase = get_supabase()
+
     try:
+        # Get org_id from call history record
+        call_history_result = (
+            supabase.table("voice_call_history")
+            .select("call_id, voice_candidates!inner(org_id)")
+            .eq("id", call_history_id)
+            .single()
+            .execute()
+        )
+
+        if not call_history_result.data:
+            logger.error(f"❌ Call history {call_history_id} not found")
+            return
+
+        org_id = call_history_result.data["voice_candidates"]["org_id"]
+        call_id = call_history_result.data["call_id"]
+
+        # Deduct credits for AI summary (3 credits)
+        try:
+            credit_service.ensure_balance(str(org_id), 3)
+            transaction_id = credit_service.deduct_credits(
+                org_id=str(org_id),
+                feature="voice_screening",
+                action="summary",
+                amount=3,
+                reference_id=call_history_id,
+                notes=f"AI summary generation for call {call_id}",
+                user_id=None,
+            )
+        except InsufficientCreditsError as e:
+            logger.error(
+                f"❌ Insufficient credits for summary generation: required {e.required}, available {e.available}"
+            )
+            # Skip summary generation if insufficient credits
+            return
+
         # Generate summary
         summary_service = get_interview_summary_service()
         summary_result = await summary_service.generate_summary(
@@ -1273,7 +1344,6 @@ async def generate_and_save_summary(
         )
 
         # Save to database
-        supabase = get_supabase()
         supabase.table("voice_call_history").update(
             {
                 "interview_summary": summary_result.get("interview_summary"),
@@ -1284,7 +1354,33 @@ async def generate_and_save_summary(
 
         logger.info(f"✅ Generated summary for call history {call_history_id}")
 
+    except InsufficientCreditsError:
+        # Already logged above
+        pass
     except Exception as e:
+        # Refund credits if summary generation fails
+        if transaction_id:
+            try:
+                call_history_result = (
+                    supabase.table("voice_call_history")
+                    .select("voice_candidates!inner(org_id)")
+                    .eq("id", call_history_id)
+                    .single()
+                    .execute()
+                )
+                if call_history_result.data:
+                    org_id = call_history_result.data["voice_candidates"]["org_id"]
+                    credit_service.refund_credits(
+                        org_id=str(org_id),
+                        amount=3,
+                        feature="voice_screening",
+                        action="summary",
+                        reference_id=call_history_id,
+                        reason=f"Summary generation failed: {str(e)}",
+                        user_id=None,
+                    )
+            except:
+                pass  # Don't fail if refund fails
         logger.error(f"❌ Error generating summary: {str(e)}")
 
 
@@ -1816,6 +1912,63 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
                             logger.info(
                                 f"✅ Webhook saved call data for {call_id}, history_id: {call_history_id}"
                             )
+
+                            # Capture credit hold based on actual call duration
+                            try:
+                                credit_service = get_credit_service()
+
+                                # Get org_id from candidate
+                                candidate_org_result = (
+                                    supabase.table("voice_candidates")
+                                    .select("org_id")
+                                    .eq("id", candidate["id"])
+                                    .single()
+                                    .execute()
+                                )
+                                org_id = candidate_org_result.data.get("org_id") if candidate_org_result.data else None
+
+                                if org_id and duration:
+                                    # Calculate actual credits used (15 credits per minute)
+                                    duration_minutes = max(1, round(duration / 60))  # Min 1 minute
+                                    actual_credits = duration_minutes * 15
+
+                                    # Find pending hold for this call
+                                    hold_result = (
+                                        supabase.table("credit_holds")
+                                        .select("id")
+                                        .eq("reference_id", call_id)
+                                        .eq("status", "pending")
+                                        .execute()
+                                    )
+
+                                    if hold_result.data:
+                                        hold_id = hold_result.data[0]["id"]
+
+                                        # Capture hold with actual amount (refunds difference automatically)
+                                        if duration < 30:  # Less than 30 seconds - full refund
+                                            credit_service.refund_hold(
+                                                hold_id=hold_id,
+                                                reason=f"Call too short (duration: {duration}s)",
+                                            )
+                                            logger.info(f"✅ Full refund for short call {call_id} ({duration}s)")
+                                        else:
+                                            credit_service.capture_hold(
+                                                hold_id=hold_id,
+                                                actual_amount=actual_credits,
+                                                notes=f"Voice call: {duration_minutes} min ({duration}s)",
+                                            )
+                                            logger.info(
+                                                f"✅ Captured {actual_credits} credits for call {call_id} "
+                                                f"({duration_minutes} min)"
+                                            )
+                                    else:
+                                        logger.warning(f"⚠️ No pending hold found for call {call_id}")
+                                else:
+                                    logger.warning(f"⚠️ Missing org_id or duration for call {call_id}")
+
+                            except Exception as credit_error:
+                                logger.error(f"❌ Error capturing credits for call {call_id}: {credit_error}")
+                                # Don't fail the webhook if credit capture fails
 
                             # Update candidate status
                             supabase.table("voice_candidates").update(

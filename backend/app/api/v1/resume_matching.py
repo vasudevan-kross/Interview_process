@@ -24,6 +24,7 @@ from app.schemas.resume_matching import (
 )
 from app.auth.dependencies import get_current_org_context, OrgContext
 from app.auth.permissions import require_permission
+from app.services.credit_service import get_credit_service, InsufficientCreditsError
 
 
 class DeleteResumesRequest(BaseModel):
@@ -74,7 +75,21 @@ async def upload_job_description(
     - Generates vector embeddings
     - Stores the job description in the database
     """
+    credit_service = get_credit_service()
+    transaction_id = None
+
     try:
+        # Check and deduct credits (5 credits for job processing)
+        credit_service.ensure_balance(str(ctx.org_id), 5)
+        transaction_id = credit_service.deduct_credits(
+            org_id=str(ctx.org_id),
+            feature="resume_matching",
+            action="job_processing",
+            amount=5,
+            notes=f"Processing job description: {title}",
+            user_id=ctx.user_id,
+        )
+
         service = get_resume_matching_service()
 
         # Read file data
@@ -92,11 +107,48 @@ async def upload_job_description(
             model=model
         )
 
+        # Update transaction with reference_id
+        if transaction_id and result.get("id"):
+            credit_service.client.table("credit_transactions").update({
+                "reference_id": result["id"]
+            }).eq("id", transaction_id).execute()
+
         return JobDescriptionResponse(**result)
 
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": "Insufficient credits",
+                "required": e.required,
+                "available": e.available,
+                "feature": "resume_matching",
+                "action": "job_processing",
+            }
+        )
     except ValueError as e:
+        # Refund credits if processing fails
+        if transaction_id:
+            credit_service.refund_credits(
+                org_id=str(ctx.org_id),
+                amount=5,
+                feature="resume_matching",
+                action="job_processing",
+                reason=f"Job processing failed: {str(e)}",
+                user_id=ctx.user_id,
+            )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
+        # Refund credits if processing fails
+        if transaction_id:
+            credit_service.refund_credits(
+                org_id=str(ctx.org_id),
+                amount=5,
+                feature="resume_matching",
+                action="job_processing",
+                reason=f"Job processing error: {str(e)}",
+                user_id=ctx.user_id,
+            )
         logger.error(f"Error processing job description: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process job description")
 
@@ -127,7 +179,21 @@ async def upload_resume(
     - Calculates match score with the job description
     - Stores the resume in the database
     """
+    credit_service = get_credit_service()
+    transaction_id = None
+
     try:
+        # Check and deduct credits (2 credits for resume upload)
+        credit_service.ensure_balance(str(ctx.org_id), 2)
+        transaction_id = credit_service.deduct_credits(
+            org_id=str(ctx.org_id),
+            feature="resume_matching",
+            action="upload",
+            amount=2,
+            notes=f"Processing resume: {file.filename}",
+            user_id=ctx.user_id,
+        )
+
         service = get_resume_matching_service()
 
         # Read file data
@@ -146,11 +212,48 @@ async def upload_resume(
             model=model
         )
 
+        # Update transaction with reference_id
+        if transaction_id and result.get("id"):
+            credit_service.client.table("credit_transactions").update({
+                "reference_id": result["id"]
+            }).eq("id", transaction_id).execute()
+
         return ResumeResponse(**result)
 
+    except InsufficientCreditsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": "Insufficient credits",
+                "required": e.required,
+                "available": e.available,
+                "feature": "resume_matching",
+                "action": "upload",
+            }
+        )
     except ValueError as e:
+        # Refund credits if processing fails
+        if transaction_id:
+            credit_service.refund_credits(
+                org_id=str(ctx.org_id),
+                amount=2,
+                feature="resume_matching",
+                action="upload",
+                reason=f"Resume processing failed: {str(e)}",
+                user_id=ctx.user_id,
+            )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
+        # Refund credits if processing fails
+        if transaction_id:
+            credit_service.refund_credits(
+                org_id=str(ctx.org_id),
+                amount=2,
+                feature="resume_matching",
+                action="upload",
+                reason=f"Resume processing error: {str(e)}",
+                user_id=ctx.user_id,
+            )
         logger.error(f"Error processing resume: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process resume")
 

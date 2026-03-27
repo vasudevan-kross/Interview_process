@@ -175,13 +175,15 @@ export default function CampaignDetailPage() {
         const jobCounts: Record<string, number> = {}
         const slotCounts: Record<string, number> = {}
 
-        Object.values(board).flat().forEach((candidate) => {
-          jobCounts[candidate.job_id] = (jobCounts[candidate.job_id] || 0) + 1
+        Object.values(board as PipelineBoard).forEach((candidates: Candidate[]) => {
+          candidates.forEach((candidate: Candidate) => {
+            jobCounts[candidate.job_id] = (jobCounts[candidate.job_id] || 0) + 1
 
-          const slotName = candidate.interview_slot?.slot_name
-          if (slotName) {
-            slotCounts[slotName] = (slotCounts[slotName] || 0) + 1
-          }
+            const slotName = candidate.interview_slot?.slot_name
+            if (slotName) {
+              slotCounts[slotName] = (slotCounts[slotName] || 0) + 1
+            }
+          })
         })
 
         setJobCandidateCounts(jobCounts)
@@ -226,7 +228,7 @@ export default function CampaignDetailPage() {
     }
 
     Object.entries(pipelineBoard).forEach(([stage, candidates]) => {
-      filtered[stage as keyof PipelineBoard] = candidates.filter((c) =>
+      filtered[stage as keyof PipelineBoard] = (candidates as Candidate[]).filter((c: Candidate) =>
         selectedSlotFilter === 'no_slot'
           ? !c.interview_slot?.slot_name
           : c.interview_slot?.slot_name === selectedSlotFilter
