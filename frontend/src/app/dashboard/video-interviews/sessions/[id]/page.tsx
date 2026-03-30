@@ -123,24 +123,76 @@ export default function VideoInterviewSessionPage() {
           </div>
 
           {/* AI Summary Card */}
-          <div className="rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/50 to-white shadow-sm overflow-hidden relative">
-            <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none">
-              <BrainCircuit className="h-32 w-32" />
-            </div>
-            <div className="border-b border-indigo-100/50 px-6 py-4 flex items-center gap-2">
-              <BrainCircuit className="h-4 w-4 text-indigo-600" />
-              <h2 className="text-sm font-semibold text-slate-900">AI Analysis & Summary</h2>
-            </div>
-            <div className="p-6 relative">
-              {session.interview_summary ? (
-                <div className="prose prose-sm prose-slate max-w-none">
-                  <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{session.interview_summary}</p>
+          {(() => {
+            let summary: Record<string, any> | null = null
+            if (session.interview_summary) {
+              try {
+                summary = typeof session.interview_summary === 'string'
+                  ? JSON.parse(session.interview_summary)
+                  : session.interview_summary as Record<string, any>
+              } catch { summary = null }
+            }
+            const scoreColor = summary?.overall_score >= 75 ? 'text-emerald-600' : summary?.overall_score >= 50 ? 'text-amber-600' : 'text-red-500'
+            const recColor = summary?.recommendation === 'Strong recommend' ? 'bg-emerald-100 text-emerald-700' : summary?.recommendation === 'Recommend' ? 'bg-blue-100 text-blue-700' : summary?.recommendation === 'Consider' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+            return (
+              <div className="rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/50 to-white shadow-sm overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-6 opacity-5 pointer-events-none">
+                  <BrainCircuit className="h-32 w-32" />
                 </div>
-              ) : (
-                <p className="text-sm text-slate-500 italic">Analysis is currently unavailable or still processing.</p>
-              )}
-            </div>
-          </div>
+                <div className="border-b border-indigo-100/50 px-6 py-4 flex items-center gap-2">
+                  <BrainCircuit className="h-4 w-4 text-indigo-600" />
+                  <h2 className="text-sm font-semibold text-slate-900">AI Analysis & Summary</h2>
+                </div>
+                <div className="p-6 relative space-y-5">
+                  {!summary ? (
+                    <p className="text-sm text-slate-500 italic">Analysis is currently unavailable or still processing.</p>
+                  ) : (
+                    <>
+                      {/* Score + recommendation */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Recommendation</p>
+                          <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold ${recColor}`}>{summary.recommendation}</span>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Score</p>
+                          <span className={`text-3xl font-bold tabular-nums ${scoreColor}`}>{summary.overall_score}<span className="text-lg text-slate-400">/100</span></span>
+                        </div>
+                      </div>
+                      {/* Strengths */}
+                      {summary.strengths?.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Strengths</p>
+                          <ul className="space-y-1">
+                            {(summary.strengths as string[]).map((s, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-slate-700">
+                                <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold">✓</span>
+                                {s}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {/* Weaknesses */}
+                      {summary.weaknesses?.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Areas to Improve</p>
+                          <ul className="space-y-1">
+                            {(summary.weaknesses as string[]).map((w, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-slate-700">
+                                <span className="mt-0.5 h-4 w-4 shrink-0 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-[10px] font-bold">!</span>
+                                {w}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
         </div>
 
         {/* Right Pane: Transcript */}

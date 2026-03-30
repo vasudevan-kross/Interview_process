@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import datetime
 import json
 import logging
 from typing import Optional
@@ -376,14 +377,45 @@ class VideoInterviewWSHandler:
         history = self.session_state.get("conversation_history", [])
         summary = await self._generate_ws_summary(history)
 
+        # Format transcript as [{question_index, question, answer}] for the UI
+        questions = self.campaign.get("questions", [])
+        transcript_formatted = []
+        q_idx = 0
+        for entry in history:
+            if entry["role"] == "candidate":
+                question = questions[q_idx] if q_idx < len(questions) else None
+                transcript_formatted.append({
+                    "question_index": q_idx,
+                    "question": question,
+                    "answer": entry["content"],
+                })
+                q_idx += 1
+
+        # Calculate duration from session start time
+        duration_seconds = None
+        started_at = self.session.get("started_at")
+        if started_at:
+            try:
+                started_dt = datetime.datetime.fromisoformat(
+                    started_at.replace("Z", "+00:00")
+                )
+                now_dt = datetime.datetime.now(datetime.timezone.utc)
+                duration_seconds = int((now_dt - started_dt).total_seconds())
+            except Exception:
+                pass
+
+        update_data: dict = {
+            "status": "completed",
+            "interview_summary": json.dumps(summary),  # store as JSON string for UI
+            "transcript": transcript_formatted,
+        }
+        if duration_seconds is not None:
+            update_data["duration_seconds"] = duration_seconds
+
         await asyncio.get_event_loop().run_in_executor(
             None,
             lambda: self._supabase.table("video_interview_sessions")
-            .update({
-                "status": "completed",
-                "interview_summary": summary,
-                "transcript": history,
-            })
+            .update(update_data)
             .eq("id", self.session["id"])
             .execute(),
         )

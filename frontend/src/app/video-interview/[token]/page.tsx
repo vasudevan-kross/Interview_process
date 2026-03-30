@@ -47,6 +47,8 @@ export default function VideoInterviewPage() {
   const ttsTextAccRef = useRef<string>('')
   const isEngagementTurnRef = useRef(false)
   const interviewStateRef = useRef<InterviewState>('loading')
+  // TTS sync: only notify backend when ALL chunks have been sent AND played
+  const ttsAllSentRef = useRef(false)
 
   // State
   const [candidate, setCandidate] = useState<VideoInterviewCandidatePublic | null>(null)
@@ -125,11 +127,12 @@ export default function VideoInterviewPage() {
     ttsQueueRef.current.push(source)
     source.onended = () => {
       ttsQueueRef.current = ttsQueueRef.current.filter((n) => n !== source)
-      // When the queue is empty, tell the backend TTS playback is done
-      // so it starts the silence/engagement timer from now (not from when
-      // the backend finished synthesizing).
-      if (ttsQueueRef.current.length === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+      // Only notify backend when ALL chunks were sent (tts_end received)
+      // AND the playback queue is now empty — prevents premature firing
+      // when the queue is temporarily empty between consecutive chunks.
+      if (ttsAllSentRef.current && ttsQueueRef.current.length === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'tts_playback_complete' }))
+        ttsAllSentRef.current = false
       }
     }
   }, [])
@@ -164,6 +167,7 @@ export default function VideoInterviewPage() {
         break
 
       case 'tts_chunk':
+        ttsAllSentRef.current = false  // new TTS sequence in progress
         ttsTextAccRef.current += (ttsTextAccRef.current ? ' ' : '') + (msg.text as string)
         await enqueueTtsChunk(msg.audio as string)
         break
@@ -175,6 +179,12 @@ export default function VideoInterviewPage() {
         ttsTextAccRef.current = ''
         isEngagementTurnRef.current = false
         setOverlayMessage(null)
+        // Mark all chunks as sent; if queue already empty, notify backend now
+        ttsAllSentRef.current = true
+        if (ttsQueueRef.current.length === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'tts_playback_complete' }))
+          ttsAllSentRef.current = false
+        }
         break
 
       case 'engagement_prompt':
