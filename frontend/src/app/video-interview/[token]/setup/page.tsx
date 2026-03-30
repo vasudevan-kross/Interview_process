@@ -90,6 +90,14 @@ export default function VideoInterviewSetupPage() {
                 </li>
               </ul>
             </div>
+
+            {/* Camera-required notice */}
+            <div className="flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3">
+              <Camera className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-300/90 leading-relaxed">
+                <span className="font-semibold">Camera must stay on</span> throughout the interview. Turning it off during the session is not permitted.
+              </p>
+            </div>
           </div>
 
           {/* Right side: Video frame & Action */}

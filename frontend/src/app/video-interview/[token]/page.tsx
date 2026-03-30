@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import {
@@ -66,11 +66,12 @@ export default function VideoInterviewPage() {
     interviewStateRef.current = interviewState
   }, [interviewState])
 
-  // Check setup gate
-  useEffect(() => {
+  // Check setup gate synchronously before first paint to avoid flash
+  useLayoutEffect(() => {
+    if (!token) return
     const setupComplete = sessionStorage.getItem('videoInterviewSetupComplete')
-    if (!setupComplete && token) {
-      router.push(`/video-interview/${token}/setup`)
+    if (!setupComplete) {
+      router.replace(`/video-interview/${token}/setup`)
     }
   }, [token, router])
 
