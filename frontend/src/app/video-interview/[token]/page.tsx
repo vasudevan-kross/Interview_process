@@ -94,7 +94,7 @@ export default function VideoInterviewPage() {
 
   const enqueueTtsChunk = useCallback(async (audioB64: string) => {
     if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContext()
+      audioContextRef.current = new AudioContext({ sampleRate: 16000 })
     }
     const ctx = audioContextRef.current
     if (ctx.state === 'suspended') await ctx.resume()
@@ -237,7 +237,7 @@ export default function VideoInterviewPage() {
     try {
       // Unlock AudioContext on user gesture (required by browsers)
       if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext()
+        audioContextRef.current = new AudioContext({ sampleRate: 16000 })
       }
       if (audioContextRef.current.state === 'suspended') {
         await audioContextRef.current.resume()

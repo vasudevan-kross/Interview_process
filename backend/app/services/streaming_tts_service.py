@@ -5,6 +5,7 @@ from typing import AsyncGenerator
 import logging
 
 from app.services.audio_processing_service import build_wav_header
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,13 @@ class TTSChunk:
 class StreamingTTSService:
     def __init__(
         self,
-        model_path: str = "en_US-lessac-medium",
-        piper_binary: str = "piper",
+        model_path: str | None = None,
+        piper_binary: str | None = None,
         sample_rate: int = 16000,
     ):
-        self.model_path = model_path
-        self.piper_binary = piper_binary
+        self.model_path = model_path or settings.TTS_PIPER_MODEL
+        self.piper_binary = piper_binary or settings.TTS_PIPER_BIN
+        self.config_path = settings.TTS_PIPER_CONFIG
         self.sample_rate = sample_rate
 
     def _split_sentences(self, text: str) -> list[str]:
@@ -68,18 +70,18 @@ class StreamingTTSService:
 
     async def _synthesize_sentence(self, sentence: str) -> bytes:
         """Run Piper on a single sentence, return raw PCM bytes."""
+        cmd = [self.piper_binary, "--model", self.model_path, "--output-raw"]
+        if self.config_path:
+            cmd += ["--config", self.config_path]
         proc = await asyncio.create_subprocess_exec(
-            self.piper_binary,
-            "--model", self.model_path,
-            "--output-raw",
+            *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
-        proc.stdin.write(sentence.encode("utf-8"))
-        proc.stdin.close()
-        pcm_bytes = await proc.stdout.read()
-        await proc.wait()
+        pcm_bytes, stderr_bytes = await proc.communicate(sentence.encode("utf-8"))
+        if proc.returncode != 0:
+            raise RuntimeError(stderr_bytes.decode(errors="replace").strip())
         return pcm_bytes
 
     async def stream_synthesize(self, text: str) -> AsyncGenerator[TTSChunk, None]:
