@@ -9,7 +9,6 @@ import {
   getVideoInterviewWSUrl,
   type VideoInterviewCandidatePublic,
 } from '@/lib/api/video-interviews'
-import VRMAvatar from '@/components/video-interview/VRMAvatar'
 import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageSquare,
   Loader2, AlertCircle, UserCircle,
@@ -41,6 +40,7 @@ export default function VideoInterviewPage() {
 
   // WebSocket ref
   const wsRef = useRef<WebSocket | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
 
   // Transcript refs
   const ttsTextAccRef = useRef<string>('')
@@ -178,6 +178,10 @@ export default function VideoInterviewPage() {
         })
         break
 
+      case 'session_started':
+        sessionIdRef.current = msg.session_id as string
+        break
+
       case 'ping':
         wsRef.current?.send(JSON.stringify({ type: 'pong' }))
         break
@@ -196,12 +200,11 @@ export default function VideoInterviewPage() {
 
   // ─── Recording Upload ────────────────────────────────────────────────────────
 
-  const uploadRecording = useCallback(async (sessionIdFromSummary?: string) => {
+  const uploadRecording = useCallback(async () => {
     if (!mediaRecorderRef.current) return
+    const sid = sessionIdRef.current
+    if (!sid) return  // no session_id yet — nothing to upload
     setIsUploading(true)
-
-    // The backend uses the token to find the session, so pass token as sessionId fallback
-    const sid = sessionIdFromSummary || token
 
     return new Promise<void>((resolve) => {
       const doUpload = async () => {
@@ -224,7 +227,7 @@ export default function VideoInterviewPage() {
         doUpload()
       }
     })
-  }, [token])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInterviewComplete = useCallback(async () => {
     await uploadRecording()
@@ -422,9 +425,12 @@ export default function VideoInterviewPage() {
       <main className="flex-1 min-h-0 w-full flex items-center justify-center relative p-4 sm:p-8 pt-20 pb-28">
         <div className="w-full max-w-[1400px] self-stretch bg-[#1C1C1E] rounded-2xl md:rounded-[32px] overflow-hidden relative shadow-2xl border border-white/5">
 
-          {/* VRM Avatar */}
-          <div className={`absolute inset-0 transition-opacity duration-1000 ${interviewState === 'ready' ? 'opacity-0' : 'opacity-100'}`}>
-            <VRMAvatar audioElement={null} />
+          {/* Interviewer panel */}
+          <div className={`absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-800 to-slate-900 transition-opacity duration-1000 ${interviewState === 'ready' ? 'opacity-0' : 'opacity-100'}`}>
+            <div className={`rounded-full bg-slate-700 p-8 transition-all duration-300 ${(interviewState === 'speaking' || interviewState === 'greeting' || interviewState === 'engaging') ? 'ring-4 ring-indigo-500/70 scale-105' : ''}`}>
+              <UserCircle className="w-28 h-28 text-slate-300" />
+            </div>
+            <span className="mt-4 text-white/50 text-sm font-medium tracking-wide">AI Interviewer</span>
           </div>
 
           {/* Status badge */}

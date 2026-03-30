@@ -1,5 +1,6 @@
 import asyncio
 import re
+import subprocess
 from dataclasses import dataclass
 from typing import AsyncGenerator
 import logging
@@ -69,20 +70,28 @@ class StreamingTTSService:
         return [s for s in result if s]
 
     async def _synthesize_sentence(self, sentence: str) -> bytes:
-        """Run Piper on a single sentence, return raw PCM bytes."""
+        """Run Piper on a single sentence, return raw PCM bytes.
+
+        Uses subprocess.run in a thread executor to avoid asyncio subprocess
+        issues on Windows (SelectorEventLoop / ProactorEventLoop quirks).
+        """
         cmd = [self.piper_binary, "--model", self.model_path, "--output-raw"]
         if self.config_path:
             cmd += ["--config", self.config_path]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        pcm_bytes, stderr_bytes = await proc.communicate(sentence.encode("utf-8"))
-        if proc.returncode != 0:
-            raise RuntimeError(stderr_bytes.decode(errors="replace").strip())
-        return pcm_bytes
+
+        def _run() -> bytes:
+            result = subprocess.run(
+                cmd,
+                input=sentence.encode("utf-8"),
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                err = result.stderr.decode(errors="replace").strip()
+                raise RuntimeError(err or f"piper exited with code {result.returncode}")
+            return result.stdout
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _run)
 
     async def stream_synthesize(self, text: str) -> AsyncGenerator[TTSChunk, None]:
         """Yield one TTSChunk per sentence, then a final sentinel chunk."""

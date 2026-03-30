@@ -146,6 +146,8 @@ class VideoInterviewWSHandler:
     # ─── Greeting ──────────────────────────────────────────────────────────
 
     async def _start_greeting(self):
+        # Tell the frontend the real session_id so it can upload recordings correctly
+        await self.ws.send_json({"type": "session_started", "session_id": self.session["id"]})
         await self._set_state("greeting")
         greeting = self.session_state.get("greeting", "Welcome! Let's begin your interview.")
         await self._stream_tts_and_send(greeting, is_engagement=False)
