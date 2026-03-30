@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(\"venv\\Scripts\\python.exe\" -c \"\nimport sys\nimport os\nfrom dotenv import load_dotenv\nload_dotenv()\n\n# Test the actual API endpoint logic\nfrom app.services.credit_service import get_credit_service\nfrom app.schemas.credits import CreditBalanceResponse\nfrom datetime import datetime\n\norg_id = ''3d97f0ae-3722-4510-826c-0eefbd502685''\n\nprint(''=== Simulating API Endpoint Logic ===\\n'')\n\ntry:\n    credit_service = get_credit_service()\n    \n    print(f''1. Fetching balance for org_id: {org_id}'')\n    \n    # This is exactly what the endpoint does\n    result = credit_service.client.table(''organization_credits'').select(\n        ''org_id, balance, total_purchased, total_consumed, last_updated''\n    ).eq(''org_id'', str(org_id)).execute()\n    \n    print(f''2. Query result: {len(result.data) if result.data else 0} rows'')\n    \n    if result.data:\n        print(f''3. Data found: {result.data[0]}'')\n        \n        data = result.data[0]\n        \n        # Handle datetime parsing\n        if isinstance(data.get(''last_updated''), str):\n            data[''last_updated''] = datetime.fromisoformat(data[''last_updated''].replace(''Z'', ''+00:00''))\n        \n        # Create response\n        response = CreditBalanceResponse(**data)\n        print(f''\\n4. Response object created:'')\n        print(f''   org_id: {response.org_id}'')\n        print(f''   balance: {response.balance}'')\n        print(f''   total_purchased: {response.total_purchased}'')\n        print(f''   total_consumed: {response.total_consumed}'')\n        print(f''   last_updated: {response.last_updated}'')\n        \n        # Convert to dict (what JSON would return)\n        response_dict = response.model_dump()\n        print(f''\\n5. JSON response (model_dump):'')\n        import json\n        print(json.dumps(response_dict, indent=2, default=str))\n        \n    else:\n        print(''3. No data found - returning zero balance'')\n        response = CreditBalanceResponse(\n            org_id=org_id,\n            balance=0,\n            total_purchased=0,\n            total_consumed=0,\n            last_updated=datetime.now(),\n        )\n        print(f''   Response: {response.model_dump()}'')\n        \nexcept Exception as e:\n    print(f''ERROR: {e}'')\n    import traceback\n    traceback.print_exc()\n\")"
+      "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
+      "Bash(C:UsersPC.claudepluginscacheclaude-plugins-officialsuperpowers5.0.5scriptsstart-server.sh --project-dir \"d:/Projects/AI driven/Interview\")",
+      "Bash(cat \"d:/Projects/AI driven/Interview/.superpowers/brainstorm\"/*/.server-info)",
+      "Bash(bash \"C:\\\\Users\\\\PC\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.0.5\\\\skills\\\\brainstorming\\\\scripts\\\\start-server.sh\" --project-dir \"d:\\\\Projects\\\\AI driven\\\\Interview\")",
+      "Bash(claude plugin:*)",
+      "Bash(find 'd:/Projects/AI driven/Interview/backend/tests' -name *.py)",
+      "Bash(grep -r build_wav_header --include=*.py --include=*.ts --include=*.tsx)",
+      "Bash(python -c \"from app.services.video_interview_ws_handler import VideoInterviewWSHandler; print\\(''OK''\\)\")",
+      "Bash(python -c \"from app.api.v1.video_interviews import router; print\\(''Router OK''\\); routes = [r.path for r in router.routes]; print\\([r for r in routes if ''ws'' in r]\\)\")",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(grep -A 10 \"^\\\\./src/app/video-interview/\\\\[token\\\\]/page.tsx$\")",
+      "Bash(rm -rf \"frontend/src/app/conversational-interview\")",
+      "Bash(rm -rf \"frontend/src/app/dashboard/conversational-interviews\")",
+      "Bash(rm \"backend/app/services/conversation_manager.py\")",
+      "Bash(python -c \"from app.main import app; print\\(''''Backend OK''''\\)\")"
     ],
     "deny": [],
     "ask": []

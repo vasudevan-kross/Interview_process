@@ -1,0 +1,95 @@
+<h2>WebSocket Protocol & VAD / Barge-in</h2>
+<p class="subtitle">Message types, state machine, and how barge-in interrupts the AI</p>
+
+<div class="section">
+  <h3>Message Protocol</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #6366f1">
+      <div style="color:#6366f1;font-weight:700;margin-bottom:10px">Client → Server</div>
+      <div style="font-family:monospace;font-size:0.78em;line-height:2;color:#e2e8f0">
+        <span style="color:#94a3b8">// Continuous audio while speaking</span><br>
+        { type: <span style="color:#86efac">"audio_chunk"</span>,<br>
+        &nbsp;&nbsp;data: <span style="color:#fbbf24">base64string</span> }<br><br>
+        <span style="color:#94a3b8">// VAD detected end of speech</span><br>
+        { type: <span style="color:#86efac">"audio_end"</span> }<br><br>
+        <span style="color:#94a3b8">// Candidate starts speaking while AI talks</span><br>
+        { type: <span style="color:#86efac">"barge_in"</span> }<br><br>
+        <span style="color:#94a3b8">// Client closed/left</span><br>
+        { type: <span style="color:#86efac">"disconnect"</span> }
+      </div>
+    </div>
+
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #10b981">
+      <div style="color:#10b981;font-weight:700;margin-bottom:10px">Server → Client</div>
+      <div style="font-family:monospace;font-size:0.78em;line-height:2;color:#e2e8f0">
+        <span style="color:#94a3b8">// State transitions</span><br>
+        { type: <span style="color:#86efac">"state"</span>, value: <span style="color:#fbbf24">"listening"|"thinking"|"speaking"</span> }<br><br>
+        <span style="color:#94a3b8">// Candidate's words (live feedback)</span><br>
+        { type: <span style="color:#86efac">"transcript"</span>, text: <span style="color:#fbbf24">string</span> }<br><br>
+        <span style="color:#94a3b8">// TTS audio chunk (streamed, plays immediately)</span><br>
+        { type: <span style="color:#86efac">"tts_chunk"</span>, audio: <span style="color:#fbbf24">base64</span>, text: <span style="color:#fbbf24">string</span> }<br><br>
+        <span style="color:#94a3b8">// All TTS chunks sent</span><br>
+        { type: <span style="color:#86efac">"tts_end"</span> }<br><br>
+        <span style="color:#94a3b8">// Interview finished</span><br>
+        { type: <span style="color:#86efac">"interview_complete"</span>, summary: <span style="color:#fbbf24">object</span> }
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Interview State Machine</h3>
+  <div style="background:#0f172a;border-radius:8px;padding:16px;font-family:monospace;font-size:0.8em">
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:#e2e8f0">
+      <div style="background:#1e293b;border:1px solid #6366f1;border-radius:6px;padding:6px 12px;color:#a5b4fc">GREETING</div>
+      <span style="color:#64748b">→</span>
+      <div style="background:#1e293b;border:1px solid #10b981;border-radius:6px;padding:6px 12px;color:#6ee7b7">LISTENING</div>
+      <span style="color:#64748b">→ (silence detected)</span>
+      <div style="background:#1e293b;border:1px solid #f59e0b;border-radius:6px;padding:6px 12px;color:#fcd34d">THINKING</div>
+      <span style="color:#64748b">→ (LLM done)</span>
+      <div style="background:#1e293b;border:1px solid #ec4899;border-radius:6px;padding:6px 12px;color:#f9a8d4">SPEAKING</div>
+      <span style="color:#64748b">→ (tts_end)</span>
+      <div style="background:#1e293b;border:1px solid #10b981;border-radius:6px;padding:6px 12px;color:#6ee7b7">LISTENING</div>
+      <span style="color:#64748b">… repeat until</span>
+      <div style="background:#1e293b;border:1px solid #6366f1;border-radius:6px;padding:6px 12px;color:#a5b4fc">COMPLETE</div>
+    </div>
+    <div style="margin-top:12px;padding:10px;background:#1e293b;border-radius:6px;border-left:3px solid #ef4444">
+      <span style="color:#fca5a5">BARGE-IN path:</span>
+      <span style="color:#94a3b8"> SPEAKING → (client sends barge_in) → server cancels TTS generator → state jumps to LISTENING immediately</span>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Improved VAD (Voice Activity Detection)</h3>
+  <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #334155">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div style="color:#ef4444;font-weight:600;margin-bottom:6px">❌ Current (Problems)</div>
+        <ul style="color:#94a3b8;font-size:0.85em;padding-left:16px;line-height:1.8">
+          <li>RMS-only threshold (0.03) — too sensitive to background noise</li>
+          <li>1.5s silence timer — too long, feels sluggish</li>
+          <li>100ms polling interval — CPU waste</li>
+          <li>Barge-in via separate HTTP call — awkward</li>
+          <li>No visual feedback on speech detection</li>
+        </ul>
+      </div>
+      <div>
+        <div style="color:#10b981;font-weight:600;margin-bottom:6px">✅ New (Improved)</div>
+        <ul style="color:#94a3b8;font-size:0.85em;padding-left:16px;line-height:1.8">
+          <li>AudioWorklet processes 20ms frames (not 100ms polls)</li>
+          <li>RMS + zero-crossing rate for better voice vs noise</li>
+          <li>Dynamic threshold: calibrates to ambient noise on start</li>
+          <li>End-of-speech: 800ms silence (down from 1.5s)</li>
+          <li>Barge-in threshold lower than speech-start threshold</li>
+          <li>Visual mic waveform shows detected speech level</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px;padding:14px;background:#1e1b4b;border-radius:8px;border:1px solid #4f46e5">
+  <p style="margin:0;color:#a5b4fc;font-size:0.85em">Does this protocol and VAD design look right? Next section: UI layout — what the candidate sees during the interview.</p>
+</div>

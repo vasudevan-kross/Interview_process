@@ -1,0 +1,107 @@
+<h2>WebSocket Protocol & VAD / Barge-in (v2)</h2>
+<p class="subtitle">Updated with silence engagement, mic-off detection, and connection health checks</p>
+
+<div class="section">
+  <h3>Message Protocol</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #6366f1">
+      <div style="color:#6366f1;font-weight:700;margin-bottom:10px">Client → Server</div>
+      <div style="font-family:monospace;font-size:0.78em;line-height:2;color:#e2e8f0">
+        { type: <span style="color:#86efac">"audio_chunk"</span>, data: <span style="color:#fbbf24">base64</span> }<br>
+        { type: <span style="color:#86efac">"audio_end"</span> }<br>
+        { type: <span style="color:#86efac">"barge_in"</span> }<br>
+        { type: <span style="color:#86efac">"mic_off"</span> } <span style="color:#f59e0b">← NEW</span><br>
+        { type: <span style="color:#86efac">"mic_on"</span> } <span style="color:#f59e0b">← NEW</span><br>
+        { type: <span style="color:#86efac">"pong"</span> } <span style="color:#f59e0b">← NEW (heartbeat reply)</span><br>
+        { type: <span style="color:#86efac">"disconnect"</span> }
+      </div>
+    </div>
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #10b981">
+      <div style="color:#10b981;font-weight:700;margin-bottom:10px">Server → Client</div>
+      <div style="font-family:monospace;font-size:0.78em;line-height:2;color:#e2e8f0">
+        { type: <span style="color:#86efac">"state"</span>, value: <span style="color:#fbbf24">"listening"|"thinking"|"speaking"</span> }<br>
+        { type: <span style="color:#86efac">"transcript"</span>, text: <span style="color:#fbbf24">string</span> }<br>
+        { type: <span style="color:#86efac">"tts_chunk"</span>, audio: <span style="color:#fbbf24">base64</span>, text: <span style="color:#fbbf24">string</span> }<br>
+        { type: <span style="color:#86efac">"tts_end"</span> }<br>
+        { type: <span style="color:#86efac">"engagement_prompt"</span>, reason: <span style="color:#fbbf24">"silence"|"mic_off"</span> } <span style="color:#f59e0b">← NEW</span><br>
+        { type: <span style="color:#86efac">"ping"</span> } <span style="color:#f59e0b">← NEW (heartbeat)</span><br>
+        { type: <span style="color:#86efac">"interview_complete"</span>, summary: <span style="color:#fbbf24">object</span> }
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>New Behaviors</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #f59e0b">
+      <div style="color:#fcd34d;font-weight:600;margin-bottom:8px">😶 Silence Engagement</div>
+      <ul style="color:#94a3b8;font-size:0.82em;padding-left:14px;line-height:1.9">
+        <li>Server tracks last audio_chunk time</li>
+        <li>After <strong style="color:#e2e8f0">8s silence</strong> in LISTENING: sends <code style="color:#86efac">engagement_prompt</code> (reason: "silence")</li>
+        <li>Client plays TTS: <em>"Take your time — I'm listening whenever you're ready."</em></li>
+        <li>After another <strong style="color:#e2e8f0">15s</strong>: <em>"Are you still there? Let me know when you're ready to continue."</em></li>
+        <li>After <strong style="color:#e2e8f0">30s total</strong>: session flagged as abandoned</li>
+      </ul>
+    </div>
+
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #ec4899">
+      <div style="color:#f9a8d4;font-weight:600;margin-bottom:8px">🎤 Mic Off Detection</div>
+      <ul style="color:#94a3b8;font-size:0.82em;padding-left:14px;line-height:1.9">
+        <li>Client sends <code style="color:#86efac">mic_off</code> when candidate mutes</li>
+        <li>Server responds with <code style="color:#86efac">engagement_prompt</code> (reason: "mic_off")</li>
+        <li>Client plays TTS: <em>"It looks like your microphone is turned off. Please unmute to continue."</em></li>
+        <li>Avatar shows a <strong style="color:#e2e8f0">mic-off indicator</strong> on screen</li>
+        <li>On <code style="color:#86efac">mic_on</code>: silence timer resets, resumes LISTENING normally</li>
+      </ul>
+    </div>
+
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #10b981">
+      <div style="color:#6ee7b7;font-weight:600;margin-bottom:8px">🔗 Connection Health</div>
+      <ul style="color:#94a3b8;font-size:0.82em;padding-left:14px;line-height:1.9">
+        <li>Server sends <code style="color:#86efac">ping</code> every <strong style="color:#e2e8f0">10s</strong></li>
+        <li>Client must reply <code style="color:#86efac">pong</code> within 5s</li>
+        <li>No pong → server closes socket + marks session as abandoned</li>
+        <li>Client watches WebSocket <code>onclose</code>: shows <strong style="color:#e2e8f0">"Connection lost — reconnecting…"</strong> overlay</li>
+        <li>Auto-reconnect with same token (up to 3 attempts)</li>
+        <li>On reconnect: session resumes from last transcript position</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Updated State Machine</h3>
+  <div style="background:#0f172a;border-radius:8px;padding:16px;font-family:monospace;font-size:0.8em">
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:#e2e8f0">
+      <div style="background:#1e293b;border:1px solid #6366f1;border-radius:6px;padding:6px 12px;color:#a5b4fc">GREETING</div>
+      <span style="color:#64748b">→</span>
+      <div style="background:#1e293b;border:1px solid #10b981;border-radius:6px;padding:6px 12px;color:#6ee7b7">LISTENING</div>
+      <span style="color:#64748b">→</span>
+      <div style="background:#1e293b;border:1px solid #f59e0b;border-radius:6px;padding:6px 12px;color:#fcd34d">THINKING</div>
+      <span style="color:#64748b">→</span>
+      <div style="background:#1e293b;border:1px solid #ec4899;border-radius:6px;padding:6px 12px;color:#f9a8d4">SPEAKING</div>
+      <span style="color:#64748b">→ loop →</span>
+      <div style="background:#1e293b;border:1px solid #6366f1;border-radius:6px;padding:6px 12px;color:#a5b4fc">COMPLETE</div>
+    </div>
+    <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div style="padding:8px;background:#1e293b;border-radius:6px;border-left:3px solid #ef4444">
+        <span style="color:#fca5a5">Barge-in:</span>
+        <span style="color:#94a3b8;font-size:0.9em"> SPEAKING → cancel TTS → LISTENING</span>
+      </div>
+      <div style="padding:8px;background:#1e293b;border-radius:6px;border-left:3px solid #f59e0b">
+        <span style="color:#fcd34d">Silence/Mic-off:</span>
+        <span style="color:#94a3b8;font-size:0.9em"> LISTENING → ENGAGING → LISTENING</span>
+      </div>
+      <div style="padding:8px;background:#1e293b;border-radius:6px;border-left:3px solid #10b981">
+        <span style="color:#6ee7b7">Disconnect:</span>
+        <span style="color:#94a3b8;font-size:0.9em"> any state → reconnect overlay → resume</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px;padding:14px;background:#1e1b4b;border-radius:8px;border:1px solid #4f46e5">
+  <p style="margin:0;color:#a5b4fc;font-size:0.85em">Does this look right? Next section: UI layout — the candidate's interview screen.</p>
+</div>

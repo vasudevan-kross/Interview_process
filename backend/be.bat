@@ -31,8 +31,8 @@ if !errorlevel! neq 0 (
     exit /b !errorlevel!
 )
 
+
 echo.
-echo [INFO] Using Ollama for LLM (no PyTorch needed for Coding Interviews)
 echo.
 
 echo Starting Backend Server...

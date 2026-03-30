@@ -14,10 +14,10 @@ export function AudioLevelVisualizer({
   onSilenceDetected
 }: AudioLevelVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const animationFrameRef = useRef<number>()
-  const audioContextRef = useRef<AudioContext>()
-  const analyserRef = useRef<AnalyserNode>()
-  const silenceTimerRef = useRef<NodeJS.Timeout>()
+  const animationFrameRef = useRef<number | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null)
   const [hasDetectedAudio, setHasDetectedAudio] = useState(false)
 
   useEffect(() => {

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, Briefcase, Coins } from 'lucide-react'
+import { FileCheck, Home, Users, FileText, Settings, ChevronLeft, ChevronRight, Menu, X, Code, Phone, Briefcase, Coins, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useOrg } from '@/contexts/OrganizationContext'
 
@@ -51,6 +51,12 @@ const navItems = [
     href: '/dashboard/voice-screening',
     icon: Phone,
     permission: 'campaign:view',
+  },
+  {
+    title: 'Video Interviews',
+    href: '/dashboard/video-interviews',
+    icon: Video,
+    permission: 'interview:view',
   },
 ]
 

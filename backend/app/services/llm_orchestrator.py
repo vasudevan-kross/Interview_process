@@ -1350,3 +1350,71 @@ def get_llm_orchestrator() -> LLMOrchestrator:
     if _llm_orchestrator is None:
         _llm_orchestrator = LLMOrchestrator()
     return _llm_orchestrator
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ):
+        """
+        Generate a streaming chat completion using Ollama.
+
+        This is an async generator that yields chunks of the response.
+        Used for real-time conversational AI interviews.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model name (uses default if not specified)
+            temperature: Sampling temperature (0-1)
+            max_tokens: Maximum tokens to generate
+
+        Yields:
+            Dict with 'content' (text chunk), 'done' (bool), 'model', etc.
+        """
+        try:
+            if ollama is None:
+                raise RuntimeError("ollama package not installed")
+
+            model = model or self.default_model
+
+            options = {
+                "temperature": temperature,
+                "num_ctx": settings.OLLAMA_NUM_CTX,
+            }
+            if max_tokens:
+                options["num_predict"] = max_tokens
+
+            logger.info(f"Starting streaming chat with model: {model}")
+
+            async for chunk in self._async_client.chat(
+                model=model,
+                messages=messages,
+                stream=True,
+                options=options,
+            ):
+                if hasattr(chunk, 'message'):
+                    yield {
+                        "content": chunk.message.content or "",
+                        "done": chunk.done,
+                        "model": model,
+                        "total_duration": getattr(chunk, 'total_duration', None),
+                        "eval_count": getattr(chunk, 'eval_count', None),
+                    }
+                elif isinstance(chunk, dict):
+                    yield {
+                        "content": chunk.get('message', {}).get('content', ''),
+                        "done": chunk.get('done', False),
+                        "model": model,
+                        "total_duration": chunk.get('total_duration'),
+                        "eval_count": chunk.get('eval_count'),
+                    }
+
+        except Exception as e:
+            logger.error(f"Error in streaming chat: {e}")
+            yield {
+                "content": "",
+                "done": True,
+                "error": str(e)
+            }

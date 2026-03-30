@@ -1,0 +1,93 @@
+<h2>Architecture: Real-Time Video Interview</h2>
+<p class="subtitle">WebSocket-based, replacing the current HTTP turn-based flow</p>
+
+<div class="section">
+  <h3>System Flow</h3>
+  <div style="background:#0f172a;border-radius:10px;padding:20px;font-family:monospace;font-size:0.82em;line-height:1.8;color:#e2e8f0">
+    <div style="display:grid;grid-template-columns:1fr 60px 1fr;gap:0;align-items:start">
+
+      <!-- LEFT: Frontend -->
+      <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #334155">
+        <div style="color:#6366f1;font-weight:700;margin-bottom:10px;font-size:0.95em">BROWSER (Frontend)</div>
+        <div style="color:#94a3b8;font-size:0.9em;line-height:2">
+          VRM Avatar (Three.js)<br>
+          ↕ lip-sync via AudioAnalyser<br><br>
+          MediaRecorder (video/webm)<br>
+          ↓ continuous background recording<br><br>
+          AudioWorklet (VAD)<br>
+          ↓ speech detected / end of speech<br><br>
+          WebSocket Client<br>
+          ↕ audio_chunk / barge_in / audio_end<br>
+          ↕ tts_chunk / transcript / complete
+        </div>
+      </div>
+
+      <!-- MIDDLE: Arrow -->
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding-top:80px;color:#6366f1;font-size:1.4em">
+        ⟷<br>
+        <span style="font-size:0.45em;color:#64748b;margin-top:4px">WS</span>
+      </div>
+
+      <!-- RIGHT: Backend -->
+      <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #334155">
+        <div style="color:#10b981;font-weight:700;margin-bottom:10px;font-size:0.95em">FASTAPI (Backend)</div>
+        <div style="color:#94a3b8;font-size:0.9em;line-height:2">
+          WS endpoint /ws/{token}<br><br>
+          AudioBuffer collector<br>
+          ↓ audio_end signal received<br><br>
+          faster-whisper (STT)<br>
+          ↓ transcript text<br><br>
+          Ollama LLM (streaming)<br>
+          ↓ follow-up question text chunks<br><br>
+          Piper TTS (streaming)<br>
+          ↓ audio chunks → client in real-time
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom row: storage -->
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div style="background:#1e293b;border-radius:8px;padding:10px;border:1px solid #334155;text-align:center">
+        <span style="color:#f59e0b">📼 On interview end</span><br>
+        <span style="color:#94a3b8;font-size:0.85em">Client uploads WebM recording → Supabase Storage</span>
+      </div>
+      <div style="background:#1e293b;border-radius:8px;padding:10px;border:1px solid #334155;text-align:center">
+        <span style="color:#f59e0b">📄 Transcript + Eval</span><br>
+        <span style="color:#94a3b8;font-size:0.85em">Saved to DB on session close → dashboard shows summary</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>What Gets Merged / Replaced</h3>
+  <div style="display:grid;grid-template-columns:1fr 40px 1fr;gap:0;align-items:center">
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #ef4444;opacity:0.8">
+      <div style="color:#ef4444;font-weight:600;margin-bottom:8px">❌ Removed</div>
+      <ul style="color:#94a3b8;font-size:0.85em;padding-left:16px;line-height:1.9">
+        <li>POST /sessions/turn (HTTP)</li>
+        <li>POST /sessions/turn/audio (HTTP)</li>
+        <li>Turn-based audio submit loop</li>
+        <li>Base64 full audio in response</li>
+        <li>/conversational-interview route (merged in)</li>
+        <li>ConversationManager (replaced by WS handler)</li>
+      </ul>
+    </div>
+    <div style="text-align:center;color:#6366f1;font-size:1.5em">→</div>
+    <div style="background:#1e293b;border-radius:8px;padding:14px;border:1px solid #10b981">
+      <div style="color:#10b981;font-weight:600;margin-bottom:8px">✅ Replaced With</div>
+      <ul style="color:#94a3b8;font-size:0.85em;padding-left:16px;line-height:1.9">
+        <li>WS /ws/{token} (single persistent connection)</li>
+        <li>Streaming audio chunks over socket</li>
+        <li>Barge-in via {type:"barge_in"} message</li>
+        <li>TTS streamed back as binary frames</li>
+        <li>One unified /video-interview/[token] page</li>
+        <li>VideoInterviewWSHandler (new service)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px;padding:14px;background:#1e1b4b;border-radius:8px;border:1px solid #4f46e5">
+  <p style="margin:0;color:#a5b4fc;font-size:0.85em">Does this high-level architecture look right? Next section covers the WebSocket message protocol and VAD/barge-in details.</p>
+</div>

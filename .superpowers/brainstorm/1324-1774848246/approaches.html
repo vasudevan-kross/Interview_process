@@ -1,0 +1,69 @@
+<h2>Real-Time Interview: Architecture Approaches</h2>
+<p class="subtitle">How should audio flow between the candidate and the AI interviewer?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>WebSocket Streaming <span style="color:#6366f1;font-size:0.75em;font-weight:600;margin-left:6px">★ RECOMMENDED</span></h3>
+      <p>Upgrade video interview to full-duplex WebSocket. Client streams audio chunks continuously. Server does STT → LLM → TTS all streamed back. Avatar starts speaking as first TTS chunk arrives — no waiting for full response.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Truly real-time, low latency</li>
+          <li>Natural barge-in (send stop signal over socket)</li>
+          <li>Streaming TTS = avatar starts speaking in ~500ms</li>
+          <li>Works with existing Piper + Whisper stack</li>
+          <li>Recording still works (MediaRecorder runs in background)</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Most complex to implement</li>
+          <li>Need to merge conversational interview into video interview</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Streaming HTTP (SSE)</h3>
+      <p>Keep turn-based flow but use Server-Sent Events to stream TTS audio chunks back as they're generated. Client still submits audio via POST, but response arrives in real-time chunks.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Simpler than WebSocket</li>
+          <li>Less refactoring needed</li>
+          <li>Avatar starts speaking faster than current</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Still turn-based (not truly real-time)</li>
+          <li>Barge-in requires separate HTTP call (awkward)</li>
+          <li>Not "Google Meet" feel</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Optimized HTTP (Fast Turn-Based)</h3>
+      <p>Keep current HTTP approach but aggressively optimize: better VAD so submission is instant when candidate stops, parallel TTS generation, base64 audio back faster. Add barge-in via a separate abort endpoint.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Minimal architecture change</li>
+          <li>Easiest to implement</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Still feels like "submit form, wait for response"</li>
+          <li>No streaming TTS — user waits for full audio</li>
+          <li>Barge-in is a hack, not real</li>
+          <li>Not the experience you described</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:24px;padding:16px;background:#1e1b4b;border-radius:8px;border:1px solid #4f46e5">
+  <p style="margin:0;color:#a5b4fc;font-size:0.85em"><strong>My recommendation:</strong> Option A. The existing conversational interview already has WebSocket infrastructure — we merge it into the video interview flow, replacing HTTP turns with real-time streaming. The result feels like a real interview, not a form submission.</p>
+</div>

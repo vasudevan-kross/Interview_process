@@ -19,9 +19,6 @@ import { Button } from '@/components/ui/button'
 import { SkeletonPageHeader, SkeletonStatCards, SkeletonTable } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 
-// Import the same types from the main candidate statistics page
-import type { CandidateStatistics } from '@/app/dashboard/candidates/[id]/statistics/page'
-
 export default function SubmissionStatisticsPage() {
   const params = useParams()
   const router = useRouter()
@@ -95,7 +92,7 @@ export default function SubmissionStatisticsPage() {
     return (
       <div className="space-y-6">
         <SkeletonPageHeader />
-        <SkeletonStatCards count={4} />
+        <SkeletonStatCards />
         <SkeletonTable rows={6} cols={4} />
       </div>
     )

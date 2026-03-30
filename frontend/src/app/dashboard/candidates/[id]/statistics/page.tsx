@@ -240,7 +240,7 @@ export default function CandidateStatisticsPage() {
     return (
       <div className="space-y-6">
         <SkeletonPageHeader />
-        <SkeletonStatCards count={4} />
+        <SkeletonStatCards />
         <SkeletonTable rows={6} cols={4} />
       </div>
     )

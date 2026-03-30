@@ -107,8 +107,8 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         interview_style: interviewStyle,
         custom_questions: customQuestions,
         // Scheduling
-        scheduled_start_time: scheduledStartTime ? new Date(scheduledStartTime).toISOString() : null,
-        scheduled_end_time: scheduledEndTime ? new Date(scheduledEndTime).toISOString() : null,
+        scheduled_start_time: scheduledStartTime ? new Date(scheduledStartTime).toISOString() : undefined,
+        scheduled_end_time: scheduledEndTime ? new Date(scheduledEndTime).toISOString() : undefined,
         grace_period_minutes: gracePeriodMinutes,
         required_fields: requiredFields,
         knowledge_base_file_ids: knowledgeBaseFileIds,

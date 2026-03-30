@@ -1,4 +1,5 @@
 """Application configuration using Pydantic Settings."""
+
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 
@@ -40,7 +41,6 @@ class Settings(BaseSettings):
     # OCR Strategy
     OCR_STRATEGY: str = "auto"  # auto, paddleocr, ollama
 
-
     # Security
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
@@ -61,8 +61,8 @@ class Settings(BaseSettings):
 
     # Coding Interview Settings
     CODING_INTERVIEW_DEFAULT_GRACE_PERIOD: int = 15  # minutes
-    CODING_INTERVIEW_AUTO_SAVE_INTERVAL: int = 30    # seconds
-    CODING_INTERVIEW_MAX_DURATION: int = 240         # minutes (4 hours max)
+    CODING_INTERVIEW_AUTO_SAVE_INTERVAL: int = 30  # seconds
+    CODING_INTERVIEW_MAX_DURATION: int = 240  # minutes (4 hours max)
     QUESTION_GENERATION_MODEL: str = "qwen2.5:7b"
     QUESTION_GENERATION_TEMPERATURE: float = 0.4
 
@@ -70,9 +70,19 @@ class Settings(BaseSettings):
     VAPI_PRIVATE_KEY: Optional[str] = None
     VAPI_ASSISTANT_ID: Optional[str] = None
 
+    # Local STT/TTS/VAD
+    STT_MODEL_SIZE: str = "small"
+    STT_DEVICE: str = "cpu"
+    STT_COMPUTE_TYPE: str = "int8"
+    STT_LANGUAGE: Optional[str] = "en"
+    TTS_PIPER_BIN: str = "piper"
+    TTS_PIPER_MODEL: Optional[str] = None
+    TTS_PIPER_CONFIG: Optional[str] = None
+    FFMPEG_PATH: Optional[str] = None
+
     # Gmail SMTP (for transactional emails)
-    GMAIL_SENDER: Optional[str] = None          # Set in .env — e.g. yourname@gmail.com
-    GMAIL_APP_PASSWORD: Optional[str] = None   # 16-char Google App Password
+    GMAIL_SENDER: Optional[str] = None  # Set in .env — e.g. yourname@gmail.com
+    GMAIL_APP_PASSWORD: Optional[str] = None  # 16-char Google App Password
 
     # Vision-based evaluation (for handwritten answer sheets)
     VISION_EVAL_ENABLED: bool = True
@@ -81,13 +91,12 @@ class Settings(BaseSettings):
     @property
     def allowed_extensions_list(self) -> List[str]:
         """Get allowed extensions as a list."""
-        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(',')]
+        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
 
     @property
     def allowed_origins_list(self) -> List[str]:
         """Get allowed origins as a list."""
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(',')]
-
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
 
     class Config:
         env_file = ".env"
