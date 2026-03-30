@@ -258,10 +258,18 @@ export async function listVideoSessions(params?: { campaign_id?: string; candida
 
 /**
  * Returns the WebSocket URL for a video interview session.
- * Next.js rewrites() cannot upgrade WS connections, so we connect
- * directly to the FastAPI backend using NEXT_PUBLIC_WS_URL.
+ * Derives from window.location so it works through ngrok, reverse proxies,
+ * and local dev without any env var config. The Next.js dev server forwards
+ * WS upgrade requests through rewrites() just like HTTP.
+ * Set NEXT_PUBLIC_WS_URL to override (e.g. for separate backend domains).
  */
 export function getVideoInterviewWSUrl(token: string): string {
-  const base = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
-  return `${base}/api/v1/video-interviews/ws/${token}`
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return `${process.env.NEXT_PUBLIC_WS_URL}/api/v1/video-interviews/ws/${token}`
+  }
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${proto}//${window.location.host}/api/v1/video-interviews/ws/${token}`
+  }
+  return `ws://localhost:8000/api/v1/video-interviews/ws/${token}`
 }

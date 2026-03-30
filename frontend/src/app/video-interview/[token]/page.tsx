@@ -311,7 +311,8 @@ export default function VideoInterviewPage() {
       }
 
       ws.onclose = () => {
-        if (interviewStateRef.current !== 'done') {
+        const s = interviewStateRef.current
+        if (s !== 'done' && s !== 'ready' && s !== 'loading') {
           setOverlayMessage({ text: 'Connection lost — reconnecting…', type: 'connection' })
         }
       }
