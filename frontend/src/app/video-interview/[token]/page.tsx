@@ -385,7 +385,7 @@ export default function VideoInterviewPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#111111] flex flex-col overflow-hidden relative font-sans">
+    <div className="h-screen bg-[#111111] flex flex-col overflow-hidden relative font-sans">
 
       {/* Upload spinner overlay */}
       {isUploading && (
@@ -418,8 +418,8 @@ export default function VideoInterviewPage() {
       </header>
 
       {/* Main View Area */}
-      <main className="flex-1 w-full h-full flex items-center justify-center relative p-4 sm:p-8 pt-20 pb-28">
-        <div className="w-full max-w-[1400px] h-full bg-[#1C1C1E] rounded-2xl md:rounded-[32px] overflow-hidden relative shadow-2xl border border-white/5">
+      <main className="flex-1 min-h-0 w-full flex items-center justify-center relative p-4 sm:p-8 pt-20 pb-28">
+        <div className="w-full max-w-[1400px] self-stretch bg-[#1C1C1E] rounded-2xl md:rounded-[32px] overflow-hidden relative shadow-2xl border border-white/5">
 
           {/* VRM Avatar */}
           <div className={`absolute inset-0 transition-opacity duration-1000 ${interviewState === 'ready' ? 'opacity-0' : 'opacity-100'}`}>
