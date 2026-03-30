@@ -16,10 +16,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-def build_wav_header(pcm_bytes: bytes) -> bytes:
-    """Build a 44-byte RIFF/PCM WAV header for 16kHz mono 16-bit audio."""
+def build_wav_header(pcm_bytes: bytes, sample_rate: int = 16000) -> bytes:
+    """Build a 44-byte RIFF/PCM WAV header for mono 16-bit audio at sample_rate."""
     data_size = len(pcm_bytes)
     chunk_size = 36 + data_size
+    byte_rate = sample_rate * 2   # mono 16-bit: 1 channel × 2 bytes/sample
     return struct.pack(
         "<4sI4s4sIHHIIHH4sI",
         b"RIFF",        # ChunkID
@@ -29,9 +30,9 @@ def build_wav_header(pcm_bytes: bytes) -> bytes:
         16,             # Subchunk1Size (PCM)
         1,              # AudioFormat (PCM = 1)
         1,              # NumChannels (mono)
-        16000,          # SampleRate
-        32000,          # ByteRate = SampleRate * NumChannels * BitsPerSample/8
-        2,              # BlockAlign = NumChannels * BitsPerSample/8
+        sample_rate,    # SampleRate
+        byte_rate,      # ByteRate
+        2,              # BlockAlign
         16,             # BitsPerSample
         b"data",        # Subchunk2ID
         data_size,      # Subchunk2Size

@@ -32,8 +32,9 @@ export default function VideoInterviewPage() {
   const recordingChunksRef = useRef<Blob[]>([])
   const userStreamRef = useRef<MediaStream | null>(null)
 
-  // Audio refs
-  const audioContextRef = useRef<AudioContext | null>(null)
+  // Audio refs — two contexts: TTS uses browser native rate, VAD must be 16 kHz
+  const ttsCtxRef = useRef<AudioContext | null>(null)      // TTS playback
+  const vadCtxRef = useRef<AudioContext | null>(null)      // mic capture at 16 kHz
   const vadWorkletRef = useRef<AudioWorkletNode | null>(null)
   const ttsQueueRef = useRef<AudioBufferSourceNode[]>([])
   const scheduledTimeRef = useRef<number>(0)
@@ -93,10 +94,12 @@ export default function VideoInterviewPage() {
   // ─── TTS Audio Queue ────────────────────────────────────────────────────────
 
   const enqueueTtsChunk = useCallback(async (audioB64: string) => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContext({ sampleRate: 16000 })
+    if (!ttsCtxRef.current) {
+      // No forced sample rate — browser native rate (44.1/48 kHz).
+      // decodeAudioData handles WAV headers at any rate correctly.
+      ttsCtxRef.current = new AudioContext()
     }
-    const ctx = audioContextRef.current
+    const ctx = ttsCtxRef.current
     if (ctx.state === 'suspended') await ctx.resume()
 
     const binary = atob(audioB64)
@@ -122,6 +125,12 @@ export default function VideoInterviewPage() {
     ttsQueueRef.current.push(source)
     source.onended = () => {
       ttsQueueRef.current = ttsQueueRef.current.filter((n) => n !== source)
+      // When the queue is empty, tell the backend TTS playback is done
+      // so it starts the silence/engagement timer from now (not from when
+      // the backend finished synthesizing).
+      if (ttsQueueRef.current.length === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'tts_playback_complete' }))
+      }
     }
   }, [])
 
@@ -238,13 +247,13 @@ export default function VideoInterviewPage() {
 
   const handleStartInterview = async () => {
     try {
-      // Unlock AudioContext on user gesture (required by browsers)
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 16000 })
-      }
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume()
-      }
+      // Unlock TTS AudioContext (browser native rate) on user gesture
+      if (!ttsCtxRef.current) ttsCtxRef.current = new AudioContext()
+      if (ttsCtxRef.current.state === 'suspended') await ttsCtxRef.current.resume()
+
+      // VAD AudioContext must be 16 kHz so PCM sent to STT is the right rate
+      if (!vadCtxRef.current) vadCtxRef.current = new AudioContext({ sampleRate: 16000 })
+      if (vadCtxRef.current.state === 'suspended') await vadCtxRef.current.resume()
 
       // Get user media
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
@@ -263,8 +272,8 @@ export default function VideoInterviewPage() {
       recorder.start(1000)
       mediaRecorderRef.current = recorder
 
-      // Setup AudioWorklet VAD
-      const ctx = audioContextRef.current
+      // Setup AudioWorklet VAD on the 16 kHz context
+      const ctx = vadCtxRef.current!
       await ctx.audioWorklet.addModule('/worklets/vad-processor.js')
       const vadNode = new AudioWorkletNode(ctx, 'vad-processor')
       vadWorkletRef.current = vadNode
@@ -361,9 +370,20 @@ export default function VideoInterviewPage() {
     return () => {
       wsRef.current?.close()
       userStreamRef.current?.getTracks().forEach((t) => t.stop())
-      audioContextRef.current?.close().catch(() => {})
+      ttsCtxRef.current?.close().catch(() => {})
+      vadCtxRef.current?.close().catch(() => {})
     }
   }, [])
+
+  // ─── Camera PiP — set srcObject once the video element is in the DOM ───────
+  // isActive controls conditional rendering of the PiP; when it becomes true
+  // the <video> ref mounts but userStreamRef was already set during getUserMedia.
+  useEffect(() => {
+    if (videoRef.current && userStreamRef.current) {
+      videoRef.current.srcObject = userStreamRef.current
+      videoRef.current.play().catch(() => {})
+    }
+  }, [interviewState]) // re-run whenever state changes (including 'ready' → 'greeting')
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 

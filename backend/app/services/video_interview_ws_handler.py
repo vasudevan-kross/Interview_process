@@ -151,8 +151,7 @@ class VideoInterviewWSHandler:
         await self._set_state("greeting")
         greeting = self.session_state.get("greeting", "Welcome! Let's begin your interview.")
         await self._stream_tts_and_send(greeting, is_engagement=False)
-        await self._set_state("listening")
-        self._start_silence_timer()
+        # Silence timer will start when frontend sends tts_playback_complete
         self._ping_task = asyncio.create_task(self._heartbeat_loop())
 
     # ─── Message loop ──────────────────────────────────────────────────────
@@ -180,6 +179,10 @@ class VideoInterviewWSHandler:
 
             elif msg_type == "mic_off":
                 await self._handle_mic_off()
+
+            elif msg_type == "tts_playback_complete":
+                # Frontend finished playing all TTS audio — NOW start listening timer
+                self._reset_silence_timer()
 
             elif msg_type == "mic_on":
                 self._reset_silence_timer()
@@ -358,7 +361,8 @@ class VideoInterviewWSHandler:
 
         if not is_engagement:
             await self._set_state("listening")
-            self._start_silence_timer()
+            # Silence timer starts when frontend sends tts_playback_complete
+            # (after it finishes playing the audio queue), not here.
 
     # ─── Session finalization ───────────────────────────────────────────────
 

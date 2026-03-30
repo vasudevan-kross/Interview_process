@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -29,7 +30,22 @@ class StreamingTTSService:
         self.model_path = model_path or settings.TTS_PIPER_MODEL
         self.piper_binary = piper_binary or settings.TTS_PIPER_BIN
         self.config_path = settings.TTS_PIPER_CONFIG
-        self.sample_rate = sample_rate
+        # Read the actual model sample rate from Piper's config JSON.
+        # Piper models vary: jenny_dioco = 22050 Hz, lessac = 22050 Hz, etc.
+        # Using the wrong rate causes audio to play at wrong speed/pitch.
+        self.sample_rate = self._read_model_sample_rate() or sample_rate
+
+    def _read_model_sample_rate(self) -> int | None:
+        """Read the sample_rate from Piper's .onnx.json config file."""
+        if not self.config_path:
+            return None
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            return cfg.get("audio", {}).get("sample_rate")
+        except Exception as e:
+            logger.warning("Could not read Piper config sample_rate: %s", e)
+            return None
 
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences for per-sentence TTS.
@@ -104,7 +120,7 @@ class StreamingTTSService:
             try:
                 pcm_bytes = await self._synthesize_sentence(sentence)
                 if pcm_bytes:
-                    wav_bytes = build_wav_header(pcm_bytes) + pcm_bytes
+                    wav_bytes = build_wav_header(pcm_bytes, self.sample_rate) + pcm_bytes
                     yield TTSChunk(audio=wav_bytes, text=sentence, word_end=0.0, is_final=False)
             except Exception as e:
                 logger.error("TTS synthesis failed for sentence %r: %s", sentence, e)
