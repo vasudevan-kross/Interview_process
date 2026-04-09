@@ -1,26 +1,39 @@
 /**
  * VAD AudioWorklet Processor
- * Processes 20ms audio frames (320 samples at 16kHz).
+ * Processes 20ms audio frames at the actual AudioContext sample rate.
  * Modes: 'listening' (normal speech threshold) | 'speaking' (lower barge-in threshold)
  */
 class VadProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this._mode = 'listening';         // 'listening' | 'speaking'
-    this._speechThreshold = 0.03;     // updated after calibration
+    this._mode = 'listening';
+    this._speechThreshold = 0.03;
     this._ambientRms = 0.01;
     this._calibrationFrames = [];
     this._calibrating = true;
     this._calibrationTarget = 75;     // 1.5s at 20ms frames
-    this._speechCount = 0;            // consecutive frames above threshold
-    this._silenceCount = 0;           // consecutive frames below threshold
+    this._speechCount = 0;
+    this._silenceCount = 0;
     this._isSpeaking = false;
-    this._silenceFramesNeeded = 40;   // 800ms at 20ms frames
+    // Sliding window for barge-in detection in 'speaking' mode.
+    // Tracks the last N frames (1=above threshold, 0=below).
+    this._recentFrames = [];
+    this._bargeInWindowSize = 4;   // look at last 4 frames
+    this._bargeInMinHits = 2;      // require 2 of 4 above threshold
+    this._silenceFramesNeeded = 100;  // 2000ms at 20ms frames — gives natural thinking time
     this._buffer = [];
+    // frameTarget is 20ms of samples at the actual sample rate.
+    // Defaults to 320 (16kHz); updated via 'init' message for other rates.
+    this._frameTarget = 320;
 
     this.port.onmessage = (e) => {
       if (e.data.type === 'set_mode') {
         this._mode = e.data.mode;
+      } else if (e.data.type === 'init') {
+        // Recalculate 20ms frame size for the actual hardware sample rate.
+        // e.g. 44100 Hz → 882 samples; 48000 Hz → 960 samples; 16000 Hz → 320 samples.
+        const sr = e.data.sampleRate || 16000;
+        this._frameTarget = Math.round(sr * 0.02);
       }
     };
   }
@@ -55,16 +68,15 @@ class VadProcessor extends AudioWorkletProcessor {
     if (!input || !input[0] || input[0].length === 0) return true;
 
     const samples = input[0]; // Float32Array, 128 samples per quantum
-    // Accumulate to 320 samples (20ms at 16kHz)
     for (let i = 0; i < samples.length; i++) {
       this._buffer.push(samples[i]);
     }
 
-    if (this._buffer.length < 320) return true;
+    if (this._buffer.length < this._frameTarget) return true;
 
-    const frame = new Float32Array(this._buffer.splice(0, 320));
+    const frame = new Float32Array(this._buffer.splice(0, this._frameTarget));
 
-    // Calibration phase: collect ambient noise for 1.5s
+    // Calibration phase: collect ambient noise for ~1.5s
     if (this._calibrating) {
       this._calibrationFrames.push(this._rms(frame));
       if (this._calibrationFrames.length >= this._calibrationTarget) {
@@ -79,7 +91,6 @@ class VadProcessor extends AudioWorkletProcessor {
 
     const rms = this._rms(frame);
     const zcr = this._zeroCrossingRate(frame);
-    // Voice has both energy (RMS) and zero-crossings in voice frequency range
     const isVoice = rms > this._speechThreshold && zcr > 0.05;
 
     const threshold = this._mode === 'speaking'
@@ -92,21 +103,37 @@ class VadProcessor extends AudioWorkletProcessor {
       this._silenceCount = 0;
       this._speechCount++;
 
-      if (!this._isSpeaking && this._speechCount >= 3) {
-        this._isSpeaking = true;
-        this.port.postMessage({ type: 'speech_start' });
+      if (!this._isSpeaking) {
+        if (this._mode === 'speaking') {
+          // Barge-in: use sliding window — 2 of last 4 frames above threshold
+          this._recentFrames.push(1);
+          if (this._recentFrames.length > this._bargeInWindowSize) this._recentFrames.shift();
+          const hits = this._recentFrames.reduce((a, b) => a + b, 0);
+          if (hits >= this._bargeInMinHits) {
+            this._isSpeaking = true;
+            this._recentFrames = [];
+            this.port.postMessage({ type: 'speech_start' });
+          }
+        } else if (this._speechCount >= 3) {
+          // Normal listening mode: 3 consecutive frames
+          this._isSpeaking = true;
+          this.port.postMessage({ type: 'speech_start' });
+        }
       }
 
       if (this._isSpeaking) {
-        // Send PCM chunk to main thread
         const int16 = this._toInt16(frame);
         this.port.postMessage({ type: 'chunk', data: int16.buffer }, [int16.buffer]);
       }
     } else {
       this._speechCount = 0;
+      // In speaking mode, don't clear sliding window on a single quiet frame
+      if (this._mode === 'speaking') {
+        this._recentFrames.push(0);
+        if (this._recentFrames.length > this._bargeInWindowSize) this._recentFrames.shift();
+      }
       if (this._isSpeaking) {
         this._silenceCount++;
-        // Still send frames during silence (so backend gets the tail)
         const int16 = this._toInt16(frame);
         this.port.postMessage({ type: 'chunk', data: int16.buffer }, [int16.buffer]);
 
@@ -118,7 +145,7 @@ class VadProcessor extends AudioWorkletProcessor {
       }
     }
 
-    return true; // keep processor alive
+    return true;
   }
 }
 

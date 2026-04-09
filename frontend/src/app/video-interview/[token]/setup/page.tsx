@@ -14,14 +14,19 @@ export default function VideoInterviewSetupPage() {
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const [checking, setChecking] = useState(true)
-  const [linkStatus, setLinkStatus] = useState<'checking' | 'valid' | 'expired' | 'error'>('checking')
+  const [linkStatus, setLinkStatus] = useState<'checking' | 'valid' | 'completed' | 'expired' | 'error'>('checking')
 
   useEffect(() => {
     const init = async () => {
       try {
         if (token) {
           const data = await getVideoCandidateByToken(token)
-          if (data.status === 'completed' || data.status === 'failed') {
+          if (data.status === 'completed') {
+            setLinkStatus('completed')
+            setChecking(false)
+            return
+          }
+          if (data.status === 'failed') {
             setLinkStatus('expired')
             setError('This interview link has expired.')
             setChecking(false)
@@ -102,11 +107,21 @@ export default function VideoInterviewSetupPage() {
 
           {/* Right side: Video frame & Action */}
           <div className="space-y-6">
-            {linkStatus === 'expired' || linkStatus === 'error' ? (
+            {linkStatus === 'completed' ? (
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-10 text-center backdrop-blur-md">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/20">
+                  <svg className="h-7 w-7 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold text-white">Interview Completed</h3>
+                <p className="mt-2 text-sm text-emerald-200/70">You have already submitted your interview. Thank you for your time — we will be in touch soon.</p>
+              </div>
+            ) : linkStatus === 'expired' || linkStatus === 'error' ? (
               <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-8 text-center backdrop-blur-md">
                 <AlertCircle className="mx-auto h-10 w-10 text-red-400 mb-4" />
-                <h3 className="text-lg font-medium text-white">Interview link {linkStatus}</h3>
-                <p className="mt-2 text-sm text-red-200/70">Please contact the hiring team for a new link.</p>
+                <h3 className="text-lg font-medium text-white">Interview link {linkStatus === 'error' ? 'invalid' : 'expired'}</h3>
+                <p className="mt-2 text-sm text-red-200/70">Please contact the hiring team for assistance.</p>
               </div>
             ) : (
               <div className="relative rounded-2xl border border-white/10 bg-black/50 overflow-hidden shadow-2xl ring-1 ring-white/5">

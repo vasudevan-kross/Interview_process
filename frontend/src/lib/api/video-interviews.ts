@@ -123,6 +123,7 @@ export interface VideoInterviewSession {
   duration_seconds?: number
   questions: VideoInterviewQuestion[]
   transcript: Array<Record<string, any>>
+  conversation_history: Array<{ role: 'ai' | 'candidate'; content: string }>
   interview_summary?: string
   evaluation: Record<string, any>
   recording_path?: string
@@ -170,8 +171,17 @@ export async function createVideoCandidate(data: {
   name: string
   email?: string
   phone?: string
+  resumeFile?: File
 }): Promise<VideoInterviewCandidate> {
-  const response = await apiClient['client'].post('/api/v1/video-interviews/candidates', data)
+  const fd = new FormData()
+  fd.append('campaign_id', data.campaign_id)
+  fd.append('name', data.name)
+  if (data.email) fd.append('email', data.email)
+  if (data.phone) fd.append('phone', data.phone)
+  if (data.resumeFile) fd.append('resume', data.resumeFile)
+  const response = await apiClient['client'].post('/api/v1/video-interviews/candidates', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
   return response.data
 }
 
@@ -187,6 +197,14 @@ export async function importVideoCandidates(campaignId: string, file: File): Pro
 
 export async function listVideoCandidates(params?: { campaign_id?: string }): Promise<VideoInterviewCandidate[]> {
   const response = await apiClient['client'].get('/api/v1/video-interviews/candidates', { params })
+  return response.data
+}
+
+export async function updateVideoCandidate(
+  candidateId: string,
+  data: { name?: string; email?: string; phone?: string }
+): Promise<VideoInterviewCandidate> {
+  const response = await apiClient['client'].patch(`/api/v1/video-interviews/candidates/${candidateId}`, data)
   return response.data
 }
 
@@ -238,7 +256,9 @@ export async function uploadVideoRecording(sessionId: string, file: File, durati
   formData.append('recording', file)
   if (durationSeconds !== undefined) formData.append('duration_seconds', String(durationSeconds))
 
-  const response = await fetch(`/api/v1/video-interviews/sessions/${sessionId}/recording`, {
+  // Use the streaming proxy route instead of the Next.js rewrite.
+  // Rewrites buffer the entire body and hit the 10MB limit for large recordings.
+  const response = await fetch(`/api/video-upload/${sessionId}`, {
     method: 'POST',
     body: formData,
   })

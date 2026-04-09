@@ -26,6 +26,7 @@ export default function EditVideoCampaignPage() {
     job_role: '',
     description: '',
     job_description_text: '',
+    interview_style: 'structured',
     interview_duration_minutes: 20,
     questionsText: '',
   })
@@ -43,8 +44,9 @@ export default function EditVideoCampaignPage() {
         job_role: campaign.job_role,
         description: campaign.description || '',
         job_description_text: campaign.job_description_text || '',
+        interview_style: campaign.interview_style || 'structured',
         interview_duration_minutes: campaign.interview_duration_minutes,
-        questionsText: campaign.questions.map((q) => q.question_text).join('\n'),
+        questionsText: campaign.questions.map((q: any) => q.question_text).join('\n'),
       })
       setNumQuestions(campaign.questions.length || 5)
     } catch {
@@ -74,6 +76,7 @@ export default function EditVideoCampaignPage() {
         job_role: form.job_role,
         description: form.description || undefined,
         job_description_text: form.job_description_text || undefined,
+        interview_style: form.interview_style as "structured" | "conversational",
         interview_duration_minutes: Number(form.interview_duration_minutes) || 20,
         questions: parseQuestions(),
       })
@@ -188,7 +191,7 @@ export default function EditVideoCampaignPage() {
           <div className="p-6 grid gap-6">
             
             <div className="grid gap-6 md:grid-cols-12">
-              <div className="grid gap-2 md:col-span-9">
+              <div className="grid gap-2 md:col-span-6">
                 <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Job Description (For AI Context)</label>
                 <textarea
                   value={form.job_description_text}
@@ -199,15 +202,29 @@ export default function EditVideoCampaignPage() {
                 />
               </div>
 
-              <div className="grid gap-2 md:col-span-3">
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Duration (Min)</label>
-                <input
-                  type="number"
-                  min={5}
-                  value={form.interview_duration_minutes}
-                  onChange={(e) => setForm({ ...form, interview_duration_minutes: Number(e.target.value) })}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
-                />
+              <div className="grid gap-4 md:col-span-6">
+                <div className="grid gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Interview Style</label>
+                  <select
+                    value={form.interview_style}
+                    onChange={(e) => setForm({ ...form, interview_style: e.target.value as any })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="structured">Structured (Reads exactly from generated list)</option>
+                    <option value="conversational">Conversational (Dynamic follow-up questions)</option>
+                  </select>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Duration (Min)</label>
+                  <input
+                    type="number"
+                    min={5}
+                    value={form.interview_duration_minutes}
+                    onChange={(e) => setForm({ ...form, interview_duration_minutes: Number(e.target.value) })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                  />
+                </div>
               </div>
             </div>
 

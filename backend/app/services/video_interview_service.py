@@ -18,6 +18,8 @@ from app.services.tts_service import get_tts_service
 
 logger = logging.getLogger(__name__)
 
+_VIDEO_INTERVIEW_MODEL = "llama3.1:8b"
+
 
 class VideoInterviewService:
     def __init__(self) -> None:
@@ -27,6 +29,12 @@ class VideoInterviewService:
         self.audio = get_audio_processing_service()
         self.stt = get_stt_service()
         self.tts = get_tts_service()
+
+    def _interview_model(self, campaign: Optional[Dict[str, Any]] = None) -> str:
+        """Return the LLM model to use for this video interview session."""
+        if campaign:
+            return campaign.get("llm_model") or _VIDEO_INTERVIEW_MODEL
+        return _VIDEO_INTERVIEW_MODEL
 
     # ------------------------------------------------------------------
     # Campaigns
@@ -53,7 +61,7 @@ class VideoInterviewService:
             "grace_period_minutes": payload.get("grace_period_minutes", 15),
             "avatar_config": payload.get("avatar_config") or {},
             "questions": questions,
-            "llm_model": payload.get("llm_model", "qwen2.5:7b"),
+            "llm_model": payload.get("llm_model", _VIDEO_INTERVIEW_MODEL),
             "is_active": True,
         }
 
@@ -163,12 +171,45 @@ class VideoInterviewService:
             "phone": payload.get("phone"),
             "status": "pending",
         }
+        if payload.get("resume_text"):
+            data["resume_text"] = payload["resume_text"]
+        if payload.get("resume_parsed"):
+            data["resume_parsed"] = payload["resume_parsed"]
         result = (
             self.supabase.table("video_interview_candidates").insert(data).execute()
         )
         result_data = cast(Any, result.data) or []
         if not result_data:
             raise ValueError("Failed to create candidate")
+        return result_data[0]
+
+    async def update_candidate(
+        self,
+        org_id: str,
+        candidate_id: str,
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        update_payload: Dict[str, Any] = {}
+        if name is not None:
+            update_payload["name"] = name.strip()
+        if email is not None:
+            update_payload["email"] = email.strip() or None
+        if phone is not None:
+            update_payload["phone"] = phone.strip() or None
+        if not update_payload:
+            raise ValueError("No fields to update")
+        result = (
+            self.supabase.table("video_interview_candidates")
+            .update(update_payload)
+            .eq("id", candidate_id)
+            .eq("org_id", org_id)
+            .execute()
+        )
+        result_data = cast(Any, result.data) or []
+        if not result_data:
+            raise ValueError("Candidate not found")
         return result_data[0]
 
     async def delete_candidate(self, org_id: str, candidate_id: str) -> Dict[str, Any]:
@@ -266,9 +307,9 @@ class VideoInterviewService:
         candidate = cast(Dict[str, Any], candidate_result.data or {})
         if not candidate:
             raise ValueError("Candidate not found")
-        if candidate.get("status") in ("completed", "failed") or candidate.get(
-            "time_expired"
-        ):
+        # For completed/failed candidates, still return the data so the frontend
+        # can show an appropriate message instead of a generic "invalid link" error.
+        if candidate.get("time_expired") and candidate.get("status") not in ("completed", "failed"):
             raise ValueError("Interview link expired")
 
         campaign_id = candidate.get("campaign_id")
@@ -305,30 +346,36 @@ class VideoInterviewService:
         if not self._is_within_schedule(campaign):
             raise ValueError("Interview window is closed")
 
-        max_questions = campaign.get("interview_style") or 5
-        if isinstance(max_questions, str):
-            try:
-                max_questions = int(max_questions)
-            except:
-                max_questions = 5
+        max_questions = len(campaign.get("questions") or [])
+        if max_questions == 0:
+            max_questions = 5
 
         greeting, first_question = await self._generate_conversational_start(
             candidate.get("name", "Candidate"), campaign
         )
+
+        mode = campaign.get("interview_style", "conversational")
+        
+        session_questions = [{"question_text": first_question, "topic": "introduction"}]
+        if mode == "structured":
+            session_questions.extend(campaign.get("questions") or [])
+            # +1 because we prepended the intro question
+            max_questions = len(session_questions)
 
         session_state = {
             "current_index": 0,
             "max_questions": max_questions,
             "conversation_history": [],
             "greeting": greeting,
-            "mode": "conversational",
+            "mode": mode,
+            "covered_topics": [],
         }
 
         session_payload = {
             "org_id": campaign["org_id"],
             "campaign_id": campaign["id"],
             "candidate_id": candidate["id"],
-            "questions": [{"question_text": first_question, "topic": "introduction"}],
+            "questions": session_questions,
             "session_state": session_state,
             "status": "in_progress",
         }
@@ -406,6 +453,16 @@ class VideoInterviewService:
             questions[current_index] if current_index < len(questions) else {}
         )
 
+        # Track covered topic
+        topic = current_question.get("topic") or ""
+        covered_topics: List[str] = session_state.get("covered_topics") or []
+        if topic and topic not in covered_topics:
+            covered_topics.append(topic)
+        session_state["covered_topics"] = covered_topics
+
+        # Detect weak/short answer — used to decide probe vs. move on
+        is_weak_answer = len(answer_text.strip().split()) < 15
+
         conversation_history.append(
             {
                 "role": "candidate",
@@ -450,8 +507,17 @@ class VideoInterviewService:
                     campaign = None
 
             if campaign:
+                previous_questions = [
+                    q.get("question_text")
+                    for q in questions[:current_index]
+                    if q.get("question_text")
+                ]
                 next_question_text = await self._generate_conversational_question(
-                    conversation_history, campaign
+                    conversation_history,
+                    campaign,
+                    covered_topics=session_state.get("covered_topics", []),
+                    is_weak_answer=is_weak_answer,
+                    previous_questions=previous_questions,
                 )
 
         if not next_question_text:
@@ -534,6 +600,71 @@ class VideoInterviewService:
             "audio_content_type": audio_content_type,
         }
 
+    async def finalize_stuck_session(self, session_id: str, org_id: str) -> Any:
+        """Force-complete an in_progress session using whatever transcript data is in the DB."""
+        result = (
+            self.supabase.table("video_interview_sessions")
+            .select("*")
+            .eq("id", session_id)
+            .eq("org_id", org_id)
+            .single()
+            .execute()
+        )
+        session = cast(Dict[str, Any], result.data or {})
+        if not session:
+            raise ValueError("Session not found")
+
+        history = (session.get("session_state") or {}).get("conversation_history", [])
+        transcript = session.get("transcript") or []
+
+        # If transcript already has entries, use them; otherwise build from history
+        if not transcript and history:
+            greeting = (session.get("session_state") or {}).get("greeting", "")
+            q_idx = 0
+            pending: Optional[str] = None
+            for entry in history:
+                if entry.get("role") == "ai":
+                    content = entry.get("content", "")
+                    if content == greeting and q_idx == 0 and pending is None:
+                        continue
+                    pending = content
+                elif entry.get("role") == "candidate" and pending is not None:
+                    if transcript and transcript[-1]["question"]["question_text"] == pending:
+                        transcript[-1]["answer"] += f" {entry.get('content', '')}"
+                    else:
+                        transcript.append({
+                            "question_index": q_idx,
+                            "question": {"question_text": pending},
+                            "answer": entry.get("content", ""),
+                        })
+                        q_idx += 1
+
+        duration_seconds = session.get("duration_seconds")
+        if not duration_seconds and session.get("started_at"):
+            try:
+                from datetime import datetime, timezone
+                started_dt = datetime.fromisoformat(session["started_at"].replace("Z", "+00:00"))
+                duration_seconds = int((datetime.now(timezone.utc) - started_dt).total_seconds())
+            except Exception:
+                pass
+
+        update_payload: Dict[str, Any] = {"status": "completed", "transcript": transcript}
+        if duration_seconds:
+            update_payload["duration_seconds"] = duration_seconds
+
+        updated = (
+            self.supabase.table("video_interview_sessions")
+            .update(update_payload)
+            .eq("id", session_id)
+            .execute()
+        )
+        self.supabase.table("video_interview_candidates").update(
+            {"status": "completed"}
+        ).eq("id", session.get("candidate_id", "")).execute()
+
+        updated_data = cast(Any, updated.data) or []
+        return await self.get_session(session_id)
+
     async def upload_recording(
         self,
         session_id: str,
@@ -571,14 +702,9 @@ class VideoInterviewService:
             "recording_duration_seconds": duration_seconds,
         }
 
-        updated = (
-            self.supabase.table("video_interview_sessions")
-            .update(update_payload)
-            .eq("id", session_id)
-            .execute()
-        )
-        updated_data = cast(Any, updated.data) or []
-        return updated_data[0] if updated_data else update_payload
+        self.supabase.table("video_interview_sessions").update(update_payload).eq("id", session_id).execute()
+        # Always return the full session row so VideoInterviewSessionResponse can serialize it
+        return await self.get_session(session_id)
 
     async def get_session(self, session_id: str) -> Any:
         result = (
@@ -598,6 +724,32 @@ class VideoInterviewService:
                 )
             except Exception:
                 session["signed_recording_url"] = None
+
+        # Attach candidate name for the session detail page
+        candidate_id = session.get("candidate_id")
+        if candidate_id:
+            try:
+                c_result = (
+                    self.supabase.table("video_interview_candidates")
+                    .select("name")
+                    .eq("id", candidate_id)
+                    .single()
+                    .execute()
+                )
+                c = cast(Dict[str, Any], c_result.data or {})
+                if c.get("name"):
+                    parts = c["name"].strip().split(" ", 1)
+                    session["candidate"] = {
+                        "first_name": parts[0],
+                        "last_name": parts[1] if len(parts) > 1 else "",
+                    }
+            except Exception:
+                pass
+
+        # Expose full conversation history for the transcript view
+        session_state = session.get("session_state") or {}
+        session["conversation_history"] = session_state.get("conversation_history") or []
+
         return session
 
     async def list_sessions(
@@ -632,18 +784,21 @@ class VideoInterviewService:
         basis = payload.get("question_basis") or ["job_description", "job_role"]
         basis_text = ", ".join(basis)
         prompt = (
-            f"Generate {count} concise video interview questions as JSON array. "
-            f"Difficulty level: {difficulty}. "
-            f"Question basis: {basis_text}. "
+            f"Generate {count} video interview questions for a {job_role} role as a JSON array. "
+            f"Difficulty: {difficulty}. Based on: {basis_text}. "
+            "Mix question types: conceptual (what/why), practical (how you built/implemented), "
+            "scenario-based (production situations), and problem-solving/debugging. "
+            "Frame questions as real-world scenarios, not textbook definitions. "
             "Each item must include: question_text, topic, difficulty, expected_duration_minutes. "
-            f"Job role: {job_role}. Job description: {description}"
+            f"Job description: {description}"
         )
         try:
             result = await self.llm.generate_completion(
                 prompt=prompt,
-                system_prompt="Return valid JSON array only.",
+                model=self._interview_model(),
+                system_prompt="You are a senior technical interviewer. Return valid JSON array only.",
                 temperature=0.2,
-                max_tokens=600,
+                max_tokens=800,
             )
             raw = result.get("response", "[]")
             return cast(Any, self._safe_parse_json_array(raw))
@@ -706,19 +861,27 @@ class VideoInterviewService:
         self, transcript: List[Dict[str, Any]]
     ) -> tuple[str, Dict[str, Any]]:
         prompt = (
-            "You are an interviewer assistant. Summarize the candidate answers and provide JSON with keys: "
-            "summary, strengths, weaknesses, recommendation (strong_hire|hire|maybe|no_hire). "
+            "Evaluate this candidate interview transcript. Return a JSON object with these exact keys:\n"
+            "- summary: 2-3 sentence overall assessment\n"
+            "- strengths: list of strings, each citing a specific answer from the transcript as evidence\n"
+            "- weaknesses: list of strings, each citing a specific answer as evidence\n"
+            "- recommendation: one of strong_hire|hire|maybe|no_hire\n"
+            "- technical_score: integer 0-10\n"
+            "- communication_score: integer 0-10\n"
+            "- problem_solving: integer 0-10\n"
+            "- overall_score: integer 0-10\n"
             f"Transcript: {json.dumps(transcript)}"
         )
         try:
             result = await self.llm.generate_completion(
                 prompt=prompt,
-                system_prompt="Return valid JSON only.",
+                model=self._interview_model(),
+                system_prompt="You are a senior technical interviewer evaluating a candidate. Be objective and evidence-based. Return valid JSON only.",
                 temperature=0.2,
-                max_tokens=500,
+                max_tokens=700,
             )
             raw = result.get("response", "{}")
-            parsed = cast(Any, json.loads(raw))
+            parsed = self._safe_parse_json_dict(raw)
             return parsed.get("summary", ""), parsed
         except Exception as exc:
             logger.warning(f"Summary generation failed: {exc}")
@@ -735,13 +898,14 @@ class VideoInterviewService:
         try:
             result = await self.llm.generate_completion(
                 prompt=prompt,
-                system_prompt="Return valid JSON only.",
-                temperature=0.3,
-                max_tokens=200,
+                model=self._interview_model(campaign),
+                system_prompt="You are a senior technical interviewer. Return valid JSON only.",
+                temperature=0.2,
+                max_tokens=700,
             )
             raw = result.get("response", "{}")
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict) and parsed.get("question_text"):
+            parsed = self._safe_parse_json_dict(raw)
+            if parsed and parsed.get("question_text"):
                 return parsed
         except Exception as exc:
             logger.warning(f"Follow-up generation failed: {exc}")
@@ -750,84 +914,214 @@ class VideoInterviewService:
     async def _generate_conversational_start(
         self, candidate_name: str, campaign: Dict[str, Any]
     ) -> tuple[str, str]:
-        """Generate greeting and first question for conversational interview."""
+        """Generate greeting and a qualification question for conversational interview.
+
+        The opening question explicitly confirms the candidate's expertise relative
+        to the role so the AI can decide early whether to proceed or politely end.
+        """
         job_role = campaign.get("job_role", "the position")
-        job_desc = campaign.get("job_description_text", "")[:500]
-        tech_req = campaign.get("technical_requirements", "")[:300]
 
-        prompt = f"""You are a professional interviewer. Generate:
-1. A warm greeting (1-2 sentences)
-2. One opening interview question
+        # Use only the first name to keep the greeting natural
+        first_name = candidate_name.strip().split()[0] if candidate_name.strip() else "there"
 
-Greeting should introduce yourself and the interview.
-Question should be about {job_role} and be conversational.
+        # Build greeting directly in Python — name is guaranteed correct
+        greeting = (
+            f"Hi {first_name}! I'm your interviewer today. "
+            f"Thanks for joining us for the {job_role} position. "
+            f"Before we dive into the technical questions, I'd love to quickly understand your background."
+        )
 
-Return as JSON: {{"greeting": "...", "question": "..."}}"""
+        # The opening question is deterministic — no LLM needed.
+        # It asks the candidate to state their expertise and years of experience
+        # so the AI has concrete data to decide relevance to the role.
+        question = (
+            f"Could you tell me about your experience and expertise? "
+            f"Specifically, how many years have you been working and what technologies or domains are you most skilled in?"
+        )
+        return greeting, question
+
+    async def _assess_qualification(
+        self,
+        candidate_answer: str,
+        campaign: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Assess whether the candidate's background is relevant to the role.
+
+        Returns: {"relevant": bool, "response": str}
+        - relevant=True  → response is a smooth transition question into the interview
+        - relevant=False → response is a polite message explaining the mismatch
+        """
+        job_role = campaign.get("job_role", "the position")
+        job_desc = (campaign.get("job_description_text") or "")[:400]
+        job_desc_block = f"\nJob description: {job_desc}" if job_desc else ""
+
+        prompt = f"""A candidate has just introduced themselves for a **{job_role}** interview.{job_desc_block}
+
+Candidate said: "{candidate_answer}"
+
+Note: Speech-to-text transcription may have errors — treat the answer charitably.
+
+Your task: generate a warm, natural follow-up response that transitions into the interview.
+- If their background sounds relevant: acknowledge it and ask the first technical question.
+- If the answer is unclear or vague: acknowledge what they said and ask them to briefly describe their technical skills (do NOT end the interview).
+- Always continue the interview — never refuse or end based on this answer alone.
+
+Keep the response to 2-3 sentences maximum. Be conversational and encouraging.
+
+Return JSON only: {{"relevant": true, "response": "your response here"}}"""
 
         try:
             result = await self.llm.generate_completion(
                 prompt=prompt,
-                system_prompt="You are a professional interviewer. Return valid JSON only.",
-                temperature=0.5,
-                max_tokens=300,
+                model=self._interview_model(campaign),
+                system_prompt=(
+                    "You are a friendly, senior interviewer. Always continue the interview — "
+                    "never refuse or end it. Generate a natural transition into the first "
+                    "technical question. Return valid JSON only."
+                ),
+                temperature=0.2,
+                max_tokens=750,
             )
             raw = result.get("response", "{}")
-            parsed = json.loads(raw)
-            greeting = parsed.get(
-                "greeting", f"Hi {candidate_name}! Welcome to the interview."
-            )
-            question = parsed.get(
-                "question",
-                f"Can you tell me about yourself and your experience with {job_role}?",
-            )
-            return greeting, question
+            parsed = self._safe_parse_json_dict(raw)
+            return {
+                "relevant": bool(parsed.get("relevant", True)),
+                "response": parsed.get("response", ""),
+            }
         except Exception as exc:
-            logger.warning(f"Conversational start generation failed: {exc}")
-            greeting = f"Hi {candidate_name}! I'm excited to speak with you today about the {job_role} position."
-            question = f"Can you tell me about yourself and your relevant experience?"
-            return greeting, question
+            logger.warning(f"Qualification assessment failed: {exc}")
+            # Default to relevant so the interview continues
+            return {"relevant": True, "response": f"Thanks for sharing! Let's get started with the {job_role} questions."}
 
     async def _generate_conversational_question(
-        self, conversation_history: List[Dict[str, Any]], campaign: Dict[str, Any]
+        self,
+        conversation_history: List[Dict[str, Any]],
+        campaign: Dict[str, Any],
+        resume_context: Optional[Dict[str, Any]] = None,
+        is_final_question: bool = False,
+        covered_topics: Optional[List[str]] = None,
+        is_weak_answer: bool = False,
+        previous_questions: Optional[List[str]] = None,
     ) -> Optional[str]:
         """Generate next conversational question based on history."""
         job_role = campaign.get("job_role", "the position")
-        job_desc = campaign.get("job_description_text", "")[:500]
+        job_desc = campaign.get("job_description_text", "")[:400]
 
         history_text = "\n".join(
             [
                 f"{h.get('role', 'unknown')}: {h.get('content', '')}"
-                for h in conversation_history[-6:]
+                for h in conversation_history[-10:]
             ]
         )
 
-        prompt = f"""You are a professional interviewer conducting a conversational interview for {job_role}.
+        # Build topic guide from campaign questions (cap at 5 to keep prompt short)
+        topic_list = [
+            q.get("question_text", "")
+            for q in (campaign.get("questions") or [])[:5]
+            if q.get("question_text")
+        ]
+        topics_block = ""
+        if topic_list:
+            topics_block = (
+                "\nTopics to cover (use as a guide, not a script):\n"
+                + "\n".join(f"- {t}" for t in topic_list)
+                + "\nAsk naturally based on what the candidate says, but ensure all topics are covered.\n"
+            )
 
+        # Already-covered topics — avoid repeating them
+        covered_block = ""
+        if covered_topics:
+            covered_block = f"\nAlready covered topics: {', '.join(covered_topics)}. Do NOT revisit these.\n"
+
+        # Inject resume context with candidate-level awareness
+        resume_block = ""
+        if resume_context:
+            skills = ", ".join((resume_context.get("skills") or [])[:10])
+            exp = resume_context.get("years_of_experience")
+            summary = (resume_context.get("summary") or "")[:200]
+            if exp and int(exp) < 3:
+                level_note = "Junior candidate — focus on fundamentals and learning mindset."
+            elif exp and int(exp) >= 7:
+                level_note = "Senior candidate — probe system design, tradeoffs, and production experience."
+            else:
+                level_note = "Mid-level candidate — balance practical implementation with conceptual depth."
+            resume_block = (
+                f"\nCandidate: {exp or '?'} yrs experience, skills: {skills}. {summary}\n"
+                f"Level guidance: {level_note}\n"
+            )
+
+        job_desc_block = f"\nRole context: {job_desc}\n" if job_desc else ""
+        final_note = "\nThis is the FINAL question — wrap up naturally, thank the candidate, and invite any questions they may have.\n" if is_final_question else ""
+        weak_note = "\nThe candidate's last answer was brief or vague — ask a probing follow-up on the SAME topic to draw out more detail. Do NOT jump to a new topic.\n" if is_weak_answer else ""
+
+        # Compact "already asked" list — first 8 words of each previous AI question.
+        # Short summaries are more reliably followed by smaller LLMs than full question text.
+        already_asked_block = ""
+        if previous_questions:
+            summaries = []
+            for q in previous_questions[-8:]:
+                words = q.strip().split()
+                summaries.append(" ".join(words[:8]) + ("…" if len(words) > 8 else ""))
+            already_asked_block = (
+                "\nALREADY ASKED — do NOT repeat or rephrase these topics:\n"
+                + "\n".join(f"- {s}" for s in summaries)
+                + "\n"
+            )
+
+        prompt = f"""You are a technical interviewer for a {job_role} role.
+{job_desc_block}{resume_block}
+{already_asked_block}
 Conversation so far:
 {history_text}
+{topics_block}{weak_note}{final_note}
+Ask ONE new follow-up question. Rules:
+- Must cover a DIFFERENT topic than anything in ALREADY ASKED above
+- 1-2 sentences, conversational, no jargon
+- Reference what the candidate just said
+- Explore WHY, HOW, or what tradeoffs — not just WHAT
 
-Generate ONE follow-up question that:
-- Is natural and conversational
-- Builds on what the candidate just said
-- Keeps the interview flowing smoothly
-- Is different from previous questions
-- *Crucially*: If this is early in the interview, and the candidate hasn't clearly stated their specific area of expertise or core skills within {job_role}, ask them to clarify it.
-
-Return just the question as JSON: {{"question": "..."}}"""
+Return ONLY valid JSON: {{"question": "..."}}"""
 
         try:
             result = await self.llm.generate_completion(
                 prompt=prompt,
-                system_prompt="You are a professional interviewer. Return valid JSON only.",
-                temperature=0.6,
-                max_tokens=200,
+                model=self._interview_model(campaign),
+                system_prompt="You are a senior technical interviewer with 10+ years of hiring experience. Ask naturally, like a human — not robotic AI. Return valid JSON only.",
+                temperature=0.2,
+                max_tokens=700,
             )
             raw = result.get("response", "{}")
-            parsed = json.loads(raw)
+            parsed = self._safe_parse_json_dict(raw)
             return parsed.get("question")
         except Exception as exc:
             logger.warning(f"Conversational question generation failed: {exc}")
             return None
+
+    def _safe_parse_json_dict(self, raw: str) -> Dict[str, Any]:
+        """Parse JSON object from LLM output, stripping any extra text."""
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("json", "", 1).strip()
+
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        import re
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+
+        return {}
 
     def _safe_parse_json_array(self, raw: str) -> List[Any]:
         """Parse JSON array from LLM output, stripping any extra text."""

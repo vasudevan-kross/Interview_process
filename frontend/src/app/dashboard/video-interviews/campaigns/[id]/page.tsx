@@ -4,11 +4,11 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'r
 import { useParams, useRouter } from 'next/navigation'
 import { PageHeader } from '@/components/ui/page-header'
 import { SkeletonPageHeader, SkeletonTable } from '@/components/ui/skeleton'
-import { createVideoCandidate, deleteVideoCandidate, getVideoCampaign, listVideoCandidates, listVideoSessions, importVideoCandidates, type VideoInterviewCampaign, type VideoInterviewCandidate, type VideoInterviewSession } from '@/lib/api/video-interviews'
+import { createVideoCandidate, deleteVideoCandidate, updateVideoCandidate, getVideoCampaign, listVideoCandidates, listVideoSessions, importVideoCandidates, type VideoInterviewCampaign, type VideoInterviewCandidate, type VideoInterviewSession } from '@/lib/api/video-interviews'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import Link from 'next/link'
-import { ChevronLeft, Trash2, Copy, ArrowRight, UserPlus, UploadCloud, Users } from 'lucide-react'
+import { ChevronLeft, Trash2, Pencil, Copy, ArrowRight, UserPlus, UploadCloud, Users } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -36,10 +36,15 @@ export default function VideoCampaignDetailPage() {
   const [importFileName, setImportFileName] = useState<string | null>(null)
   const [importFile, setImportFile] = useState<File | null>(null)
   const [form, setForm] = useState({ name: '', email: '', phone: '' })
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editingCandidate, setEditingCandidate] = useState<VideoInterviewCandidate | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', email: '', phone: '' })
+  const [editSaving, setEditSaving] = useState(false)
 
   useEffect(() => {
     if (campaignId) fetchData()
@@ -84,9 +89,11 @@ export default function VideoCampaignDetailPage() {
         name,
         email: email ? email : undefined,
         phone: phone ? phone : undefined,
+        resumeFile: resumeFile ?? undefined,
       })
       setCandidates([candidate, ...candidates])
       setForm({ name: '', email: '', phone: '' })
+      setResumeFile(null)
       toast.success('Candidate added')
     } catch {
       toast.error('Failed to add candidate')
@@ -102,6 +109,34 @@ export default function VideoCampaignDetailPage() {
       toast.success('Invite link copied')
     } catch {
       toast.error('Failed to copy link')
+    }
+  }
+
+  const requestEditCandidate = (candidate: VideoInterviewCandidate) => {
+    setEditingCandidate(candidate)
+    setEditForm({ name: candidate.name, email: candidate.email || '', phone: candidate.phone || '' })
+    setEditDialogOpen(true)
+  }
+
+  const handleEditCandidate = async () => {
+    if (!editingCandidate) return
+    const name = editForm.name.trim()
+    if (!name) { toast.error('Candidate name is required'); return }
+    try {
+      setEditSaving(true)
+      const updated = await updateVideoCandidate(editingCandidate.id, {
+        name,
+        email: editForm.email.trim() || undefined,
+        phone: editForm.phone.trim() || undefined,
+      })
+      setCandidates(candidates.map((c) => c.id === updated.id ? updated : c))
+      toast.success('Candidate updated')
+      setEditDialogOpen(false)
+      setEditingCandidate(null)
+    } catch {
+      toast.error('Failed to update candidate')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -287,17 +322,30 @@ export default function VideoCampaignDetailPage() {
                     </div>
                   </div>
                   
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      requestDeleteCandidate(candidate.id)
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-all -mr-2"
-                    aria-label="Delete candidate"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-all -mr-2">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        requestEditCandidate(candidate)
+                      }}
+                      className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg transition-all"
+                      aria-label="Edit candidate"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        requestDeleteCandidate(candidate.id)
+                      }}
+                      className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-all"
+                      aria-label="Delete candidate"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Status Section */}
@@ -371,6 +419,52 @@ export default function VideoCampaignDetailPage() {
         variant="destructive"
       />
 
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit candidate</DialogTitle>
+            <DialogDescription>Update the candidate's details.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="grid gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Full name</label>
+              <input
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                placeholder="e.g. Priya Kapoor"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Email (optional)</label>
+              <input
+                value={editForm.email}
+                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                placeholder="priya@example.com"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Phone (optional)</label>
+              <input
+                value={editForm.phone}
+                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                placeholder="+91 99999 00000"
+              />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setEditDialogOpen(false)} disabled={editSaving}>
+                Cancel
+              </Button>
+              <Button onClick={handleEditCandidate} disabled={editSaving} className="flex-1 bg-indigo-600 hover:bg-indigo-700 font-semibold">
+                {editSaving ? 'Saving...' : 'Save changes'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
@@ -411,6 +505,19 @@ export default function VideoCampaignDetailPage() {
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
                     placeholder="+91 99999 00000"
                   />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Resume (optional, PDF or DOCX)</label>
+                  <label className="flex items-center gap-3 w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-2.5 text-sm text-slate-500 cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/30 transition-colors">
+                    <UploadCloud className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{resumeFile ? resumeFile.name : 'Click to upload resume'}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.docx"
+                      className="hidden"
+                      onChange={(e) => setResumeFile(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
                 </div>
                 <Button onClick={handleCreateCandidate} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 font-semibold shadow-sm">
                   {saving ? 'Adding...' : 'Add Candidate'}
