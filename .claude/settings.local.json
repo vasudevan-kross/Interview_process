@@ -16,9 +16,15 @@
       "Bash(rm -rf \"frontend/src/app/conversational-interview\")",
       "Bash(rm -rf \"frontend/src/app/dashboard/conversational-interviews\")",
       "Bash(rm \"backend/app/services/conversation_manager.py\")",
-      "Bash(python -c \"from app.main import app; print\\(''''Backend OK''''\\)\")"
+      "Bash(python -c \"from app.main import app; print\\(''''Backend OK''''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(''assets/piper/en_GB-jenny_dioco-medium.onnx.json''\\)\\); print\\(''sample_rate:'', d.get\\(''audio'', {}\\).get\\(''sample_rate''\\) or d.get\\(''sample_rate''\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if k in [''audio'',''language'',''sample_rate'']}, indent=2\\)\\)\")",
+      "Read(//d:/Projects/**)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "d:\\Projects\\AI driven\\Interview\\frontend\\src\\app\\api\\video-upload"
+    ]
   }
 }

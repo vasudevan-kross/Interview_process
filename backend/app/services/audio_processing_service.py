@@ -47,6 +47,18 @@ class AudioProcessingService:
             logger.warning("ffmpeg not found in PATH; audio conversion will fail")
         self.vad = None
         try:
+            import sys
+            try:
+                import pkg_resources
+            except ImportError:
+                # Mock pkg_resources for webrtcvad which uses it only to get __version__
+                import types
+                _pkg = types.ModuleType("pkg_resources")
+                class _MockDist:
+                    version = "2.0.10"
+                _pkg.get_distribution = lambda name: _MockDist()
+                sys.modules["pkg_resources"] = _pkg
+
             import webrtcvad  # type: ignore
 
             self.vad = webrtcvad.Vad(2)
@@ -125,15 +137,60 @@ class AudioProcessingService:
     def _energy_vad(self, frame: bytes) -> bool:
         if not frame:
             return False
+
+        # amplify low الصوت
+        def amplify(f: bytes, gain: float) -> bytes:
+            amplified_samples = bytearray()
+            for i in range(0, len(f), 2):
+                sample = int.from_bytes(f[i:i+2], "little", signed=True)
+                val = max(-32768, min(32767, int(sample * gain)))
+                amplified_samples.extend(val.to_bytes(2, "little", signed=True))
+            return bytes(amplified_samples)
+
+        frame = amplify(frame, gain=2.0)
+
         count = len(frame) // 2
+        total = 0.0
+
+        samples = []
+        for i in range(0, len(frame), 2):
+            sample = int.from_bytes(frame[i:i+2], "little", signed=True)
+            samples.append(sample)
+            total += sample * sample
+
         if count == 0:
             return False
-        total = 0.0
-        for i in range(0, len(frame), 2):
-            sample = int.from_bytes(frame[i : i + 2], byteorder="little", signed=True)
-            total += sample * sample
+
         rms = math.sqrt(total / count) / 32768.0
-        return rms > 0.015
+
+        # adaptive noise floor
+        if getattr(self, "noise_floor", None) is None:
+            self.noise_floor = rms if rms > 0 else 0.0
+
+        self.noise_floor = 0.95 * self.noise_floor + 0.05 * rms
+        threshold = self.noise_floor * 2.5
+
+        # zero crossing
+        crossings = sum(
+            1 for i in range(1, len(samples))
+            if samples[i-1] * samples[i] < 0
+        )
+        zcr = crossings / max(1, len(samples))
+
+        is_speech = rms > threshold or zcr > 0.1
+
+        # hangover
+        if getattr(self, "speech_frames", None) is None:
+            self.speech_frames = 0
+
+        if is_speech:
+            self.speech_frames = 5
+            return True
+        else:
+            if self.speech_frames > 0:
+                self.speech_frames -= 1
+                return True
+            return False
 
     def _extract_pcm(self, wav_bytes: bytes) -> bytes:
         """Extract raw PCM from WAV bytes (skip header)."""

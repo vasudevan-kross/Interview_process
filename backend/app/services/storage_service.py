@@ -2,6 +2,7 @@
 Supabase Storage service for file upload and management.
 """
 from typing import Optional, BinaryIO
+import asyncio
 import os
 from datetime import datetime
 from app.db.supabase_client import get_supabase
@@ -25,7 +26,7 @@ class StorageService:
         }
 
     async def ensure_buckets_exist(self):
-        """Create storage buckets if they don't exist."""
+        """Create storage buckets if they don't exist. Never raises — failures are logged only."""
         try:
             # List existing buckets
             buckets = self.client.storage.list_buckets()
@@ -40,8 +41,8 @@ class StorageService:
                     )
                     logger.info(f"Created bucket: {bucket_name}")
         except Exception as e:
-            logger.error(f"Error ensuring buckets exist: {e}")
-            raise
+            # Non-fatal: bucket may already exist; log and continue
+            logger.warning(f"Could not verify/create buckets (may already exist): {e}")
 
     async def upload_file(
         self,
@@ -75,15 +76,29 @@ class StorageService:
             file_ext = os.path.splitext(filename)[1]
             safe_filename = f"{user_id}/{timestamp}_{filename}"
 
-            # Upload the file
-            result = self.client.storage.from_(bucket_name).upload(
-                path=safe_filename,
-                file=file_data,
-                file_options={"content-type": content_type} if content_type else None
-            )
+            # Upload the file — run in executor so the blocking HTTP call
+            # doesn't stall the async event loop (causes ECONNRESET on large files).
+            def _do_upload():
+                return self.client.storage.from_(bucket_name).upload(
+                    path=safe_filename,
+                    file=file_data,
+                    file_options={"content-type": content_type} if content_type else None
+                )
 
-            # Get the public URL (even though bucket is private, we can get a signed URL later)
-            file_path = result.path if hasattr(result, 'path') else safe_filename
+            result = await asyncio.get_event_loop().run_in_executor(None, _do_upload)
+
+            # Supabase SDK may return an error dict instead of raising
+            if hasattr(result, 'json') and isinstance(result.json(), dict):
+                error = result.json().get('error') or result.json().get('message')
+                if error:
+                    raise RuntimeError(f"Supabase storage upload error: {error}")
+            logger.info(f"Storage upload result type={type(result).__name__}")
+
+            # Always use safe_filename as the stored path — result.path from
+            # the Supabase SDK includes the bucket name prefix
+            # (e.g. "interview-recordings/candidate_id/file.webm"), which would
+            # corrupt signed URL generation that already operates inside the bucket.
+            file_path = safe_filename
 
             logger.info(f"Uploaded file: {file_path} to bucket: {bucket_name}")
 
@@ -148,7 +163,15 @@ class StorageService:
                 expires_in
             )
 
-            return result.get("signedURL") if isinstance(result, dict) else result
+            # SDK v1 returns a dict {"signedURL": "..."},
+            # SDK v2 returns a SignedURLResponse object with .signed_url attribute.
+            if isinstance(result, dict):
+                return (
+                    result.get("signedURL")
+                    or result.get("signedUrl")
+                    or result.get("signed_url")
+                )
+            return getattr(result, "signed_url", None) or str(result)
 
         except Exception as e:
             logger.error(f"Error creating signed URL: {e}")

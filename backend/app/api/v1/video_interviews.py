@@ -16,6 +16,7 @@ from app.schemas.video_interviews import (
     VideoInterviewCampaignResponse,
     VideoInterviewCampaignUpdate,
     VideoInterviewCandidateCreate,
+    VideoInterviewCandidateUpdate,
     VideoInterviewCandidatePublic,
     VideoInterviewCandidateResponse,
     VideoInterviewSessionResponse,
@@ -175,14 +176,40 @@ async def delete_campaign_route(
 @limiter.limit("60/minute")
 async def create_candidate(
     request: Request,
-    payload: VideoInterviewCandidateCreate,
+    campaign_id: str = Form(...),
+    name: str = Form(...),
+    email: Optional[str] = Form(None),
+    phone: Optional[str] = Form(None),
+    resume: Optional[UploadFile] = File(None),
     ctx: OrgContext = Depends(require_permission("interview:create")),
 ):
+    resume_text: Optional[str] = None
+    resume_parsed: Optional[dict] = None
+
+    if resume and resume.filename:
+        try:
+            from app.services.resume_parser_llm import ResumeParserLLM
+            parser = ResumeParserLLM()
+            file_bytes = await resume.read()
+            result = await parser.parse_resume(file_bytes, resume.filename)
+            resume_text = result.get("raw_text")
+            resume_parsed = result.get("parsed_data")
+        except Exception as exc:
+            logger.warning(f"Resume parsing failed for candidate '{name}': {exc}")
+            # Non-fatal — candidate is created without resume context
+
+    payload = {
+        "campaign_id": campaign_id,
+        "name": name,
+        "email": email or None,
+        "phone": phone or None,
+        "resume_text": resume_text,
+        "resume_parsed": resume_parsed,
+    }
+
     try:
         service = get_video_interview_service()
-        return await service.create_candidate(
-            ctx.org_id, ctx.user_id, payload.model_dump()
-        )
+        return await service.create_candidate(ctx.org_id, ctx.user_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -264,6 +291,33 @@ async def list_candidates(
     except Exception as exc:
         logger.error(f"Error listing candidates: {exc}")
         raise HTTPException(status_code=500, detail="Failed to list candidates")
+
+
+@router.patch(
+    "/candidates/{candidate_id}",
+    response_model=VideoInterviewCandidateResponse,
+    summary="Update video interview candidate",
+)
+@limiter.limit("30/minute")
+async def update_candidate_route(
+    request: Request,
+    candidate_id: str,
+    payload: VideoInterviewCandidateUpdate,
+    ctx: OrgContext = Depends(require_permission("interview:edit")),
+):
+    try:
+        service = get_video_interview_service()
+        return await service.update_candidate(
+            ctx.org_id, candidate_id,
+            name=payload.name,
+            email=payload.email,
+            phone=payload.phone,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"Error updating candidate: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to update candidate")
 
 
 @router.delete(
@@ -449,6 +503,10 @@ async def upload_recording(
     try:
         service = get_video_interview_service()
         file_data = await recording.read()
+        logger.info(
+            f"Recording upload: session={session_id} size={len(file_data)} "
+            f"content_type={recording.content_type} filename={recording.filename}"
+        )
         updated = await service.upload_recording(
             session_id=session_id,
             file_data=file_data,
@@ -460,8 +518,29 @@ async def upload_recording(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        logger.error(f"Error uploading recording: {exc}")
+        logger.error(f"Recording upload FAILED session={session_id}: {type(exc).__name__}: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to upload recording")
+
+
+@router.post(
+    "/sessions/{session_id}/finalize",
+    response_model=VideoInterviewSessionResponse,
+    summary="Manually finalize a stuck in_progress session",
+)
+@limiter.limit("10/minute")
+async def finalize_session(
+    request: Request,
+    session_id: str,
+    ctx: OrgContext = Depends(require_permission("interview:edit")),
+):
+    try:
+        service = get_video_interview_service()
+        return await service.finalize_stuck_session(session_id, ctx.org_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error(f"Error finalizing session: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to finalize session")
 
 
 @router.get(

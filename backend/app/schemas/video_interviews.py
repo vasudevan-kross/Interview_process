@@ -76,6 +76,12 @@ class VideoInterviewCandidateCreate(BaseModel):
     phone: Optional[str] = None
 
 
+class VideoInterviewCandidateUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
 class VideoInterviewCandidateResponse(BaseModel):
     id: str
     org_id: str
@@ -91,6 +97,8 @@ class VideoInterviewCandidateResponse(BaseModel):
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     recruiter_notes: Optional[str] = None
+    resume_text: Optional[str] = None
+    resume_parsed: Optional[Dict[str, Any]] = None
 
 
 class VideoInterviewCandidatePublic(BaseModel):
@@ -156,6 +164,7 @@ class VideoInterviewSessionResponse(BaseModel):
     duration_seconds: Optional[int] = None
     questions: List[VideoInterviewQuestion] = Field(default_factory=list)
     transcript: List[Dict[str, Any]] = Field(default_factory=list)
+    conversation_history: List[Dict[str, Any]] = Field(default_factory=list)
     interview_summary: Optional[str] = None
     evaluation: Dict[str, Any] = Field(default_factory=dict)
     recording_path: Optional[str] = None
@@ -163,3 +172,4 @@ class VideoInterviewSessionResponse(BaseModel):
     recording_content_type: Optional[str] = None
     recording_duration_seconds: Optional[int] = None
     signed_recording_url: Optional[str] = None
+    candidate: Optional[Dict[str, Any]] = None
