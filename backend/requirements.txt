@@ -15,6 +15,7 @@ alembic==1.13.1
 # LLM & AI (Coding Interviews - Ollama only, no PyTorch!)
 langchain>=0.3.0
 langchain-community>=0.3.0
+langgraph>=0.2.14
 ollama>=0.4.7
 
 # Local STT/TTS/VAD

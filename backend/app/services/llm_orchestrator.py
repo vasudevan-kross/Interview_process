@@ -723,7 +723,7 @@ Provide evaluation as JSON."""
         try:
             # CRITICAL: Validate answer quality first
             # Award 0 marks for empty or invalid answers
-            if self._is_answer_invalid(candidate_answer):
+            if self._is_answer_invalid(candidate_answer, domain):
                 logger.warning(f"Invalid/empty answer detected: '{candidate_answer[:50]}'")
                 return {
                     "marks_awarded": 0.0,
@@ -860,7 +860,7 @@ Provide evaluation as JSON."""
                 logger.warning(f"Vision evaluation failed: {e} — falling back to text path")
 
         # Path C: No images (or vision failed) — try text path if answer is not pure garbage
-        if not self._is_answer_invalid(candidate_answer):
+        if not self._is_answer_invalid(candidate_answer, domain):
             return await self.evaluate_answer_hybrid(
                 question, correct_answer, candidate_answer, max_marks,
                 model=model, domain=domain, num_runs=num_runs,
@@ -883,7 +883,35 @@ Provide evaluation as JSON."""
             'model_used': 'validation_check',
         }
 
-    def _is_answer_invalid(self, answer: str) -> bool:
+    def is_gibberish(self, text: str) -> bool:
+        """
+        Heuristic to detect keyboard mashing or nonsensical random strings.
+        Checks for high consonant density, lack of vowels, and repeating clusters.
+        """
+        import re
+        text = text.strip().lower()
+        if not text:
+            return True
+            
+        # 1. Extremely high consonant clusters (more than 7 in a row, letters only)
+        # We exclusively check for LETTERS to avoid flagging "TC_001" or "0x00A1"
+        # Increased threshold from 5 to 7 for better tolerance of technical terms
+        if re.search(r'[bcdfghjklmnpqrstvwxz]{7,}', text):
+            return True
+            
+        # 2. Vowel-less strings of significant length (letters only)
+        # If it contains digits/symbols it's likely code/technical (e.g. "TC_001")
+        letters_only = re.sub(r'[^a-z]', '', text)
+        if len(letters_only) > 8 and not re.search(r'[aeiouy]', letters_only):
+            return True
+            
+        # 3. Very low character diversity for longer strings
+        if len(text) > 15 and len(set(text)) < 4:
+            return True
+            
+        return False
+
+    def _is_answer_invalid(self, answer: str, domain: Optional[str] = None) -> bool:
         """
         Check if candidate answer is invalid (empty, gibberish, or OCR error).
         Also detects "comment-only" solutions that lack executable code.
@@ -901,6 +929,23 @@ Provide evaluation as JSON."""
 
         # Check if answer is too short (likely gibberish or OCR error)
         if len(answer_clean) < 10:
+            return True
+
+        # NEW: Domain-aware check
+        # Certain domains are descriptive/technical but don't require strict "code" syntax
+        descriptive_domains = [
+            'testing', 'qa', 'devops', 'system_design', 'sql', 
+            'data_science', 'cybersecurity', 'technical_assessment', 
+            'technical assessment', 'cloud', 'infrastructure'
+        ]
+        is_descriptive = domain and any(d in domain.lower() for d in descriptive_domains)
+
+        # NEW: Heuristic gibberish detection
+        # Skip this for long technical answers in descriptive domains, as they often contain
+        # lists of IDs (TC_001), shell commands, or other non-vocal patterns.
+        is_long_descriptive = is_descriptive and len(answer_clean) > 100
+        
+        if not is_long_descriptive and self.is_gibberish(answer_clean):
             return True
 
         # Code-specific check: Must have at least one line that isn't a comment or empty
@@ -932,16 +977,19 @@ Provide evaluation as JSON."""
                     executable_lines += 1
         
         # If the candidate only wrote comments or words, mark as invalid for coding
-        if executable_lines == 0 and len(lines) > 0:
+        # BUT skip this check for descriptive domains
+        if not is_descriptive and executable_lines == 0 and len(lines) > 0:
             logger.warning(f"Answer detected as natural language or comments only (executable_lines: {executable_lines}). Marking as invalid.")
             return True
 
         # If it's a short text with very few code symbols and no keywords, it's likely just natural language
-        code_symbol_count = sum(c in code_symbols for c in answer_clean)
-        has_any_keyword = any(kw in answer_clean for kw in programming_keywords)
-        if len(answer_clean) < 150 and code_symbol_count < 3 and not has_any_keyword:
-            logger.warning(f"Secondary check: Answer detected as natural language (symbols: {code_symbol_count}). Marking as invalid.")
-            return True
+        # BUT skip this check for descriptive domains
+        if not is_descriptive:
+            code_symbol_count = sum(c in code_symbols for c in answer_clean)
+            has_any_keyword = any(kw in answer_clean for kw in programming_keywords)
+            if len(answer_clean) < 150 and code_symbol_count < 3 and not has_any_keyword:
+                logger.warning(f"Secondary check: Answer detected as natural language (symbols: {code_symbol_count}). Marking as invalid.")
+                return True
 
         # Check for high ratio of non-alphanumeric characters (gibberish)
         alphanumeric_chars = sum(c.isalnum() or c.isspace() for c in answer_clean)
@@ -958,6 +1006,7 @@ Provide evaluation as JSON."""
             return True
 
         return False
+
 
     def _calculate_std_dev(self, numbers: List[float]) -> float:
         """Calculate standard deviation of a list of numbers."""
@@ -1189,9 +1238,13 @@ Provide evaluation as JSON."""
         self,
         question: str,
         candidate_answer: str,
-        detected_language: str,
-        max_marks: float,
-        model: Optional[str] = None
+        detected_language: str = "python",
+        max_marks: float = 10.0,
+        domain: Optional[str] = None,
+        model: Optional[str] = None,
+        difficulty: Optional[str] = None,
+        is_starter_code: bool = False,
+        is_descriptive: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Evaluate code answer WITHOUT a solution reference.
@@ -1207,13 +1260,30 @@ Provide evaluation as JSON."""
             detected_language: Detected programming language
             max_marks: Maximum marks
             model: Optional model override
+            difficulty: Optional question difficulty (easy, medium, hard)
+            is_starter_code: Whether the submission matches starter code
+            is_descriptive: Force descriptive (natural language) evaluation
 
         Returns:
             dict with marks_awarded, feedback, etc.
         """
         try:
-            # Validate answer
-            if self._is_answer_invalid(candidate_answer):
+            # 1. Validation path
+            # If it's pure starter code, we can skip LLM and return 0
+            if is_starter_code:
+                return {
+                    "marks_awarded": 0.0,
+                    "is_correct": False,
+                    "similarity_score": 0.0,
+                    "feedback": "Starter/template code submitted. No original solution detected.",
+                    "key_points_covered": [],
+                    "key_points_missed": ["All requirements - no original logic submitted"],
+                    "code_quality_score": 0,
+                    "model_used": "starter_code_check"
+                }
+
+            # Validate answer for garbage/gibberish
+            if self._is_answer_invalid(candidate_answer, domain):
                 return {
                     "marks_awarded": 0.0,
                     "is_correct": False,
@@ -1225,38 +1295,63 @@ Provide evaluation as JSON."""
                     "model_used": "validation_check"
                 }
 
-            # Select model (CodeLlama for code evaluation)
+            # Select model
             selected_model = model or self.get_model_for_task(
                 task='answer_evaluation',
                 domain='coding'
             )
 
-            prompt = f"""You are an expert programming evaluator. Evaluate the following code submission.
+            # Detect descriptive mode if not forced
+            if is_descriptive is None:
+                descriptive_domains = [
+                    'testing', 'qa', 'devops', 'system_design', 'sql', 
+                    'data_science', 'cybersecurity', 'technical_assessment', 
+                    'technical assessment', 'cloud', 'infrastructure'
+                ]
+                is_descriptive = domain and any(d in domain.lower() for d in descriptive_domains)
+
+            if is_descriptive:
+                eval_rules = """**CRITICAL EVALUATION RULES:**
+1. **TECHNICAL ACCURACY**: Evaluate the technical correctness of the list, scenarios, or concepts described.
+2. **COMPLETENESS**: Did the candidate cover the necessary aspects of the problem (e.g., edge cases for testing, architecture for system design)?
+3. **LOGIC & DEPTH**: Prioritize technical understanding and logical reasoning over functional source code.
+4. **NO NONSENSE**: If the answer is nonsensical, gibberish, keyboard mashing, or completely unrelated to the technical question, you MUST award **0 marks** total.
+5. **CONTEXT-AWARE REQUIREMENTS**: Do NOT penalize the absence of specific frameworks (e.g., Selenium, PyTest) or tools unless they are explicitly requested by the question. Focus on the core technical strategy provided."""
+                prompt_intro = f"You are an expert technical interviewer. Evaluate the following technical assessment submission for a **{domain}** role."
+                code_label = "Candidate's Answer"
+            else:
+                eval_rules = """**CRITICAL EVALUATION RULES:**
+1. **NO CODE = NO MARKS**: If the submission contains ONLY comments, natural language explanations, or just restates the problem without a functional code implementation, you MUST award **0 marks** for all categories.
+2. **NO NONSENSE**: If the answer is gibberish, keyboard mashing, or completely irrelevant, award **0 marks** total.
+3. **STRICT CORRECTNESS**: Functional logic that solves the problem is required for any credit.
+4. **LOGIC FIRST**: Prioritize whether the code actually works over how clean it is."""
+                prompt_intro = "You are an expert programming evaluator. Evaluate the following code submission."
+                code_label = f"Candidate's Code (Language: {detected_language})"
+
+            prompt = f"""{prompt_intro}
 
 **Question/Problem:**
 {question}
 
-**Candidate's Code (Language: {detected_language}):**
-```{detected_language}
+**Difficulty:** {difficulty or "Unknown"}
+
+**{code_label}:**
+```{detected_language if not is_descriptive else ''}
 {candidate_answer}
 ```
 
-**CRITICAL EVALUATION RULES:**
-1. **NO CODE = NO MARKS**: If the submission contains ONLY comments, natural language explanations, or just restates the problem without a functional code implementation, you MUST award **0 marks** for all categories.
-2. **STRICT CORRECTNESS**: Functional logic that solves the problem is required for any credit.
-3. **LOGIC FIRST**: Prioritize whether the code actually works over how clean it is.
+{eval_rules}
 
 **Scoring Allocation:**
-1. **Correctness** (40%): Does the code solve the problem correctly?
-2. **Logic & Algorithm** (30%): Is the approach sound and efficient?
-3. **Code Quality** (20%): Clean code, good variable names, readable?
-4. **Best Practices** (10%): Follows language conventions?
+1. **Correctness & Accuracy** (40%): Does the answer solve the problem or address the requirements correctly?
+2. **Logic & Technical Depth** (30%): Is the approach sound, efficient, and thorough?
+3. **Quality & Clarity** (20%): Is the response well-structured and easy to understand?
+4. **Best Practices** (10%): Does it follow professional standards or conventions?
 
 **Instructions:**
 - Award marks out of {max_marks} based on the above rules.
-- Be harsh on non-functional code. 
 - Provide constructive feedback.
-- Give a code quality score (0-100).
+- Give a quality score (0-100).
 
 **Response Format (JSON):**
 {{
@@ -1270,6 +1365,7 @@ Provide evaluation as JSON."""
 }}
 
 Return ONLY valid JSON."""
+
 
             logger.info(f"Evaluating code with {selected_model} (language: {detected_language})")
 
@@ -1339,18 +1435,6 @@ Return ONLY valid JSON."""
                 "model_used": model or "error"
             }
 
-
-# Singleton instance
-_llm_orchestrator: Optional[LLMOrchestrator] = None
-
-
-def get_llm_orchestrator() -> LLMOrchestrator:
-    """Get the LLM orchestrator singleton."""
-    global _llm_orchestrator
-    if _llm_orchestrator is None:
-        _llm_orchestrator = LLMOrchestrator()
-    return _llm_orchestrator
-
     async def stream_chat(
         self,
         messages: List[Dict[str, str]],
@@ -1418,3 +1502,15 @@ def get_llm_orchestrator() -> LLMOrchestrator:
                 "done": True,
                 "error": str(e)
             }
+
+
+# Singleton instance
+_llm_orchestrator: Optional[LLMOrchestrator] = None
+
+
+def get_llm_orchestrator() -> LLMOrchestrator:
+    """Get the LLM orchestrator singleton."""
+    global _llm_orchestrator
+    if _llm_orchestrator is None:
+        _llm_orchestrator = LLMOrchestrator()
+    return _llm_orchestrator

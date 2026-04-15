@@ -311,10 +311,15 @@ class VideoInterviewWSHandler:
         self._audio_frames.clear()
         wav_bytes = build_wav_header(raw_pcm, sample_rate=sample_rate) + raw_pcm
 
+        # Build context prompt for STT to improve accuracy for technical terms
+        initial_prompt = f"Interview for {self.campaign.get('job_role', 'role')}."
+        if self.resume_context and self.resume_context.get("skills"):
+            initial_prompt += f" Skills: {', '.join(self.resume_context['skills'][:10])}."
+
         # STT is synchronous (faster-whisper blocks) — run in executor
         try:
             transcript = await asyncio.get_event_loop().run_in_executor(
-                None, self._stt.transcribe, wav_bytes
+                None, lambda: self._stt.transcribe(wav_bytes, initial_prompt=initial_prompt)
             )
         except Exception as e:
             logger.error("STT failed: %s", e)
@@ -369,86 +374,68 @@ class VideoInterviewWSHandler:
             await self._finalize_session()
             return
 
-        current_index = self.session_state.get("current_index", 0)
-        max_questions = self.session_state.get("max_questions", 7)
+        # ── Calculate Elapsed Time ──
+        elapsed_time_seconds = 0
+        if self.session.get("started_at"):
+            try:
+                start_val = self.session["started_at"]
+                if isinstance(start_val, str):
+                    start = datetime.datetime.fromisoformat(start_val.replace("Z", "+00:00"))
+                else:
+                    start = start_val
+                elapsed_time_seconds = int((datetime.datetime.now(datetime.timezone.utc) - start).total_seconds())
+            except Exception:
+                pass
+                
+        target_duration_seconds = (self.campaign.get("interview_duration_minutes") or 20) * 60
 
-        if current_index >= max_questions:
+        # Import graph and build state
+        from app.services.interview_graph import build_interview_graph
+        graph = build_interview_graph()
+        
+        state = {
+            "elapsed_time_seconds": elapsed_time_seconds,
+            "target_duration_seconds": target_duration_seconds,
+            "topics_covered": self.session_state.get("covered_topics", []),
+            "current_topic": self.session_state.get("current_topic", "General"),
+            "weak_answer_count": self.session_state.get("weak_answer_count", 0),
+            "candidate_answer": transcript,
+            "history": history,
+            "campaign": self.campaign,
+            "resume_context": self.resume_context,
+            "last_ai_response": "",
+            "is_complete": False
+        }
+        
+        new_state = await graph.ainvoke(state)
+        
+        self.session_state["covered_topics"] = new_state.get("topics_covered", [])
+        self.session_state["current_topic"] = new_state.get("current_topic", state["current_topic"])
+        self.session_state["weak_answer_count"] = new_state.get("weak_answer_count", state["weak_answer_count"])
+        
+        if new_state.get("is_complete"):
+            # finalize session (graceful wrap up)
+            history.append({"role": "ai", "content": new_state["last_ai_response"]})
+            await self._persist_session_state()
+            
+            # Speak the wrap up
+            self._tts_task = asyncio.create_task(
+                self._stream_tts_and_send(new_state["last_ai_response"], is_engagement=False)
+            )
+            try:
+                await self._tts_task
+            except asyncio.CancelledError:
+                pass
+            
             await self._finalize_session()
             return
-
-        # ── Qualification gate (runs once — on the very first candidate answer) ──
-        # NOTE: We never auto-end the interview based on qualification.
-        # STT errors can garble speech badly (e.g. "React" → "experiencing the act"),
-        # making it unreliable to disqualify from a single transcription.
-        # Instead: always continue — if the answer is relevant, use the LLM transition;
-        # if unclear/irrelevant, ask a clarifying follow-up and let the interview proceed.
-        if current_index == 0 and not self.session_state.get("qualified"):
-            self.session_state["qualified"] = True
-            answer_word_count = len(transcript.strip().split())
-
-            if answer_word_count >= 8:
-                assessment = await self._video_service._assess_qualification(
-                    candidate_answer=transcript,
-                    campaign=self.campaign,
-                )
-                ai_response = assessment.get("response", "")
-
-                if ai_response:
-                    # Use the LLM-generated transition (works for both relevant and
-                    # not-clearly-relevant — the prompt now asks for a clarifying
-                    # question instead of ending, so ai_response is always a follow-up).
-                    history.append({"role": "ai", "content": ai_response})
-                    self.session_state["current_index"] = current_index + 1
-                    covered = self.session_state.setdefault("covered_topics", [])
-                    covered.append(ai_response)
-                    await self._persist_session_state()
-
-                    filler = random.choice(_FILLERS)
-                    await self._stream_tts_and_send(filler, is_engagement=True)
-                    self._tts_task = asyncio.create_task(
-                        self._stream_tts_and_send(ai_response, is_engagement=False)
-                    )
-                    return
-
-            await self._persist_session_state()
-            # Fall through to normal question generation if assessment returned nothing
-
-        # ── Normal question generation (post-qualification) ──────────────────
-
-        # Detect genuinely weak/very short answer — raised threshold to reduce
-        # excessive probing that locks the LLM into the same topic
-        is_weak_answer = len(transcript.strip().split()) < 8
-
-        # Extract all previous AI questions from history for strict dedup
-        previous_questions = [
-            e["content"] for e in history
-            if e.get("role") == "ai"
-        ]
-
-        # Generate follow-up question — _generate_conversational_question is async
-        is_final = current_index >= max_questions - 1
-        next_question = await self._video_service._generate_conversational_question(
-            conversation_history=history,
-            campaign=self.campaign,
-            resume_context=self.resume_context,
-            is_final_question=is_final,
-            covered_topics=self.session_state.get("covered_topics", []),
-            is_weak_answer=is_weak_answer,
-            previous_questions=previous_questions,
-        )
-
-        if not next_question:
-            next_question = "Could you tell me more about that?"
-
+            
+        next_question = new_state.get("last_ai_response", "Could you elaborate?")
         history.append({"role": "ai", "content": next_question})
-        self.session_state["current_index"] = current_index + 1
-        self.session_state["last_turn_index"] = current_index
-
-        # Track covered question text to block LLM from revisiting it
-        covered = self.session_state.setdefault("covered_topics", [])
-        if next_question not in covered:
-            covered.append(next_question)
-
+        
+        self.session_state["current_index"] = self.session_state.get("current_index", 0) + 1
+        self.session_state["last_turn_index"] = self.session_state["current_index"]
+        
         await self._persist_session_state()
 
         # Filler + question run as a single cancellable task so barge-in

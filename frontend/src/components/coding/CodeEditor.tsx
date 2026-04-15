@@ -3,7 +3,8 @@
 import { useRef } from 'react'
 import Editor, { OnMount } from '@monaco-editor/react'
 import { Loader2 } from 'lucide-react'
-import * as monaco from 'monaco-editor'
+import type * as monacoType from 'monaco-editor'
+import { toast } from 'sonner'
 
 interface CodeEditorProps {
   value: string
@@ -35,7 +36,7 @@ const LANGUAGE_MAP: Record<string, string> = {
   'manual-test-cases': 'markdown',
 }
 
-const EDITOR_OPTIONS: monaco.editor.IStandaloneEditorConstructionOptions = {
+const EDITOR_OPTIONS: any = {
   fontSize: 14,
   lineNumbers: 'on',
   minimap: { enabled: false },
@@ -89,12 +90,34 @@ export default function CodeEditor({
   height = '60vh',
   className = '',
 }: CodeEditorProps) {
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const editorRef = useRef<monacoType.editor.IStandaloneCodeEditor | null>(null)
 
   const handleEditorDidMount: OnMount = (editor) => {
     editorRef.current = editor
     if (!readOnly) {
       editor.focus()
+
+      // Block copy, paste, and cut shortcuts specifically in Monaco for candidates
+      editor.onKeyDown((e) => {
+        const { keyCode, ctrlKey, metaKey } = e
+        
+        const isCopy = (ctrlKey || metaKey) && keyCode === 33
+        const isPaste = (ctrlKey || metaKey) && keyCode === 52
+        const isCut = (ctrlKey || metaKey) && keyCode === 54
+
+        if (isCopy || isPaste || isCut) {
+          e.preventDefault()
+          e.stopPropagation()
+          
+          if (isCopy) {
+            toast.error('Copy action is restricted')
+          } else if (isPaste) {
+            toast.error('Paste action is restricted')
+          } else if (isCut) {
+            toast.error('Cut action is restricted')
+          }
+        }
+      })
     }
   }
 
@@ -115,7 +138,11 @@ export default function CodeEditor({
             <Loader2 className="h-8 w-8 animate-spin text-[#00E5FF]" />
           </div>
         }
-        options={{ ...EDITOR_OPTIONS, readOnly }}
+        options={{ 
+          ...EDITOR_OPTIONS, 
+          readOnly,
+          contextmenu: !readOnly // Disable context menu only for candidates
+        }}
       />
     </div>
   )

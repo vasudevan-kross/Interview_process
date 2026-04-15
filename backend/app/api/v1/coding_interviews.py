@@ -332,64 +332,83 @@ async def extract_questions_from_document(
         # Parse questions using LLM
         llm = get_llm_orchestrator()
 
-        system_prompt = """You are an expert at extracting interview questions from documents and structuring them as JSON.
-Always return valid JSON arrays only, without any additional text or explanation."""
+        system_prompt = """You are a text processing expert. Your task is to extract EVERY distinct question, requirement, or instruction found in the provided document and structure them as a JSON array. 
+Do not filter based on subject matter; extract theory, coding, and general interview questions alike."""
 
-        prompt = f"""Extract coding interview questions from the following document text and return them as a JSON array.
+        # Clean text of common invisible characters (like non-breaking spaces)
+        cleaned_text = extracted_text.replace('\xa0', ' ').replace('\r\n', '\n').replace('\r', '\n').strip()
+        
+        # Heuristic to help LLM: if text is unnumbered, try to identify questions and number them
+        lines = cleaned_text.split('\n')
+        processed_lines = []
+        q_count = 1
+        for line in lines:
+            t_line = line.strip()
+            if not t_line: continue
+            
+            # If it looks like a question but isn't numbered, add a number
+            if (t_line.endswith('?') or t_line.lower().startswith(('explain', 'what', 'how', 'write', 'describe', 'list', 'define'))) and not t_line[0].isdigit():
+                processed_lines.append(f"{q_count}. {t_line}")
+                q_count += 1
+            else:
+                processed_lines.append(t_line)
+        
+        cleaned_text = "\n".join(processed_lines)
 
-Document Text:
-{extracted_text[:4000]}
+        prompt = f"""You are an expert at identifying and extracting interview questions from documents.
+Extract EVERY SINGLE question or task found in the text below. 
 
-Return ONLY a JSON array with this exact structure (no markdown, no explanations):
+DOCUMENT TEXT TO PROCESS:
+{cleaned_text[:4000]}
+
+Return ONLY a JSON array with this exact structure for EACH question found (no markdown, no explanations):
 [
   {{
     "question_text": "Full question text here",
-    "difficulty": "{difficulty}",
-    "marks": 10,
-    "topics": ["relevant", "topics"],
+    "difficulty": "easy/medium/hard",
+    "marks": 5,
+    "topics": ["relevant", "topic"],
     "starter_code": "",
     "solution_code": ""
   }}
 ]
 
-Rules:
-- Extract ALL questions from the document
-- If marks not specified, use: easy=5-10, medium=10-20, hard=20-30
-- Keep exact question wording from document
-- Return valid JSON array only"""
+RULES:
+1. Extract ALL questions from the document text. Do not skip any.
+2. Even if a question is purely theoretical (like "Explain X"), you MUST extract it.
+3. Keep the exact wording from the document.
+4. Assign marks: 5-10 for theory, 15-20 for coding.
+5. Ensure the output is a valid JSON array of objects."""
 
+        logger.info(f"PROCESSED TEXT:\n{cleaned_text}")
         result = await llm.generate_completion(
             prompt=prompt,
             system_prompt=system_prompt,
-            temperature=0.3  # Low temperature for more consistent JSON output
+            temperature=0.0  # Force maximum consistency
         )
 
         # Parse LLM response as JSON
         try:
-            # Extract JSON from response (handle markdown code blocks and various formats)
-            json_text = result['response'].strip()
-
-            # Remove markdown code blocks
-            if '```json' in json_text:
-                json_text = json_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in json_text:
-                json_text = json_text.split('```')[1].split('```')[0].strip()
-
-            # Try to find JSON array in the response
-            if '[' in json_text:
-                start = json_text.index('[')
-                end = json_text.rindex(']') + 1
-                json_text = json_text[start:end]
-
-            json_text = json_text.strip()
-
-            if not json_text:
-                raise ValueError("Empty response from LLM")
-
-            questions = json.loads(json_text)
-
+            from app.services.test_evaluation import extract_json_from_text, repair_json
+            
+            # Use the more robust parsing utilities
+            questions = extract_json_from_text(result['response'])
+            
+            if not questions and '[' in result['response']:
+                # Fallback to manual repair if utility failed
+                repaired = repair_json(result['response'])
+                questions = extract_json_from_text(repaired)
+            
             if not isinstance(questions, list):
-                raise ValueError("Expected array of questions")
+                # If it's a dict containing questions, extract it
+                if isinstance(questions, dict):
+                    for key in ['questions', 'interview_questions', 'items']:
+                        if key in questions and isinstance(questions[key], list):
+                            questions = questions[key]
+                            break
+                
+                if not isinstance(questions, list):
+                    raise ValueError("Could not parse a list of questions from response")
 
             logger.info(f"Successfully extracted {len(questions)} questions")
 
@@ -1536,6 +1555,48 @@ def _get_rating(score: float) -> str:
         return "Average"
     else:
         return "Below Average"
+
+
+@router.post("/answers/{answer_id}/reevaluate", summary="Re-evaluate single answer")
+async def reevaluate_coding_answer(
+    answer_id: str,
+    ctx: OrgContext = Depends(require_permission('interview:evaluate'))
+):
+    """Manually trigger re-evaluation of a specific answer."""
+    try:
+        service = get_coding_interview_service()
+        
+        # Verify access through organization context
+        client = get_supabase()
+        answer_result = client.table('coding_answers').select(
+            'submission_id, coding_questions(interview_id)'
+        ).eq('id', answer_id).single().execute()
+
+        if not answer_result.data:
+            raise HTTPException(status_code=404, detail="Answer not found")
+
+        interview_id = answer_result.data['coding_questions']['interview_id']
+        
+        # Verify org owns this interview
+        interview_result = client.table('coding_interviews').select('id').eq(
+            'id', interview_id
+        ).eq('org_id', ctx.org_id).execute()
+
+        if not interview_result.data:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        # Re-evaluate
+        result = await service.reevaluate_coding_answer(answer_id)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error re-evaluating answer {answer_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to re-evaluate answer: {str(e)}"
+        )
 
 
 @router.post("/submissions/{submission_id}/evaluate", summary="Re-evaluate submission")

@@ -70,6 +70,7 @@ export default function VideoInterviewPage() {
   const [overlayMessage, setOverlayMessage] = useState<{ text: string; type: 'connection' } | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [isUserSpeaking, setIsUserSpeaking] = useState(false)
+  const [isVadCalibrated, setIsVadCalibrated] = useState(false)
 
   // Debounce timer: delay audio_end so mid-sentence pauses don't cut the user off
   const endOfSpeechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -434,6 +435,10 @@ export default function VideoInterviewPage() {
       vadNode.port.onmessage = (e) => {
         const { type, data } = e.data
 
+        if (type === 'calibrated') {
+          setIsVadCalibrated(true)
+        }
+
         if (type === 'chunk' && wsRef.current?.readyState === WebSocket.OPEN) {
           // PCM ArrayBuffer → Uint8Array → base64 → send
           const uint8 = new Uint8Array(data as ArrayBuffer)
@@ -476,7 +481,7 @@ export default function VideoInterviewPage() {
             if (wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({ type: 'audio_end', sample_rate: sampleRateRef.current }))
             }
-          }, 1000)
+          }, 400) // 400ms debounce
         }
       }
 
@@ -688,10 +693,11 @@ export default function VideoInterviewPage() {
                        ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' :
                      'bg-slate-800/40 text-slate-400 border-slate-700/50'}`}
                  >
-                   {isUserSpeaking && isMicOn && interviewState === 'listening' ? '🎤 You\'re speaking' :
-                    interviewState === 'listening' ? '● Listening' :
-                    interviewState === 'thinking' ? '⏳ Thinking…' :
-                    (interviewState === 'speaking' || interviewState === 'engaging' || interviewState === 'greeting') ? '◎ Speaking' : ''}
+                    {isUserSpeaking && isMicOn && interviewState === 'listening' ? '🎤 You\'re speaking' :
+                     !isVadCalibrated && interviewState === 'listening' ? '⌛ Calibrating Mic…' :
+                     interviewState === 'listening' ? '● Listening' :
+                     interviewState === 'thinking' ? '⏳ Thinking…' :
+                     (interviewState === 'speaking' || interviewState === 'engaging' || interviewState === 'greeting') ? '◎ Speaking' : ''}
                  </span>
                </div>
 

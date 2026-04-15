@@ -301,7 +301,7 @@ class DocumentProcessor:
                     if row_text.strip():
                         text_content.append(row_text)
 
-            extracted_text = "\n".join(text_content)
+            extracted_text = "\n".join(text_content).replace('\xa0', ' ')
 
             return {
                 "extracted_text": extracted_text,
@@ -334,7 +334,7 @@ class DocumentProcessor:
                 raise ValueError("Could not decode text file with any supported encoding")
 
             return {
-                "extracted_text": extracted_text,
+                "extracted_text": extracted_text.replace('\xa0', ' '),
                 "page_count": 1,
                 "char_count": len(extracted_text),
                 "word_count": len(extracted_text.split()),

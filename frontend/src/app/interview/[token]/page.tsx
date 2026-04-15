@@ -41,7 +41,10 @@ import {
   type Interview,
 } from '@/lib/api/coding-interviews'
 import { initializeEnhancedAntiCheating, createCodeChangeTracker } from '@/lib/anti-cheating-enhanced'
-import CodeEditor from '@/components/coding/CodeEditor'
+const CodeEditor = dynamic(
+  () => import('@/components/coding/CodeEditor'),
+  { ssr: false }
+)
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import bowser from 'bowser'
@@ -65,7 +68,7 @@ const getDeviceInfo = () => {
 export default function CandidateInterviewPage() {
   const params = useParams()
   const router = useRouter()
-  const accessToken = params.token as string
+  const accessToken = params?.token as string
 
   // Interview state
   const [interview, setInterview] = useState<Interview | null>(null)
@@ -362,6 +365,35 @@ export default function CandidateInterviewPage() {
   // Keep perf refs in sync with their state counterparts
   useEffect(() => { hasStartedRef.current = hasStarted }, [hasStarted])
   useEffect(() => { submissionIdRef.current = submissionId }, [submissionId])
+
+  // Global Copy/Paste Restriction
+  useEffect(() => {
+    if (!hasStarted) return
+
+    const handleCopy = (e: ClipboardEvent) => {
+      e.preventDefault()
+      toast.error('Copy action is restricted to ensure assessment integrity')
+    }
+
+    const handlePaste = (e: ClipboardEvent) => {
+      e.preventDefault()
+      toast.error('Paste action is restricted to ensure assessment integrity')
+    }
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+    }
+
+    window.addEventListener('copy', handleCopy)
+    window.addEventListener('paste', handlePaste)
+    window.addEventListener('contextmenu', handleContextMenu)
+
+    return () => {
+      window.removeEventListener('copy', handleCopy)
+      window.removeEventListener('paste', handlePaste)
+      window.removeEventListener('contextmenu', handleContextMenu)
+    }
+  }, [hasStarted])
 
   // Handle code change
   const handleCodeChange = (questionId: string, code: string | undefined) => {
@@ -902,7 +934,7 @@ export default function CandidateInterviewPage() {
                   </div>
                 </div>
                 <div className="prose prose-invert prose-sm max-w-none">
-                  <div className="text-gray-300 text-[12px] lg:text-[13px] leading-relaxed whitespace-pre-wrap font-sans opacity-90">
+                  <div className="text-gray-300 text-[12px] lg:text-[13px] leading-relaxed whitespace-pre-wrap font-sans opacity-90 select-none">
                     {currentQuestion?.question_text}
                   </div>
                 </div>

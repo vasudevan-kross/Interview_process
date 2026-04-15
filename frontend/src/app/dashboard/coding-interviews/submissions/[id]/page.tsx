@@ -43,7 +43,7 @@ import {
   Save,
   Pencil,
 } from 'lucide-react'
-import { getSubmission, reevaluateSubmission, getResumeUrl, saveEvaluatorNotes, type Submission, type Answer, type Activity } from '@/lib/api/coding-interviews'
+import { getSubmission, reevaluateSubmission, reevaluateAnswer, getResumeUrl, saveEvaluatorNotes, type Submission, type Answer, type Activity } from '@/lib/api/coding-interviews'
 import CodeEditor from '@/components/coding/CodeEditor'
 import { toast } from 'sonner'
 import { format, formatDistanceToNow } from 'date-fns'
@@ -51,11 +51,12 @@ import { format, formatDistanceToNow } from 'date-fns'
 export default function SubmissionReviewPage() {
   const params = useParams()
   const router = useRouter()
-  const submissionId = params.id as string
+  const submissionId = (params?.id as string) || ''
 
   const [submission, setSubmission] = useState<Submission | null>(null)
   const [loading, setLoading] = useState(true)
   const [reevaluating, setReevaluating] = useState(false)
+  const [reevaluatingAnswerId, setReevaluatingAnswerId] = useState<string | null>(null)
   const [reevalDialogOpen, setReevalDialogOpen] = useState(false)
   const [resumeUrl, setResumeUrl] = useState<string | null>(null)
   const [resumeLoading, setResumeLoading] = useState(false)
@@ -174,6 +175,30 @@ export default function SubmissionReviewPage() {
       toast.error(error.message || 'Failed to re-evaluate')
     } finally {
       setReevaluating(false)
+    }
+  }
+
+  const handleReevaluateAnswer = async (answerId: string) => {
+    try {
+      setReevaluatingAnswerId(answerId)
+      const result = await reevaluateAnswer(answerId)
+      toast.success('Question re-evaluated successfully')
+      
+      // Update local submission state with new score and percentage
+      if (submission) {
+        setSubmission({
+          ...submission,
+          total_marks_obtained: result.total_marks_obtained,
+          percentage: result.percentage
+        })
+      }
+      
+      // Refetch full data to see new feedback/marks for the specific answer
+      await fetchSubmission()
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to re-evaluate question')
+    } finally {
+      setReevaluatingAnswerId(null)
     }
   }
 
@@ -641,6 +666,20 @@ export default function SubmissionReviewPage() {
                   ) : (
                     <Badge variant="outline">Needs Review</Badge>
                   )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[10px] text-blue-600 border-blue-200 hover:bg-blue-50"
+                    onClick={() => handleReevaluateAnswer(answer.id)}
+                    disabled={reevaluatingAnswerId === answer.id}
+                  >
+                    {reevaluatingAnswerId === answer.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                    )}
+                    Re-evaluate
+                  </Button>
                   <Badge variant="outline">
                     {answer.marks_awarded?.toFixed(1) || 0} / {answer.question_marks || 0} marks
                   </Badge>

@@ -643,12 +643,14 @@ class CodingInterviewService:
 
             submission = submission_result.data[0]
 
-            # Get interview to get total marks
+            # Get interview to get total marks and type
             interview_result = self.client.table('coding_interviews').select(
-                'total_marks'
+                'total_marks, interview_type'
             ).eq('id', submission['interview_id']).execute()
 
-            total_marks = interview_result.data[0]['total_marks']
+            interview_data = interview_result.data[0]
+            total_marks = interview_data['total_marks']
+            interview_type = interview_data.get('interview_type', 'coding')
 
             # Get all questions
             questions_result = self.client.table('coding_questions').select(
@@ -759,7 +761,9 @@ class CodingInterviewService:
                         question=question['question_text'],
                         candidate_answer=submitted_code,
                         detected_language=detected_language,
-                        max_marks=question['marks']
+                        max_marks=question['marks'],
+                        difficulty=question.get('difficulty'),
+                        domain=interview_type
                     )
 
                     marks_awarded = llm_result.get('marks_awarded', 0)
@@ -795,25 +799,127 @@ class CodingInterviewService:
                     logger.error(f"Error evaluating question {question['id']}: {eval_error}")
                     continue
 
-            # Calculate percentage
+
+            # Update final results and sync with other systems
+            return await self._update_submission_results(submission_id)
+
+        except Exception as e:
+            logger.error(f"Error evaluating submission {submission_id}: {e}")
+            raise
+
+    async def reevaluate_coding_answer(self, answer_id: str) -> Dict[str, Any]:
+        """
+        Manually re-evaluate a single coding answer and update submission totals.
+        """
+        try:
+            # 1. Fetch answer with its question and interview details
+            answer_result = self.client.table('coding_answers').select(
+                '*, coding_questions(*, coding_interviews(*))'
+            ).eq('id', answer_id).single().execute()
+
+            if not answer_result.data:
+                raise ValueError(f"Answer {answer_id} not found")
+
+            answer = answer_result.data
+            question = answer.get('coding_questions')
+            interview = question.get('coding_interviews')
+            submission_id = answer['submission_id']
+
+            if not question or not interview:
+                raise ValueError("Question or interview data missing for this answer")
+
+            logger.info(f"Re-evaluating answer {answer_id} for submission {submission_id}")
+
+            # 2. Determine evaluation context
+            interview_type = interview.get('interview_type', 'coding')
+
+            # 3. Handle Starter Code detection
+            submitted_code = answer.get('submitted_code', '').strip()
+            programming_language = answer.get('programming_language', 'python')
+            
+            is_starter_code = False
+            template = TEST_FRAMEWORK_TEMPLATES.get(programming_language)
+            if template:
+                # Basic similarity check for starter code
+                if submitted_code == template.strip() or not submitted_code:
+                    is_starter_code = True
+
+            # 4. Run LLM Evaluation
+            llm_orchestrator = get_llm_orchestrator()
+            llm_result = await llm_orchestrator.evaluate_code_answer(
+                question=question['question_text'],
+                candidate_answer=submitted_code,
+                detected_language=programming_language,
+                difficulty=question['difficulty'],
+                max_marks=question['marks'],
+                is_starter_code=is_starter_code,
+                domain=interview_type,  # Use interview_type for domain-aware logic
+                is_descriptive=None      # Let orchestrator decide based on its full list
+            )
+
+            # 5. Update answer record
+            marks_awarded = llm_result.get('marks_awarded', 0)
+            evaluation_data = {
+                'marks_awarded': marks_awarded,
+                'feedback': llm_result.get('feedback', 'No feedback provided'),
+                'is_correct': marks_awarded >= (question['marks'] * 0.8),
+                'code_quality_score': llm_result.get('code_quality_score', 0),
+                'evaluated_at': datetime.now().isoformat(),
+                'evaluated_by_model': llm_result.get('model_used', 'gpt-4o')
+            }
+
+            self.client.table('coding_answers').update(evaluation_data).eq(
+                'id', answer_id
+            ).execute()
+
+            # 6. Recalculate and Synchronize Submission Totals
+            return await self._update_submission_results(submission_id)
+
+        except Exception as e:
+            logger.error(f"Error re-evaluating answer {answer_id}: {e}")
+            raise
+
+    async def _update_submission_results(self, submission_id: str) -> Dict[str, Any]:
+        """
+        Recalculates total scores for a submission and syncs with Pipeline and Batch systems.
+        """
+        try:
+            # 1. Fetch submission and all its answers
+            submission_result = self.client.table('coding_submissions').select('*').eq(
+                'id', submission_id
+            ).single().execute()
+            
+            if not submission_result.data:
+                raise ValueError(f"Submission {submission_id} not found")
+            
+            submission = submission_result.data
+            interview_id = submission['interview_id']
+
+            # 2. Get all questions to find total marks
+            questions_result = self.client.table('coding_questions').select('marks').eq(
+                'interview_id', interview_id
+            ).execute()
+            total_marks = sum(q['marks'] for q in questions_result.data) if questions_result.data else 0
+
+            # 3. Get all answers to find total marks obtained
+            answers_result = self.client.table('coding_answers').select('marks_awarded').eq(
+                'submission_id', submission_id
+            ).execute()
+            
+            total_marks_obtained = sum(a.get('marks_awarded', 0) for a in answers_result.data) if answers_result.data else 0
             percentage = (total_marks_obtained / total_marks * 100) if total_marks > 0 else 0
 
-            # Update submission with final scores and set status to 'evaluated'
+            # 4. Update submission record
             self.client.table('coding_submissions').update({
                 'status': 'evaluated',
                 'total_marks_obtained': total_marks_obtained,
                 'percentage': round(percentage, 2)
             }).eq('id', submission_id).execute()
 
-            # Run suspicious activity check
+            # 5. Run suspicious activity check
             await self.check_suspicious_activity(submission_id)
 
-            logger.info(
-                f"Evaluation complete for {submission_id}: "
-                f"{total_marks_obtained}/{total_marks} ({percentage:.2f}%)"
-            )
-
-            # Sync to pipeline if candidate exists there
+            # 6. Sync to pipeline if candidate exists
             try:
                 from app.services.pipeline_service import get_pipeline_service
                 pipeline = get_pipeline_service()
@@ -824,13 +930,12 @@ class CodingInterviewService:
                         total_marks_obtained, round(percentage, 2)
                     )
             except Exception as pe:
-                logger.debug(f"Pipeline sync skipped: {pe}")
+                logger.debug(f"Pipeline sync skipped during re-evaluation: {pe}")
 
-            # ── Batch Integration: Sync coding results to batch_candidates ──
+            # 7. Sync to batch candidates
             try:
                 candidate_email = submission.get('candidate_email', '')
                 if candidate_email:
-                    # Find batch_candidate by email
                     batch_result = self.client.table('batch_candidates').select(
                         'id, batch_id, candidates!inner(email)'
                     ).eq('candidates.email', candidate_email.lower()).execute()
@@ -838,16 +943,12 @@ class CodingInterviewService:
                     if batch_result.data:
                         for batch_candidate in batch_result.data:
                             batch_candidate_id = batch_candidate['id']
-
-                            # Get current module_results
                             current_result = self.client.table('batch_candidates').select(
                                 'module_results'
                             ).eq('id', batch_candidate_id).single().execute()
 
                             if current_result.data:
                                 module_results = current_result.data.get('module_results', {})
-
-                                # Update technical_assessment module
                                 module_results['technical_assessment'] = {
                                     'status': 'completed',
                                     'score': round(percentage, 2),
@@ -856,26 +957,21 @@ class CodingInterviewService:
                                     'submission_id': submission_id,
                                     'completed_at': datetime.now().isoformat()
                                 }
-
-                                # Update batch_candidate
                                 self.client.table('batch_candidates').update({
-                                    'module_results': module_results,
-                                    'current_stage': 'voice_screening'  # Auto-advance to next stage
+                                    'module_results': module_results
                                 }).eq('id', batch_candidate_id).execute()
-
-                                logger.info(
-                                    f"Synced coding results to batch_candidate {batch_candidate_id}: {percentage:.2f}%"
-                                )
             except Exception as be:
-                logger.debug(f"Batch sync skipped: {be}")
+                logger.debug(f"Batch sync skipped during re-evaluation: {be}")
 
             return {
                 'submission_id': submission_id,
                 'total_marks_obtained': total_marks_obtained,
                 'total_marks': total_marks,
-                'percentage': round(percentage, 2),
-                'evaluations': evaluations
+                'percentage': round(percentage, 2)
             }
+        except Exception as e:
+            logger.error(f"Error updating submission results for {submission_id}: {e}")
+            raise
 
         except Exception as e:
             logger.error(f"Error evaluating submission: {e}")
@@ -1020,7 +1116,7 @@ class CodingInterviewService:
                     'metadata': {'flags': flags}
                 }).eq('id', submission_id).execute()
 
-                logger.warning(f"Flagged submission {submission_id} as suspicious: {flags}")
+
 
         except Exception as e:
             logger.error(f"Error checking suspicious activity: {e}")

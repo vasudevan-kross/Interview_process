@@ -121,6 +121,10 @@ class AudioProcessingService:
         if not audio:
             return False
 
+        # Reset transient VAD state for this specific check
+        self.noise_floor = None
+        self.speech_frames = 0
+
         frame_size = int(self.sample_rate * frame_ms / 1000) * 2
         for i in range(0, len(audio), frame_size):
             frame = audio[i : i + frame_size]
@@ -184,7 +188,7 @@ class AudioProcessingService:
             self.speech_frames = 0
 
         if is_speech:
-            self.speech_frames = 5
+            self.speech_frames = 75  # 1.5s hangover (at 20ms/frame)
             return True
         else:
             if self.speech_frames > 0:

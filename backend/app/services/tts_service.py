@@ -29,10 +29,26 @@ class TTSService:
         if self.config:
             cmd.extend(["--config", self.config])
 
+        logger.info(f"Running TTS command: {' '.join(cmd)}")
         try:
-            subprocess.run(cmd, input=text.encode("utf-8"), check=True)
+            result = subprocess.run(
+                cmd, 
+                input=text.encode("utf-8"), 
+                capture_output=True,
+                check=True
+            )
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                 logger.error(f"TTS output file is empty or missing: {output_path}")
+                 raise ValueError("TTS generated empty audio")
+
             with open(output_path, "rb") as f:
-                return f.read(), "audio/wav"
+                data = f.read()
+                logger.info(f"Successfully synthesized {len(data)} bytes of audio.")
+                return data, "audio/wav"
+        except subprocess.CalledProcessError as exc:
+            logger.error(f"Piper TTS failed with exit code {exc.returncode}")
+            logger.error(f"Stderr: {exc.stderr.decode('utf-8') if exc.stderr else 'None'}")
+            raise
         finally:
             try:
                 import os

@@ -44,19 +44,19 @@ import {
   exportSubmissionsCsv,
   deleteSubmission,
   deleteMultipleSubmissions,
+  downloadSubmissionReport,
   type Interview,
   type Submission
 } from '@/lib/api/coding-interviews'
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
-import { apiClient } from '@/lib/api/client'
 import Link from 'next/link'
 
 export default function SubmissionsPage() {
   const params = useParams()
   const router = useRouter()
-  const interviewId = params.id as string
+  const interviewId = params?.id as string
 
   const [interview, setInterview] = useState<Interview | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
@@ -177,7 +177,7 @@ export default function SubmissionsPage() {
 
   const handleDownloadReport = async (submissionId: string, candidateName: string) => {
     try {
-      const blob = await apiClient.downloadSubmissionReport(submissionId)
+      const blob = await downloadSubmissionReport(submissionId)
       const url = window.URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url

@@ -115,42 +115,7 @@ export default function VideoInterviewSessionPage() {
         
         {/* Left Pane: Video & Summary */}
         <div className="space-y-6">
-          {/* Video Player Card */}
-          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
-            <div className="bg-slate-50/50 border-b border-slate-100 px-6 py-4 flex items-center gap-2">
-              <PlayCircle className="h-4 w-4 text-indigo-500" />
-              <h2 className="text-sm font-semibold text-slate-900">Session Recording</h2>
-            </div>
-            <div className="p-6 bg-slate-50 flex-1 flex flex-col items-center justify-center">
-              {session.signed_recording_url ? (
-                <div className="w-full max-w-4xl mx-auto overflow-hidden rounded-xl border border-slate-200 shadow-sm bg-black group relative">
-                  <div className="aspect-video w-full">
-                    <video controls className="h-full w-full object-contain bg-black">
-                      <source
-                        src={session.signed_recording_url}
-                        type={session.recording_content_type || undefined}
-                      />
-                    </video>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <div className="h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center mb-4">
-                    <PlayCircle className="h-6 w-6 text-slate-300" />
-                  </div>
-                  <p className="text-sm font-medium text-slate-900">No recording available</p>
-                  <p className="text-xs text-slate-500 mt-1 max-w-[250px]">The video may still be uploading. Try refreshing in a moment.</p>
-                  <button
-                    onClick={fetchSession}
-                    className="mt-4 text-xs font-medium text-indigo-600 hover:text-indigo-700 underline underline-offset-2"
-                  >
-                    Refresh
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
+          {/* Session Recording hidden as per user request to save storage */}
           {/* AI Summary Card */}
           {(() => {
             let summary: Record<string, any> | null = null

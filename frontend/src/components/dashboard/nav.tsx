@@ -52,12 +52,12 @@ const navItems = [
     icon: Phone,
     permission: 'campaign:view',
   },
-  // {
-  //   title: 'Video Interviews',
-  //   href: '/dashboard/video-interviews',
-  //   icon: Video,
-  //   permission: 'interview:view',
-  // },
+  {
+    title: 'Video Interviews',
+    href: '/dashboard/video-interviews',
+    icon: Video,
+    permission: 'interview:view',
+  },
 ]
 
 const creditsItem = {

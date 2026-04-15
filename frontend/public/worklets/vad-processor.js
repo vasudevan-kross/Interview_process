@@ -20,7 +20,7 @@ class VadProcessor extends AudioWorkletProcessor {
     this._recentFrames = [];
     this._bargeInWindowSize = 4;   // look at last 4 frames
     this._bargeInMinHits = 2;      // require 2 of 4 above threshold
-    this._silenceFramesNeeded = 100;  // 2000ms at 20ms frames — gives natural thinking time
+    this._silenceFramesNeeded = 35;  // 700ms at 20ms frames — responsive but stable
     this._buffer = [];
     // frameTarget is 20ms of samples at the actual sample rate.
     // Defaults to 320 (16kHz); updated via 'init' message for other rates.
@@ -82,7 +82,7 @@ class VadProcessor extends AudioWorkletProcessor {
       if (this._calibrationFrames.length >= this._calibrationTarget) {
         const avg = this._calibrationFrames.reduce((a, b) => a + b) / this._calibrationFrames.length;
         this._ambientRms = avg;
-        this._speechThreshold = Math.max(0.02, avg * 3);
+        this._speechThreshold = Math.max(0.015, avg * 2.5);
         this._calibrating = false;
         this.port.postMessage({ type: 'calibrated', threshold: this._speechThreshold });
       }

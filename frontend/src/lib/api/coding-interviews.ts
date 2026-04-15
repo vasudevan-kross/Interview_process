@@ -374,6 +374,27 @@ export async function reevaluateSubmission(submissionId: string): Promise<any> {
 }
 
 /**
+ * Re-evaluate a single answer
+ */
+export async function reevaluateAnswer(answerId: string): Promise<any> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/answers/${answerId}/reevaluate`,
+    {
+      method: 'POST',
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to re-evaluate answer'));
+  }
+
+  return response.json();
+}
+
+/**
  * Evaluate all submissions for an interview at once
  */
 export async function evaluateAllSubmissions(interviewId: string): Promise<{
@@ -781,6 +802,24 @@ export async function deleteMultipleSubmissions(submissionIds: string[]): Promis
     const error = await response.json().catch(() => ({}));
     throw new Error(extractErrorMessage(error.detail, 'Failed to bulk delete submissions'));
   }
+}
+
+/**
+ * Download a PDF report for a submission
+ */
+export async function downloadSubmissionReport(submissionId: string): Promise<Blob> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(
+    `${API_BASE_URL}${API_PREFIX}/coding-interviews/submissions/${submissionId}/report`,
+    { headers }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(error.detail, 'Failed to download report'));
+  }
+
+  return response.blob();
 }
 
 /**
