@@ -63,7 +63,7 @@ function localToIso(datetimeLocal: string): string {
 export default function CreateInterviewPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const pipelineJobId = searchParams.get('job_id')
+  const pipelineJobId = searchParams?.get('job_id')
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -106,6 +106,7 @@ export default function CreateInterviewPage() {
 
   // Questions
   const [questions, setQuestions] = useState<Question[]>([])
+  const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState(true)
   const [shareableLink, setShareableLink] = useState('')
 
   const getAvailableMinutes = () => {
@@ -131,6 +132,8 @@ export default function CreateInterviewPage() {
 
   const handleTotalMarksChange = (newTotal: string) => {
     setTotalMarks(newTotal)
+    if (!isAutoSyncEnabled) return
+
     const totalNum = parseInt(newTotal) || 0
     if (questions.length > 0 && totalNum > 0) {
       const marksPerQ = Math.floor(totalNum / questions.length)
@@ -144,9 +147,9 @@ export default function CreateInterviewPage() {
 
   // Sync question times when duration changes
   useEffect(() => {
-    if (questions.length === 0) return
+    if (questions.length === 0 || !isAutoSyncEnabled) return
     setQuestions(prev => distributeTimeAndMarks(prev))
-  }, [scheduledStartTime, scheduledEndTime])
+  }, [scheduledStartTime, scheduledEndTime, isAutoSyncEnabled])
 
   const handleGenerateQuestions = async () => {
     if (!jobDescription.trim()) {
@@ -250,6 +253,9 @@ export default function CreateInterviewPage() {
   }
 
   const handleUpdateQuestion = (index: number, field: keyof Question, value: any) => {
+    if (field === 'time_estimate_minutes' || field === 'marks') {
+      setIsAutoSyncEnabled(false)
+    }
     const updated = [...questions]
     updated[index] = { ...updated[index], [field]: value }
     setQuestions(updated)
@@ -929,6 +935,18 @@ export default function CreateInterviewPage() {
                       {getAvailableMinutes()} min total · ~{Math.floor(getAvailableMinutes() / questions.length)} min per question
                     </p>
                   )}
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="auto-sync"
+                      checked={isAutoSyncEnabled}
+                      onChange={(e) => setIsAutoSyncEnabled(e.target.checked)}
+                      className="h-3 w-3 rounded border-slate-300 accent-indigo-600"
+                    />
+                    <Label htmlFor="auto-sync" className="text-[10px] font-normal text-slate-400 cursor-pointer">
+                      Auto-balance times & marks
+                    </Label>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Label htmlFor="totalMarks" className="text-xs text-slate-500 whitespace-nowrap">Total Marks</Label>

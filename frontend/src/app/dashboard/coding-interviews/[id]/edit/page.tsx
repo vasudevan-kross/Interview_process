@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ import {
   Calendar,
   Clock,
   Wand2,
+  RefreshCcw,
 } from 'lucide-react'
 import {
   Dialog,
@@ -82,7 +83,7 @@ function localToIso(datetimeLocal: string): string {
 export default function EditInterviewPage() {
   const params = useParams()
   const router = useRouter()
-  const interviewId = params.id as string
+  const interviewId = params?.id as string
 
   const [interview, setInterview] = useState<Interview | null>(null)
   const [loading, setLoading] = useState(true)
@@ -104,6 +105,8 @@ export default function EditInterviewPage() {
 
   // Questions
   const [questions, setQuestions] = useState<Question[]>([])
+  const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState(true)
+  const isInitialLoad = useRef(true)
 
   // AI Generation State
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false)
@@ -141,7 +144,19 @@ export default function EditInterviewPage() {
   // Sync question times when duration or number of questions changes
   const questionsLength = questions.length
   useEffect(() => {
-    if (loading || questionsLength === 0) return
+    if (loading || questionsLength === 0 || !isAutoSyncEnabled) {
+      if (!loading && isInitialLoad.current) {
+        isInitialLoad.current = false
+      }
+      return
+    }
+
+    // Skip the very first sync if we just loaded existing data
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false
+      return
+    }
+
     const availableMinutes = getAvailableMinutes()
     if (availableMinutes <= 0) return
 
@@ -162,6 +177,9 @@ export default function EditInterviewPage() {
   }
 
   const handleUpdateQuestion = (index: number, field: keyof Question, value: any) => {
+    if (field === 'time_estimate_minutes') {
+      setIsAutoSyncEnabled(false)
+    }
     const updated = [...questions]
     updated[index] = { ...updated[index], [field]: value }
     setQuestions(updated)
@@ -483,6 +501,18 @@ export default function EditInterviewPage() {
                     ⏱ {availableMinutes} min total · ~{Math.floor(availableMinutes / questions.length)} min/question
                   </span>
                 )}
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="auto-sync"
+                    checked={isAutoSyncEnabled}
+                    onChange={(e) => setIsAutoSyncEnabled(e.target.checked)}
+                    className="h-3 w-3 rounded border-gray-300"
+                  />
+                  <Label htmlFor="auto-sync" className="text-xs font-normal text-gray-500 cursor-pointer">
+                    Auto-balance time per question
+                  </Label>
+                </div>
               </CardDescription>
             </div>
             <div className="flex gap-2">

@@ -15,138 +15,13 @@ from app.services.llm_orchestrator import get_llm_orchestrator
 from app.db.supabase_client import get_supabase
 from app.services.user_service import get_user_service
 from app.config import settings
+from app.utils.json_utils import repair_json, extract_json
 
 logger = logging.getLogger(__name__)
 
 
-def repair_json(text: str) -> str:
-    """
-    Repair common JSON formatting errors.
-
-    Enhanced to handle:
-    - Trailing commas in all positions
-    - Multiple consecutive commas
-    - Commas before closing with any whitespace combination
-
-    Args:
-        text: Potentially malformed JSON text
-
-    Returns:
-        Repaired JSON text
-    """
-    # Remove any leading/trailing whitespace
-    text = text.strip()
-
-    # Remove markdown code blocks if present
-    if text.startswith('```'):
-        if text.startswith('```json'):
-            text = text[7:]
-        else:
-            text = text[3:]
-        end_marker = text.find('```')
-        if end_marker != -1:
-            text = text[:end_marker]
-        text = text.strip()
-
-    # Fix common issues
-    # 1. Remove ALL trailing commas before closing brackets/braces
-    # This handles commas with any amount/type of whitespace
-    text = re.sub(r',\s*([}\]])', r'\1', text)
-
-    # 2. Remove multiple consecutive commas
-    text = re.sub(r',\s*,+', ',', text)
-
-    # 3. Fix missing commas between array elements (when there's a newline)
-    text = re.sub(r'"\s*\n\s*"', '",\n"', text)
-    text = re.sub(r'}\s*\n\s*{', '},\n{', text)
-
-    # 4. Remove trailing commas at end of objects/arrays (catch-all)
-    # This catches edge cases where comma is right before bracket
-    text = re.sub(r',\s*([\]}])', r'\1', text)
-
-    # 5. Ensure proper quote escaping in strings (simplified approach)
-    # This is a basic safety net for simple cases
-
-    return text
-
-
-def extract_json_from_text(text: str) -> Optional[Dict]:
-    """
-    Extract and parse JSON from text, with multiple fallback strategies.
-
-    Args:
-        text: Text potentially containing JSON
-
-    Returns:
-        Parsed JSON dict or None if all attempts fail
-    """
-    # Strategy 1: Direct parse
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 2: Remove markdown code blocks and try again
-    try:
-        cleaned = repair_json(text)
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 3: Find JSON object boundaries
-    # Look for the first { and last }
-    try:
-        start = text.find('{')
-        end = text.rfind('}')
-        if start != -1 and end != -1 and end > start:
-            json_text = text[start:end+1]
-            cleaned = repair_json(json_text)
-            return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 4: Try to find JSON array boundaries
-    try:
-        start = text.find('[')
-        end = text.rfind(']')
-        if start != -1 and end != -1 and end > start:
-            json_text = text[start:end+1]
-            cleaned = repair_json(json_text)
-            # Wrap in object if it's just an array
-            if isinstance(json.loads(cleaned), list):
-                return {"answers": json.loads(cleaned)}
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 5: Look for "answers" key and extract from there
-    try:
-        # Find the "answers" array
-        answers_match = re.search(r'"answers"\s*:\s*\[', text)
-        if answers_match:
-            start = answers_match.start()
-            # Find the matching closing bracket
-            bracket_count = 0
-            array_start = text.find('[', answers_match.end() - 1)
-            i = array_start
-            while i < len(text):
-                if text[i] == '[':
-                    bracket_count += 1
-                elif text[i] == ']':
-                    bracket_count -= 1
-                    if bracket_count == 0:
-                        json_text = '{' + text[start:i+1] + '}'
-                        cleaned = repair_json(json_text)
-                        return json.loads(cleaned)
-                i += 1
-    except (json.JSONDecodeError, AttributeError):
-        pass
-
-    logger.error(f"All JSON extraction strategies failed. Text preview: {text[:500]}")
-    return None
-
-
-# Public alias used by vision_evaluator.py
-extract_json_robust = extract_json_from_text
+# Public alias for backward compatibility
+extract_json_robust = extract_json
 
 
 class TestEvaluationService:
@@ -362,7 +237,7 @@ Return ONLY the JSON object, nothing else."""
             logger.info(f"LLM response for question parsing (first 500 chars): {response_text[:500]}")
 
             # Use robust JSON extraction
-            parsed_data = extract_json_from_text(response_text)
+            parsed_data = extract_json(response_text)
 
             if parsed_data is None:
                 raise ValueError("Failed to extract valid JSON from LLM response")
@@ -377,7 +252,7 @@ Return ONLY the JSON object, nothing else."""
                     raise ValueError(f"Missing 'question' field in: {question}")
 
             # Validate and adjust marks if needed
-            total_assigned_marks = sum(q.get('marks', 0) for q in questions)
+            total_assigned_marks = sum(q.get('marks') or 0 for q in questions)
             if total_assigned_marks != total_marks and questions:
                 # Proportionally adjust marks
                 scale_factor = total_marks / total_assigned_marks if total_assigned_marks > 0 else 1
@@ -391,7 +266,7 @@ Return ONLY the JSON object, nothing else."""
                 "model_used": result['model'],
                 "parsing_metadata": {
                     "total_questions": len(questions),
-                    "total_marks": sum(q.get('marks', 0) for q in questions)
+                    "total_marks": sum(q.get('marks') or 0 for q in questions)
                 }
             }
 
@@ -539,7 +414,7 @@ Return ONLY the JSON object, nothing else."""
                     num_runs=3,
                 )
 
-                marks_awarded = evaluation.get('marks_awarded', 0)
+                marks_awarded = (evaluation.get('marks_awarded') or 0)
                 total_marks_obtained += marks_awarded
 
                 # Calculate is_correct and similarity_score
@@ -560,7 +435,7 @@ Return ONLY the JSON object, nothing else."""
                     "feedback": evaluation.get('feedback', ''),
                     "key_points_covered": evaluation.get('key_points_covered', []),
                     "key_points_missed": evaluation.get('key_points_missed', []),
-                    "evaluated_by_model": evaluation.get('model_used'),
+                    "evaluated_by_model": (evaluation.get('model_used') or 'unknown')[:50],
                     "metadata": {
                         "max_marks": question['marks'],
                         "question_number": question['question_number'],
@@ -693,7 +568,7 @@ Return ONLY the JSON object, nothing else."""
             logger.info(f"LLM response for answer parsing (first 500 chars): {response_text[:500]}")
 
             # Use robust JSON extraction
-            parsed_data = extract_json_from_text(response_text)
+            parsed_data = extract_json(response_text)
 
             if parsed_data is None:
                 raise ValueError("Failed to extract valid JSON from LLM response")

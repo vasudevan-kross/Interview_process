@@ -37,7 +37,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${outfit.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+      <body className={`${outfit.variable} ${jetbrainsMono.variable} font-sans antialiased`} suppressHydrationWarning>
         <QueryProvider>
           {children}
           <Toaster position="top-right" />

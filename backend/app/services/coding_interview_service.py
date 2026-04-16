@@ -774,13 +774,13 @@ class CodingInterviewService:
                         'marks_awarded': marks_awarded,
                         'is_correct': is_correct,
                         'similarity_score': similarity_score,
-                        'programming_language': detected_language,  # Store detected language
+                        'programming_language': (detected_language or 'unknown')[:50],  # Truncate to 50 chars
                         'feedback': llm_result.get('feedback', ''),
                         'key_points_covered': llm_result.get('key_points_covered', []),
                         'key_points_missed': llm_result.get('key_points_missed', []),
                         'code_quality_score': llm_result.get('code_quality_score', 0),
                         'evaluated_at': datetime.now().isoformat(),
-                        'evaluated_by_model': llm_result.get('model_used', 'codellama:7b')
+                        'evaluated_by_model': (llm_result.get('model_used', 'codellama:7b') or 'unknown')[:50]  # Truncate to 50 chars
                     }
 
                     self.client.table('coding_answers').update(evaluation_data).eq(
@@ -865,7 +865,7 @@ class CodingInterviewService:
                 'is_correct': marks_awarded >= (question['marks'] * 0.8),
                 'code_quality_score': llm_result.get('code_quality_score', 0),
                 'evaluated_at': datetime.now().isoformat(),
-                'evaluated_by_model': llm_result.get('model_used', 'gpt-4o')
+                'evaluated_by_model': (llm_result.get('model_used', 'gpt-4o') or 'unknown')[:50]
             }
 
             self.client.table('coding_answers').update(evaluation_data).eq(
@@ -899,14 +899,14 @@ class CodingInterviewService:
             questions_result = self.client.table('coding_questions').select('marks').eq(
                 'interview_id', interview_id
             ).execute()
-            total_marks = sum(q['marks'] for q in questions_result.data) if questions_result.data else 0
+            total_marks = sum(q.get('marks') or 0 for q in questions_result.data) if questions_result.data else 0
 
             # 3. Get all answers to find total marks obtained
             answers_result = self.client.table('coding_answers').select('marks_awarded').eq(
                 'submission_id', submission_id
             ).execute()
             
-            total_marks_obtained = sum(a.get('marks_awarded', 0) for a in answers_result.data) if answers_result.data else 0
+            total_marks_obtained = sum(a.get('marks_awarded') or 0 for a in answers_result.data) if answers_result.data else 0
             percentage = (total_marks_obtained / total_marks * 100) if total_marks > 0 else 0
 
             # 4. Update submission record
@@ -952,8 +952,8 @@ class CodingInterviewService:
                                 module_results['technical_assessment'] = {
                                     'status': 'completed',
                                     'score': round(percentage, 2),
-                                    'marks_obtained': total_marks_obtained,
-                                    'total_marks': total_marks,
+                                    'marks_obtained': (total_marks_obtained or 0),
+                                    'total_marks': (total_marks or 0),
                                     'submission_id': submission_id,
                                     'completed_at': datetime.now().isoformat()
                                 }

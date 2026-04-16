@@ -20,6 +20,7 @@ except ImportError:
 from app.config import settings
 from app.model_config import model_config
 from app.db.supabase_client import get_supabase
+from app.utils.json_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -629,39 +630,12 @@ Provide evaluation as JSON."""
                 system_prompt=system_prompt,
                 override_model=model  # Allow user override
             )
+            # Parse JSON response with robust utility
+            evaluation = extract_json(result['response'])
 
-            # Parse JSON response
-            response_text = result['response'].strip()
+            if evaluation is None:
+                raise json.JSONDecodeError("Could not parse JSON", result['response'], 0)
 
-            # Try to extract JSON from markdown code blocks
-            # Only extract if the ENTIRE response is wrapped in code blocks (starts with ```)
-            if response_text.startswith('```'):
-                # Find the first code block
-                if response_text.startswith('```json'):
-                    response_text = response_text[7:]  # Remove ```json
-                else:
-                    response_text = response_text[3:]  # Remove ```
-                # Find the closing ```
-                end_marker = response_text.find('```')
-                if end_marker != -1:
-                    response_text = response_text[:end_marker].strip()
-
-            # Try to parse JSON
-            try:
-                evaluation = json.loads(response_text)
-            except json.JSONDecodeError:
-                # LLM may include code snippets with invalid escape sequences (\s, \d, etc.)
-                # or literal control characters inside JSON string values.
-                # Step 1: fix invalid backslash escapes (keep valid ones: " \ / b f n r t u)
-                sanitized = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', response_text)
-                # Step 2: escape any remaining literal control characters
-                sanitized = sanitized.replace('\r', '\\r').replace('\t', '\\t')
-                try:
-                    evaluation = json.loads(sanitized)
-                    logger.warning("JSON parsing succeeded after sanitizing escape sequences")
-                except json.JSONDecodeError:
-                    # Still failed, re-raise original error
-                    raise
 
             # Ensure marks don't exceed max_marks
             if evaluation.get('marks_awarded', 0) > max_marks:
@@ -889,24 +863,23 @@ Provide evaluation as JSON."""
         Checks for high consonant density, lack of vowels, and repeating clusters.
         """
         import re
-        text = text.strip().lower()
-        if not text:
+        # Strip all whitespace for density and diversity checks
+        clean_text = re.sub(r'\s+', '', text).lower()
+        if not clean_text:
             return True
             
         # 1. Extremely high consonant clusters (more than 7 in a row, letters only)
         # We exclusively check for LETTERS to avoid flagging "TC_001" or "0x00A1"
-        # Increased threshold from 5 to 7 for better tolerance of technical terms
-        if re.search(r'[bcdfghjklmnpqrstvwxz]{7,}', text):
+        if re.search(r'[bcdfghjklmnpqrstvwxz]{7,}', clean_text):
             return True
             
         # 2. Vowel-less strings of significant length (letters only)
-        # If it contains digits/symbols it's likely code/technical (e.g. "TC_001")
-        letters_only = re.sub(r'[^a-z]', '', text)
+        letters_only = re.sub(r'[^a-z]', '', clean_text)
         if len(letters_only) > 8 and not re.search(r'[aeiouy]', letters_only):
             return True
             
-        # 3. Very low character diversity for longer strings
-        if len(text) > 15 and len(set(text)) < 4:
+        # 3. Very low character diversity for longer strings (ignoring whitespace)
+        if len(clean_text) > 15 and len(set(clean_text)) < 4:
             return True
             
         return False
@@ -928,7 +901,8 @@ Provide evaluation as JSON."""
             return True
 
         # Check if answer is too short (likely gibberish or OCR error)
-        if len(answer_clean) < 10:
+        # Lowered threshold to allow short valid tokens/one-liners
+        if len(answer_clean) < 3:
             return True
 
         # NEW: Domain-aware check
@@ -1373,36 +1347,16 @@ Return ONLY valid JSON."""
                 prompt=prompt,
                 model=selected_model,
                 temperature=0.2,
-                max_tokens=1000
+                max_tokens=3000
             )
             response = result_raw.get('response', '')
 
-            # Parse JSON response
-            import json
-            import re
+            # Parse JSON response with robust utility
+            result = extract_json(response)
 
-            # Try to extract JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                raw_json = json_match.group()
-                try:
-                    result = json.loads(raw_json)
-                except json.JSONDecodeError:
-                    # LLM embeds code snippets with invalid JSON escapes (\s, \d, \w)
-                    # or raw newlines/tabs inside string values.
-                    # Step 1: double any \ not followed by a valid JSON escape char
-                    sanitized = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw_json)
-                    # Step 2: replace literal control characters inside strings
-                    sanitized = sanitized.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-                    try:
-                        result = json.loads(sanitized)
-                    except json.JSONDecodeError:
-                        result = None
-                if result is None:
-                    raise ValueError("Could not parse JSON from LLM response")
-            else:
+            if result is None:
                 # Fallback if no JSON found - award 0, flag for manual review
-                logger.warning("No JSON in response, awarding 0 marks for manual review")
+                logger.warning(f"No JSON in response. Raw response: {response[:1000]}")
                 result = {
                     "marks_awarded": 0,
                     "is_correct": False,
