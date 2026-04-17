@@ -61,6 +61,9 @@ htmlcov/
 .env.local
 *.pem
 .agent/
+scratch/
+.claude/
+
 
 # Claude Code CLI temporary files
 tmpclaude-*-cwd

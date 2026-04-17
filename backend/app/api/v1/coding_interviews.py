@@ -12,6 +12,7 @@ Provides REST API for:
 import logging
 import json
 import re
+import asyncio
 import zipfile
 from datetime import datetime
 from io import BytesIO, StringIO
@@ -1645,17 +1646,28 @@ async def _run_bulk_evaluation(interview_id: str, submissions: list) -> None:
     total = len(submissions)
     evaluated = 0
     failed = 0
-    logger.info(f"[BG] Starting bulk evaluation for {total} submissions in interview {interview_id}")
-    for submission in submissions:
+    
+    logger.info(f"[BG] 🚀 Starting bulk evaluation for {total} submissions in interview {interview_id}")
+    
+    for index, submission in enumerate(submissions):
         submission_id = submission['id']
+        current_num = index + 1
+        
         try:
+            logger.info(f"[BG] [{current_num}/{total}] Evaluating submission {submission_id}...")
             result = await service.evaluate_submission(submission_id)
             evaluated += 1
-            logger.info(f"[BG] ✅ Evaluated {submission_id}: {result.get('percentage')}%")
+            percentage = result.get('percentage', 0)
+            logger.info(f"[BG] [{current_num}/{total}] ✅ Success: {submission_id} ({percentage}%)")
         except Exception as e:
             failed += 1
-            logger.error(f"[BG] ❌ Failed to evaluate {submission_id}: {e}")
-    logger.info(f"[BG] Bulk evaluation done: {evaluated} ok, {failed} failed out of {total}")
+            logger.error(f"[BG] [{current_num}/{total}] ❌ Failed: {submission_id}: {str(e)}")
+            
+        # Small cooldown between evaluations to prevent resource exhaustion
+        if current_num < total:
+            await asyncio.sleep(1)
+            
+    logger.info(f"[BG] ✨ Bulk evaluation finished for interview {interview_id}: {evaluated} ok, {failed} failed out of {total}")
 
 
 @router.post("/{interview_id}/evaluate-all", summary="Bulk evaluate all submissions")

@@ -40,10 +40,28 @@ def repair_json(text: str) -> str:
     # Double any backslash not followed by a valid JSON escape char: " \ / b f n r t u
     text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
 
-    # 4. Handle trailing commas
+    # 4. Handle missing commas between elements (Common LLM error)
+    # Between string and string: "..." "..." -> "...", "..."
+    # We use a lookahead/lookbehind approach or simple substitution for adjacent delimiters
+    # that are not separated by a comma or colon.
+    
+    # Between strings: "str1" "str2"
+    text = re.sub(r'(")\s*(")', r'\1, \2', text)
+    # Between object closing and opening: } {
+    text = re.sub(r'(\})\s*(\{)', r'\1, \2', text)
+    # Between array closing and opening: ] [
+    text = re.sub(r'(\])\s*(\[)', r'\1, \2', text)
+    # Between string and object: "str" {
+    text = re.sub(r'(")\s*(\{)', r'\1, \2', text)
+    # Between object and string: } "str"
+    text = re.sub(r'(\})\s*(")', r'\1, \2', text)
+    # Between array and string: ] "str"
+    text = re.sub(r'(\])\s*(")', r'\1, \2', text)
+
+    # 5. Handle trailing commas
     text = re.sub(r',\s*([}\]])', r'\1', text)
     
-    # 5. Remove multiple consecutive commas
+    # 6. Remove multiple consecutive commas
     text = re.sub(r',\s*,+', ',', text)
 
     return text

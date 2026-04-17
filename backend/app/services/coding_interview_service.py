@@ -658,6 +658,7 @@ class CodingInterviewService:
             ).eq('interview_id', submission['interview_id']).order('question_number').execute()
 
             questions = questions_result.data
+            num_questions = len(questions)
 
             # Get all answers
             answers_result = self.client.table('coding_answers').select(
@@ -671,7 +672,11 @@ class CodingInterviewService:
 
             llm = get_llm_orchestrator()
 
-            for question in questions:
+            logger.info(f"Evaluating {num_questions} questions for submission {submission_id}")
+
+            for idx, question in enumerate(questions):
+                current_q = idx + 1
+                logger.info(f"[{current_q}/{num_questions}] Processing Question {question['question_number']}...")
                 answer = answers_dict.get(question['id'])
 
                 if not answer or not answer.get('submitted_code'):

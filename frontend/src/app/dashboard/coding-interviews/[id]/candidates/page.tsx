@@ -67,7 +67,7 @@ interface EditState {
 export default function CandidatesPage() {
   const router = useRouter()
   const params = useParams()
-  const interviewId = params.id as string
+  const interviewId = params?.id as string
 
   const [data, setData] = useState<CandidateListResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -240,9 +240,9 @@ export default function CandidatesPage() {
           { id: 'bulk-eval', duration: 4000 }
         )
 
-        // Start polling for 2 minutes or until all done
+        // Start polling for 30 minutes or until all done
         let attempts = 0
-        const maxAttempts = 12 // 12 * 10s = 2 minutes
+        const maxAttempts = 180 // 180 * 10s = 30 minutes
 
         const pollInterval = setInterval(async () => {
           attempts++
@@ -260,7 +260,7 @@ export default function CandidatesPage() {
               if (!stillEvaluating) {
                 toast.success('Evaluation complete', { id: 'bulk-eval' })
               } else {
-                toast.info('Evaluation is taking longer than expected. Please refresh later.', {
+                toast.info('Evaluation is taking a long time. Please check back later.', {
                   id: 'bulk-eval',
                 })
               }
