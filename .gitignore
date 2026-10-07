@@ -69,3 +69,10 @@ NUL
 
 # Build artifacts
 *.tsbuildinfo
+
+# Local-only artifacts
+.playwright-mcp/
+render/
+investor-deck/
+.agents/
+AGENTS.md

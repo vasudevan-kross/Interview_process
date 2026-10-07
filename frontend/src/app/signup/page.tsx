@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
@@ -13,6 +13,14 @@ import { Sparkles, Loader2, ArrowRight, CheckCircle2, Building2, Plus } from 'lu
 import { getInvitationByToken, acceptInvitation, getDiscoverableOrganizations, joinOrganization } from '@/lib/api/organizations'
 
 export default function SignupPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <SignupForm />
+    </Suspense>
+  )
+}
+
+function SignupForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const inviteToken = searchParams.get('invite')

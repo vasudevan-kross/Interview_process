@@ -32,6 +32,9 @@ import {
   Tablet,
   BarChart3,
   FileText,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { PageHeader } from '@/components/ui/page-header'
@@ -53,6 +56,45 @@ import { format } from 'date-fns'
 import { apiClient } from '@/lib/api/client'
 import Link from 'next/link'
 
+type SortKey = 'candidate' | 'email' | 'submitted_at' | 'status' | 'score' | 'flags'
+type SortDir = 'asc' | 'desc'
+
+// Numeric/date columns start high-to-low on first click; text columns start A–Z
+const DEFAULT_SORT_DIR: Record<SortKey, SortDir> = {
+  candidate: 'asc',
+  email: 'asc',
+  submitted_at: 'desc',
+  status: 'asc',
+  score: 'desc',
+  flags: 'desc',
+}
+
+const STATUS_ORDER: Record<string, number> = {
+  in_progress: 0,
+  submitted: 1,
+  auto_submitted: 2,
+  evaluated: 3,
+  abandoned: 4,
+}
+
+// Returns null for missing values so they always sort last, regardless of direction
+const getSortValue = (s: Submission, key: SortKey): string | number | null => {
+  switch (key) {
+    case 'candidate':
+      return s.candidate_name?.toLowerCase() ?? null
+    case 'email':
+      return s.candidate_email?.toLowerCase() ?? null
+    case 'submitted_at':
+      return s.submitted_at ? new Date(s.submitted_at).getTime() : null
+    case 'status':
+      return STATUS_ORDER[s.status] ?? 99
+    case 'score':
+      return s.total_marks_obtained ?? s.percentage ?? null
+    case 'flags':
+      return (s.suspicious_activity ? 2 : 0) + (s.late_submission ? 1 : 0)
+  }
+}
+
 export default function SubmissionsPage() {
   const params = useParams()
   const router = useRouter()
@@ -65,6 +107,7 @@ export default function SubmissionsPage() {
   const [exporting, setExporting] = useState(false)
   const [exportingCsv, setExportingCsv] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null)
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean
     submissionId: string
@@ -257,11 +300,53 @@ export default function SubmissionsPage() {
     )
   }
 
-  const filteredSubmissions = submissions.filter(
-    (submission) =>
-      submission.candidate_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      submission.candidate_email.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredSubmissions = useMemo(() => {
+    const query = searchQuery.toLowerCase()
+    const filtered = submissions.filter(
+      (submission) =>
+        submission.candidate_name.toLowerCase().includes(query) ||
+        submission.candidate_email.toLowerCase().includes(query)
+    )
+    if (!sort) return filtered
+
+    const factor = sort.dir === 'asc' ? 1 : -1
+    return [...filtered].sort((a, b) => {
+      const av = getSortValue(a, sort.key)
+      const bv = getSortValue(b, sort.key)
+      if (av === null && bv === null) return 0
+      if (av === null) return 1
+      if (bv === null) return -1
+      if (av < bv) return -1 * factor
+      if (av > bv) return 1 * factor
+      return 0
+    })
+  }, [submissions, searchQuery, sort])
+
+  // First click uses the column's default direction, second flips it, third clears sorting
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: DEFAULT_SORT_DIR[key] }
+      if (prev.dir === DEFAULT_SORT_DIR[key]) return { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      return null
+    })
+  }
+
+  const renderSortableHead = (key: SortKey, label: string) => {
+    const active = sort?.key === key
+    const Icon = !active ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown
+    return (
+      <TableHead aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button
+          type="button"
+          onClick={() => toggleSort(key)}
+          className={`inline-flex items-center gap-1 hover:text-slate-900 transition-colors ${active ? 'text-slate-900' : ''}`}
+        >
+          {label}
+          <Icon className={`h-3.5 w-3.5 ${active ? 'text-indigo-600' : 'text-slate-300'}`} />
+        </button>
+      </TableHead>
+    )
+  }
 
   const averageScore =
     submissions.length > 0
@@ -508,12 +593,12 @@ export default function SubmissionsPage() {
                         aria-label="Select all submissions"
                       />
                     </TableHead>
-                    <TableHead>Candidate</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Submitted At</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Score</TableHead>
-                    <TableHead>Flags</TableHead>
+                    {renderSortableHead('candidate', 'Candidate')}
+                    {renderSortableHead('email', 'Email')}
+                    {renderSortableHead('submitted_at', 'Submitted At')}
+                    {renderSortableHead('status', 'Status')}
+                    {renderSortableHead('score', 'Score')}
+                    {renderSortableHead('flags', 'Flags')}
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
