@@ -23,6 +23,21 @@ from app.db.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
 
+LLM_DISABLED_MESSAGE = (
+    "AI features are disabled on this server (LLM_ENABLED=False). "
+    "Run this action from the local deployment that has Ollama."
+)
+
+
+class LLMDisabledError(RuntimeError):
+    """Raised when an LLM call is attempted while LLM_ENABLED is False."""
+
+
+def ensure_llm_enabled() -> None:
+    """Raise LLMDisabledError if this deployment has no LLM access."""
+    if not settings.LLM_ENABLED:
+        raise LLMDisabledError(LLM_DISABLED_MESSAGE)
+
 
 class LLMOrchestrator:
     """Service for orchestrating LLM operations with Ollama."""
@@ -172,6 +187,9 @@ class LLMOrchestrator:
         Returns:
             dict with response, model, tokens used, etc.
         """
+        # Outside the try: callers must not mistake a disabled LLM for an empty answer
+        ensure_llm_enabled()
+
         try:
             if ollama is None:
                 raise RuntimeError("ollama package not installed")
@@ -1060,6 +1078,8 @@ Provide evaluation as JSON."""
         Returns:
             Extracted text string (best result from multiple runs)
         """
+        ensure_llm_enabled()
+
         try:
             import base64
 
@@ -1139,6 +1159,8 @@ Provide evaluation as JSON."""
         Returns:
             Extracted text string
         """
+        ensure_llm_enabled()
+
         try:
             import base64
             from app.config import settings

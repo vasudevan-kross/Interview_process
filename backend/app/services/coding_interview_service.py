@@ -21,7 +21,7 @@ from collections import deque
 import pandas as pd
 import io
 from app.db.supabase_client import get_supabase
-from app.services.llm_orchestrator import get_llm_orchestrator
+from app.services.llm_orchestrator import get_llm_orchestrator, ensure_llm_enabled
 from app.services.hybrid_scorer import HybridScorer
 from app.services.user_service import get_user_service
 from app.config import settings
@@ -647,6 +647,10 @@ class CodingInterviewService:
         Returns:
             dict with total_marks_obtained, percentage, evaluations
         """
+        # Per-question LLM errors are swallowed below, so without this check a
+        # deployment with no LLM would mark the submission 'evaluated' with 0 marks.
+        ensure_llm_enabled()
+
         try:
             logger.info(f"Evaluating submission {submission_id}")
 

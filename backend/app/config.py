@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     STORAGE_TYPE: str = "supabase"  # or 'local'
     UPLOAD_DIR: str = "./uploads"  # for local storage
 
+    # Set False on hosted deployments with no Ollama access. AI features
+    # (evaluation, question parsing, OCR) then refuse instead of failing silently.
+    LLM_ENABLED: bool = True
+
     # Ollama
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     DEFAULT_OLLAMA_MODEL: str = "qwen2.5:7b"

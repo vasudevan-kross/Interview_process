@@ -40,7 +40,8 @@ from app.services.coding_interview_service import get_coding_interview_service
 from app.services.question_generator import get_question_generator, DOMAIN_REGISTRY
 from app.services.document_processor import get_document_processor
 from app.services.resume_auto_processor import get_resume_auto_processor
-from app.services.llm_orchestrator import get_llm_orchestrator
+from app.services.llm_orchestrator import get_llm_orchestrator, LLM_DISABLED_MESSAGE
+from app.config import settings
 from app.services.voice_interview_service import get_voice_interview_service
 from app.services.candidate_statistics_service import get_candidate_statistics_service
 from app.services.report_renderer import build_candidate_pdf
@@ -53,6 +54,15 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/coding-interviews", tags=["coding-interviews"])
+
+
+def _require_llm() -> None:
+    """Reject AI-backed requests on deployments without Ollama (LLM_ENABLED=False)."""
+    if not settings.LLM_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=LLM_DISABLED_MESSAGE,
+        )
 
 
 @router.get("/domains", summary="List available interview domains")
@@ -295,6 +305,8 @@ async def extract_questions_from_document(
     2. Parse questions using LLM
     3. Return structured questions for review
     """
+    _require_llm()
+
     try:
         # Validate file type
         allowed_extensions = ['pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png', 'xlsx', 'csv']
@@ -1544,6 +1556,8 @@ async def reevaluate_submission(
     ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """Manually trigger re-evaluation of a submission."""
+    _require_llm()
+
     try:
         service = get_coding_interview_service()
 
@@ -1604,6 +1618,8 @@ async def evaluate_all_submissions(
     ctx: OrgContext = Depends(require_permission('interview:evaluate'))
 ):
     """Start bulk evaluation in background and return immediately to avoid connection timeout."""
+    _require_llm()
+
     try:
         client = get_supabase()
 
