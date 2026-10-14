@@ -1281,30 +1281,8 @@ Return ONLY valid JSON."""
             )
             response = result_raw.get('response', '')
 
-            # Parse JSON response
-            import json
-            import re
-
-            # Try to extract JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                raw_json = json_match.group()
-                try:
-                    result = json.loads(raw_json)
-                except json.JSONDecodeError:
-                    # LLM embeds code snippets with invalid JSON escapes (\s, \d, \w)
-                    # or raw newlines/tabs inside string values.
-                    # Step 1: double any \ not followed by a valid JSON escape char
-                    sanitized = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw_json)
-                    # Step 2: replace literal control characters inside strings
-                    sanitized = sanitized.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-                    try:
-                        result = json.loads(sanitized)
-                    except json.JSONDecodeError:
-                        result = None
-                if result is None:
-                    raise ValueError("Could not parse JSON from LLM response")
-            else:
+            result = self._parse_evaluation_json(response)
+            if result is None:
                 # Fallback if no JSON found - award 0, flag for manual review
                 logger.warning("No JSON in response, awarding 0 marks for manual review")
                 result = {
@@ -1328,6 +1306,162 @@ Return ONLY valid JSON."""
         except Exception as e:
             logger.error(f"Error evaluating code: {e}")
             # Return 0 marks on error - do not award partial credit for unverified code
+            return {
+                "marks_awarded": 0,
+                "is_correct": False,
+                "similarity_score": 0.0,
+                "feedback": f"Evaluation error: {str(e)}. Manual review required.",
+                "key_points_covered": [],
+                "key_points_missed": ["Full evaluation incomplete - manual review required"],
+                "code_quality_score": 0,
+                "model_used": model or "error"
+            }
+
+    @staticmethod
+    def _parse_evaluation_json(response: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract the JSON object from an evaluation response.
+
+        Returns None if the response contains no JSON object at all;
+        raises ValueError if a JSON object is present but unparseable.
+        """
+        import json
+        import re
+
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if not json_match:
+            return None
+
+        raw_json = json_match.group()
+        try:
+            return json.loads(raw_json)
+        except json.JSONDecodeError:
+            # LLM embeds code snippets with invalid JSON escapes (\s, \d, \w)
+            # or raw newlines/tabs inside string values.
+            # Step 1: double any \ not followed by a valid JSON escape char
+            sanitized = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw_json)
+            # Step 2: replace literal control characters inside strings
+            sanitized = sanitized.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+            try:
+                return json.loads(sanitized)
+            except json.JSONDecodeError:
+                raise ValueError("Could not parse JSON from LLM response")
+
+    async def evaluate_written_answer(
+        self,
+        question: str,
+        candidate_answer: str,
+        max_marks: float,
+        domain: str = 'testing',
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Evaluate a written (non-code) answer — conceptual explanations,
+        manual test cases, bug reports, etc. — WITHOUT a reference answer.
+
+        Unlike evaluate_code_answer(), prose is the expected format here,
+        so it is graded on accuracy and completeness, not on executable code.
+
+        Returns:
+            dict with the same shape as evaluate_code_answer()
+        """
+        try:
+            answer_clean = (candidate_answer or '').strip()
+            if len(answer_clean) < 10 or answer_clean.upper() == "EMPTY":
+                return {
+                    "marks_awarded": 0.0,
+                    "is_correct": False,
+                    "similarity_score": 0.0,
+                    "feedback": "No meaningful answer provided.",
+                    "key_points_covered": [],
+                    "key_points_missed": ["All requirements - no answer submitted"],
+                    "code_quality_score": 0,
+                    "model_used": "validation_check"
+                }
+
+            selected_model = model or self.get_model_for_task(
+                task='answer_evaluation',
+                domain=domain
+            )
+
+            prompt = f"""You are an expert software testing / QA interviewer. Evaluate the candidate's WRITTEN answer.
+
+**Question:**
+{question}
+
+**Candidate's Answer:**
+\"\"\"
+{answer_clean}
+\"\"\"
+
+**IMPORTANT CONTEXT:**
+- This is a theory / manual-testing question. A written explanation, list of points,
+  or set of test cases IS the expected answer format. Do NOT penalise the absence of code.
+- Ignore minor spelling, grammar, and formatting mistakes — judge the understanding shown.
+- If the question asks for test cases, judge coverage (positive, negative, boundary, edge cases),
+  clarity of steps, and whether expected results are stated.
+
+**Scoring Allocation:**
+1. **Technical Accuracy** (50%): Are the statements correct?
+2. **Completeness** (30%): Are the key points / scenarios the question expects covered?
+3. **Clarity** (20%): Is it clearly explained or structured?
+
+**Instructions:**
+- Award marks out of {max_marks}. Give partial credit for partially correct answers.
+- Award 0 only if the answer is irrelevant, wrong, or empty.
+- Provide constructive feedback naming what was good and what was missing.
+- Give a quality score (0-100) reflecting overall answer quality.
+
+**Response Format (JSON):**
+{{
+    "marks_awarded": <number out of {max_marks}>,
+    "is_correct": <true if the answer is substantially correct, else false>,
+    "feedback": "<detailed feedback>",
+    "key_points_covered": ["<point 1>", "<point 2>", ...],
+    "key_points_missed": ["<missing point 1>", "<missing point 2>", ...],
+    "code_quality_score": <0-100>,
+    "reasoning": "<brief explanation of scoring>"
+}}
+
+Return ONLY valid JSON."""
+
+            logger.info(f"Evaluating written answer with {selected_model} (domain: {domain})")
+
+            result_raw = await self.generate_completion(
+                prompt=prompt,
+                model=selected_model,
+                temperature=0.2,
+                max_tokens=1000
+            )
+
+            result = self._parse_evaluation_json(result_raw.get('response', ''))
+            if result is None:
+                logger.warning("No JSON in response, awarding 0 marks for manual review")
+                result = {
+                    "marks_awarded": 0,
+                    "is_correct": False,
+                    "feedback": "Answer submitted but evaluation parsing failed. Manual review required.",
+                    "key_points_covered": [],
+                    "key_points_missed": ["Evaluation incomplete - manual review required"],
+                    "code_quality_score": 0,
+                    "reasoning": "Evaluation parsing failed - 0 marks awarded pending manual review"
+                }
+
+            # Clamp to valid range — LLMs occasionally exceed max_marks
+            try:
+                result['marks_awarded'] = max(0.0, min(float(result.get('marks_awarded', 0)), float(max_marks)))
+            except (TypeError, ValueError):
+                result['marks_awarded'] = 0.0
+
+            result['model_used'] = selected_model
+            result['similarity_score'] = result.get('code_quality_score', 50) / 100.0
+
+            logger.info(f"Written evaluation complete: {result['marks_awarded']}/{max_marks} marks")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error evaluating written answer: {e}")
             return {
                 "marks_awarded": 0,
                 "is_correct": False,

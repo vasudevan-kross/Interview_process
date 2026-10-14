@@ -10,6 +10,7 @@ Provides functionality for:
 """
 
 import os
+import re
 import uuid
 import hashlib
 import logging
@@ -109,6 +110,22 @@ class TestSuite:
 }
 """
 }
+
+
+# Phrases indicating a question expects a code answer rather than prose.
+# Used to route testing-interview questions between the code and written rubrics.
+_CODE_REQUEST_PATTERN = re.compile(
+    r'\b(write|implement|create|develop|code)\b[^.?!]*\b('
+    r'program|code|function|method|class|script|algorithm|automation|'
+    r'selenium|playwright|cypress|pytest|junit|testng'
+    r')\b',
+    re.IGNORECASE
+)
+
+
+def _asks_for_code(question_text: str) -> bool:
+    """True if the question asks the candidate to write code (vs. explain or list test cases)."""
+    return bool(_CODE_REQUEST_PATTERN.search(question_text or ''))
 
 
 class CodingInterviewService:
@@ -645,10 +662,15 @@ class CodingInterviewService:
 
             # Get interview to get total marks
             interview_result = self.client.table('coding_interviews').select(
-                'total_marks'
+                'total_marks, interview_type, programming_language'
             ).eq('id', submission['interview_id']).execute()
 
-            total_marks = interview_result.data[0]['total_marks']
+            interview = interview_result.data[0]
+            total_marks = interview['total_marks']
+            is_testing_interview = (
+                interview.get('interview_type') == 'testing'
+                or interview.get('programming_language') == 'manual-test-cases'
+            )
 
             # Get all questions
             questions_result = self.client.table('coding_questions').select(
@@ -750,17 +772,28 @@ class CodingInterviewService:
                         evaluations.append({**evaluation_data, 'question_id': question['id']})
                         continue
 
-                    # Detect programming language from submitted code
-                    detected_language = await self._detect_programming_language(submitted_code)
+                    if is_testing_interview and not _asks_for_code(question['question_text']):
+                        # Theory / manual test-case question: prose is the expected
+                        # answer, so don't grade it with the code-only rubric.
+                        detected_language = 'manual-test-cases'
+                        llm_result = await llm.evaluate_written_answer(
+                            question=question['question_text'],
+                            candidate_answer=submitted_code,
+                            max_marks=question['marks'],
+                            domain='testing'
+                        )
+                    else:
+                        # Detect programming language from submitted code
+                        detected_language = await self._detect_programming_language(submitted_code)
 
-                    # Use LLM evaluation WITHOUT solution code
-                    # AI will evaluate based on question requirements and code quality
-                    llm_result = await llm.evaluate_code_answer(
-                        question=question['question_text'],
-                        candidate_answer=submitted_code,
-                        detected_language=detected_language,
-                        max_marks=question['marks']
-                    )
+                        # Use LLM evaluation WITHOUT solution code
+                        # AI will evaluate based on question requirements and code quality
+                        llm_result = await llm.evaluate_code_answer(
+                            question=question['question_text'],
+                            candidate_answer=submitted_code,
+                            detected_language=detected_language,
+                            max_marks=question['marks']
+                        )
 
                     marks_awarded = llm_result.get('marks_awarded', 0)
                     is_correct = llm_result.get('is_correct', False)
