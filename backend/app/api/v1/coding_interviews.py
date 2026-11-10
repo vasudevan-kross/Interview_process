@@ -46,6 +46,7 @@ from app.services.voice_interview_service import get_voice_interview_service
 from app.services.candidate_statistics_service import get_candidate_statistics_service
 from app.services.report_renderer import build_candidate_pdf
 from app.db.supabase_client import get_supabase
+from app.utils.time_utils import now_app, parse_db_ts
 from app.auth.dependencies import get_current_user_id, get_current_org_context, OrgContext
 from app.auth.permissions import require_permission
 from app.services.credit_service import get_credit_service, InsufficientCreditsError
@@ -449,7 +450,7 @@ async def list_interviews(
             'status', ['scheduled', 'in_progress']
         ).execute()
 
-        now = datetime.now(timezone.utc)
+        now = now_app()
         if active_result.data:
             for interview in active_result.data:
                 end_time_str = interview.get('scheduled_end_time')
@@ -458,10 +459,7 @@ async def list_interviews(
 
                 # Parse end time
                 try:
-                    end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
-                    # Ensure timezone-aware (treat naive as UTC)
-                    if end_time.tzinfo is None:
-                        end_time = end_time.replace(tzinfo=timezone.utc)
+                    end_time = parse_db_ts(end_time_str)
                 except (ValueError, AttributeError):
                     continue
 
@@ -550,13 +548,10 @@ async def get_interview(
             end_time_str = interview.get('scheduled_end_time')
             if end_time_str:
                 try:
-                    end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
-                    # Ensure timezone-aware (treat naive as UTC)
-                    if end_time.tzinfo is None:
-                        end_time = end_time.replace(tzinfo=timezone.utc)
+                    end_time = parse_db_ts(end_time_str)
                     grace_minutes = interview.get('grace_period_minutes', 0) or 0
                     effective_end = end_time + timedelta(minutes=grace_minutes)
-                    now = datetime.now(timezone.utc)
+                    now = now_app()
 
                     if now > effective_end:
                         new_status = 'expired' if interview['status'] == 'scheduled' else 'completed'
@@ -1021,7 +1016,7 @@ async def upload_resume(
         from datetime import datetime
         client.table('coding_submissions').update({
             'resume_path': storage_path,
-            'resume_uploaded_at': datetime.now().isoformat()
+            'resume_uploaded_at': now_app().isoformat()
         }).eq('id', submission_id).execute()
 
         logger.info(f"Resume uploaded for submission {submission_id}: {storage_path}")

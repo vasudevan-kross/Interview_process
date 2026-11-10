@@ -25,6 +25,7 @@ from app.services.llm_orchestrator import get_llm_orchestrator, ensure_llm_enabl
 from app.services.hybrid_scorer import HybridScorer
 from app.services.user_service import get_user_service
 from app.config import settings
+from app.utils.time_utils import now_app, parse_db_ts, to_aware
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,10 @@ class CodingInterviewService:
             # Generate unique access token
             access_token = str(uuid.uuid4())
 
+            # Normalise to timezone-aware (naive input treated as APP_TIMEZONE)
+            scheduled_start_time = to_aware(scheduled_start_time)
+            scheduled_end_time = to_aware(scheduled_end_time)
+
             # Calculate link expiration
             link_expires_at = scheduled_end_time + timedelta(minutes=grace_period_minutes)
 
@@ -299,8 +304,8 @@ class CodingInterviewService:
             interview = interview_result.data[0]
 
             # Check if expired
-            link_expires_at = datetime.fromisoformat(interview['link_expires_at'].replace('Z', '+00:00'))
-            if datetime.now(link_expires_at.tzinfo) > link_expires_at:
+            link_expires_at = parse_db_ts(interview['link_expires_at'])
+            if now_app() > link_expires_at:
                 raise ValueError("Interview link has expired")
 
             # Get questions (without solution_code)
@@ -371,14 +376,10 @@ class CodingInterviewService:
             interview = interview_result.data[0]
 
             # Validate time window
-            # Note: Times are stored as local time (frontend sends without timezone)
-            now = datetime.now()
-            
-            # Parse timestamps - strip any timezone suffix since we compare as local time
-            start_str = interview['scheduled_start_time'].replace('Z', '').replace('+00:00', '')
-            expires_str = interview['link_expires_at'].replace('Z', '').replace('+00:00', '')
-            scheduled_start = datetime.fromisoformat(start_str)
-            link_expires_at = datetime.fromisoformat(expires_str)
+            # Compare timezone-aware values; never use the server clock (UTC on Render)
+            now = now_app()
+            scheduled_start = parse_db_ts(interview['scheduled_start_time'])
+            link_expires_at = parse_db_ts(interview['link_expires_at'])
 
             logger.info(f"Time check: now={now}, start={scheduled_start}, expires={link_expires_at}")
 
@@ -547,9 +548,8 @@ class CodingInterviewService:
             submission = submission_result.data[0]
 
             # Calculate duration
-            started_str = submission['started_at'].replace('Z', '').replace('+00:00', '')
-            started_at = datetime.fromisoformat(started_str)
-            submitted_at = datetime.now()
+            started_at = parse_db_ts(submission['started_at'])
+            submitted_at = now_app()
             duration_seconds = int((submitted_at - started_at).total_seconds())
 
             # Get interview to check grace period, bond requirement, and title
@@ -558,8 +558,7 @@ class CodingInterviewService:
             ).eq('id', submission['interview_id']).execute()
 
             interview = interview_result.data[0]
-            expires_str = interview['link_expires_at'].replace('Z', '').replace('+00:00', '')
-            link_expires_at = datetime.fromisoformat(expires_str)
+            link_expires_at = parse_db_ts(interview['link_expires_at'])
             late_submission = submitted_at > link_expires_at
 
             # Validate signature if required
@@ -712,7 +711,7 @@ class CodingInterviewService:
                         'key_points_covered': [],
                         'key_points_missed': [],
                         'code_quality_score': 0,
-                        'evaluated_at': datetime.now().isoformat(),
+                        'evaluated_at': now_app().isoformat(),
                         'evaluated_by_model': 'system'
                     }
 
@@ -767,7 +766,7 @@ class CodingInterviewService:
                             'key_points_covered': [],
                             'key_points_missed': ['All requirements — no attempt made'],
                             'code_quality_score': 0,
-                            'evaluated_at': datetime.now().isoformat(),
+                            'evaluated_at': now_app().isoformat(),
                             'evaluated_by_model': 'system'
                         }
                         self.client.table('coding_answers').update(evaluation_data).eq(
@@ -812,7 +811,7 @@ class CodingInterviewService:
                         'key_points_covered': llm_result.get('key_points_covered', []),
                         'key_points_missed': llm_result.get('key_points_missed', []),
                         'code_quality_score': llm_result.get('code_quality_score', 0),
-                        'evaluated_at': datetime.now().isoformat(),
+                        'evaluated_at': now_app().isoformat(),
                         'evaluated_by_model': llm_result.get('model_used', 'codellama:7b')
                     }
 
@@ -891,7 +890,7 @@ class CodingInterviewService:
                                     'marks_obtained': total_marks_obtained,
                                     'total_marks': total_marks,
                                     'submission_id': submission_id,
-                                    'completed_at': datetime.now().isoformat()
+                                    'completed_at': now_app().isoformat()
                                 }
 
                                 # Update batch_candidate
@@ -949,7 +948,7 @@ class CodingInterviewService:
                 'activity_type': activity_type,
                 'question_id': valid_question_id,
                 'metadata': metadata or {},
-                'timestamp': datetime.now().isoformat()
+                'timestamp': now_app().isoformat()
             }
 
             # Add to buffer
@@ -971,7 +970,7 @@ class CodingInterviewService:
         Log multiple anti-cheating events at once.
         """
         try:
-            timestamp = datetime.now().isoformat()
+            timestamp = now_app().isoformat()
             
             for act in activities:
                 # Validate question_id
@@ -2041,35 +2040,17 @@ Language:"""
 
         # Recalculate link_expires_at if end time or grace changed
         if new_end or new_grace is not None:
-            end_time = new_end
-            if end_time is None:
-                end_str = src['scheduled_end_time'].replace('Z', '').replace('+00:00', '')
-                end_time = datetime.fromisoformat(end_str)
+            end_time = to_aware(new_end) or parse_db_ts(src['scheduled_end_time'])
             grace = new_grace if new_grace is not None else src.get('grace_period_minutes', 15)
             patch['link_expires_at'] = (end_time + timedelta(minutes=grace)).isoformat()
 
         # Recalculate status if start or end time changed
         if update_data.get('scheduled_start_time') or new_end:
-            # Get the new start and end times (ensure all are naive UTC for comparison)
-            start_time = update_data.get('scheduled_start_time')
-            if start_time is None:
-                start_str = src['scheduled_start_time'].replace('Z', '').replace('+00:00', '')
-                start_time = datetime.fromisoformat(start_str)
-            else:
-                # Strip timezone info if present to make it naive UTC
-                if hasattr(start_time, 'tzinfo') and start_time.tzinfo is not None:
-                    start_time = start_time.replace(tzinfo=None)
+            # All values are timezone-aware (naive DB values treated as APP_TIMEZONE)
+            start_time = to_aware(update_data.get('scheduled_start_time')) or parse_db_ts(src['scheduled_start_time'])
+            end_time = to_aware(new_end) or parse_db_ts(src['scheduled_end_time'])
 
-            end_time = new_end
-            if end_time is None:
-                end_str = src['scheduled_end_time'].replace('Z', '').replace('+00:00', '')
-                end_time = datetime.fromisoformat(end_str)
-            else:
-                # Strip timezone info if present to make it naive UTC
-                if hasattr(end_time, 'tzinfo') and end_time.tzinfo is not None:
-                    end_time = end_time.replace(tzinfo=None)
-
-            now = datetime.utcnow()
+            now = now_app()
 
             # Determine new status based on times
             if now < start_time:

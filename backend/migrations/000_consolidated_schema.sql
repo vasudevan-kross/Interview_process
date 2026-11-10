@@ -324,18 +324,18 @@ CREATE TABLE coding_interviews (
     description TEXT,
 
     -- Scheduling
-    scheduled_start_time TIMESTAMP NOT NULL,
-    scheduled_end_time TIMESTAMP NOT NULL,
+    scheduled_start_time TIMESTAMPTZ NOT NULL,
+    scheduled_end_time TIMESTAMPTZ NOT NULL,
     grace_period_minutes INTEGER DEFAULT 15,
 
     -- Status tracking
     status VARCHAR(50) DEFAULT 'scheduled',
-    started_at TIMESTAMP,
-    completed_at TIMESTAMP,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
 
     -- Link generation
     access_token VARCHAR(255) UNIQUE NOT NULL,
-    link_expires_at TIMESTAMP NOT NULL,
+    link_expires_at TIMESTAMPTZ NOT NULL,
 
     -- Interview type
     interview_type VARCHAR(50) DEFAULT 'coding',
@@ -357,8 +357,8 @@ CREATE TABLE coding_interviews (
 
     -- Metadata
     created_by UUID REFERENCES users(id) NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
     deleted_at TIMESTAMPTZ DEFAULT NULL,
     metadata JSONB
 );
@@ -400,8 +400,8 @@ CREATE TABLE coding_submissions (
     candidate_phone VARCHAR(50),
 
     -- Submission tracking
-    started_at TIMESTAMP NOT NULL,
-    submitted_at TIMESTAMP,
+    started_at TIMESTAMPTZ NOT NULL,
+    submitted_at TIMESTAMPTZ,
     status VARCHAR(50) DEFAULT 'in_progress',
 
     -- Language preference
@@ -422,11 +422,11 @@ CREATE TABLE coding_submissions (
 
     -- Resume upload
     resume_path VARCHAR(500),
-    resume_uploaded_at TIMESTAMP,
+    resume_uploaded_at TIMESTAMPTZ,
 
     -- Signature/terms
     signature_data TEXT,
-    signature_accepted_at TIMESTAMP,
+    signature_accepted_at TIMESTAMPTZ,
     terms_ip_address TEXT,
 
     -- Decision tracking
@@ -436,7 +436,7 @@ CREATE TABLE coding_submissions (
     decided_by UUID REFERENCES users(id),
 
     -- Metadata
-    created_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     metadata JSONB
 );
 
@@ -474,13 +474,13 @@ CREATE TABLE coding_answers (
     code_quality_score DECIMAL(5, 2),
 
     -- Metadata
-    evaluated_at TIMESTAMP,
+    evaluated_at TIMESTAMPTZ,
     evaluated_by_model VARCHAR(100),
     evaluator_id UUID REFERENCES users(id),
     evaluator_notes TEXT,
 
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
 
     UNIQUE(submission_id, question_id)
 );

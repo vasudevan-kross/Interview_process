@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "Interview Management API"
     DEBUG: bool = False
 
+    # Timezone that naive timestamps (legacy coding_interviews rows, datetime-local
+    # input without offset) are interpreted in. Never compare DB times against the
+    # server clock directly - Render runs in UTC.
+    APP_TIMEZONE: str = "Asia/Kolkata"
+
     # Database & Vector Store
     DB_TYPE: str = "supabase"  # or 'local'
     VECTOR_DB: str = "pgvector"  # or 'chroma'
