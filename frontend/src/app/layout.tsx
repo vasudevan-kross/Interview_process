@@ -3,6 +3,7 @@ import { Outfit, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'sonner'
 import { QueryProvider } from '@/components/providers/QueryProvider'
+import { BackendWarmup } from '@/components/BackendWarmup'
 
 const outfit = Outfit({
   subsets: ['latin'],
@@ -41,6 +42,7 @@ export default function RootLayout({
         <QueryProvider>
           {children}
           <Toaster position="top-right" />
+          <BackendWarmup />
         </QueryProvider>
       </body>
     </html>

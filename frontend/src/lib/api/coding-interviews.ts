@@ -10,6 +10,7 @@
  */
 
 import { createClient } from '@/lib/supabase/client';
+import { wakeBackend, fetchWithWake } from '@/lib/backend-warmup';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 const API_PREFIX = '/api/v1';
@@ -429,7 +430,7 @@ async function safeParseError(response: Response, fallback: string): Promise<str
 }
 
 export async function joinInterview(accessToken: string): Promise<Interview> {
-  const response = await fetch(`${API_PREFIX}/coding-interviews/join/${accessToken}`, {
+  const response = await fetchWithWake(`${API_PREFIX}/coding-interviews/join/${accessToken}`, {
     headers: { 'ngrok-skip-browser-warning': 'true' },
   });
 
@@ -462,6 +463,9 @@ export async function startSubmission(
   started_at: string;
   expires_at: string;
 }> {
+  if (!(await wakeBackend())) {
+    throw new Error('Cannot reach the server right now. Please check your connection and try again.');
+  }
   const response = await fetch(`${API_PREFIX}/coding-interviews/start?interview_id=${interviewId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
@@ -485,7 +489,7 @@ export async function saveCode(data: {
   code: string;
   programming_language: string;
 }): Promise<{ status: string }> {
-  const response = await fetch(`${API_PREFIX}/coding-interviews/save-code`, {
+  const response = await fetchWithWake(`${API_PREFIX}/coding-interviews/save-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify(data),
@@ -519,7 +523,8 @@ export async function submitInterview(
   submission_id: string;
   submitted_at: string;
 }> {
-  const response = await fetch(`${API_PREFIX}/coding-interviews/submit`, {
+  await wakeBackend();
+  const response = await fetchWithWake(`${API_PREFIX}/coding-interviews/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify({
